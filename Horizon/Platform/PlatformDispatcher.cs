@@ -70,6 +70,80 @@ public sealed class PlatformDispatcher
         call.Failure?.Throw();
     }
 
+    /// <summary>
+    /// Does work on the platform's thread and waits up to <paramref name="timeoutMs"/> milliseconds for it. Runs
+    /// immediately on the platform's thread or before binding. Returns false without throwing if the dispatcher is
+    /// closed or the wait times out before the work begins, so callers such as clipboard access never deadlock during
+    /// shutdown or modal OS loops.
+    /// </summary>
+    public bool TryInvoke(Action action, int timeoutMs)
+    {
+        if (closed)
+            return false;
+
+        if (!IsBound || IsPlatformThread)
+        {
+            action();
+            return true;
+        }
+
+        var call = new Call(action);
+        work.Enqueue(call.Run);
+        wake();
+
+        long deadline = timeoutMs <= 0 ? 0 : Environment.TickCount64 + timeoutMs;
+        while (true)
+        {
+            int waitMs = timeoutMs <= 0 ? 0 : (int)Math.Clamp(deadline - Environment.TickCount64, 0, 50);
+            if (call.Done.Wait(waitMs))
+            {
+                call.Done.Dispose();
+                call.Failure?.Throw();
+                return true;
+            }
+
+            bool timedOut = timeoutMs <= 0 || Environment.TickCount64 >= deadline;
+            if (closed || timedOut)
+            {
+                if (call.Abandon())
+                {
+                    call.Done.Dispose();
+                    return false;
+                }
+
+                // Already running on the platform thread; wait for it to finish so Done isn't disposed under Run().
+                call.Done.Wait();
+                call.Done.Dispose();
+                call.Failure?.Throw();
+                return true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Evaluates <paramref name="func"/> on the platform's thread and waits up to <paramref name="timeoutMs"/>
+    /// milliseconds for its result. Returns false if the dispatcher is closed or the wait times out.
+    /// </summary>
+    public bool TryInvoke<T>(Func<T> func, int timeoutMs, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out T result)
+    {
+        if (closed)
+        {
+            result = default!;
+            return false;
+        }
+
+        if (!IsBound || IsPlatformThread)
+        {
+            result = func();
+            return true;
+        }
+
+        T captured = default!;
+        bool ran = TryInvoke(() => captured = func(), timeoutMs);
+        result = ran ? captured : default!;
+        return ran;
+    }
+
     /// <summary>Does everything that was queued, in order. The platform's thread. How many there were.</summary>
     public int Drain()
     {

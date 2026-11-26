@@ -89,14 +89,64 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
         }
     }
 
+    // Bounded wait for cross-thread clipboard marshalling so shutdown or modal OS loops never deadlock
+    private const int CLIPBOARD_TIMEOUT_MS = 250;
+
     public string ClipboardText
     {
-        get => context.Keyboards.FirstOrDefault()?.ClipboardText ?? string.Empty;
+        get
+        {
+            if (host.IsPlatformThread)
+                return ReadClipboardOnPlatformThread();
+
+            return host.TryInvoke(ReadClipboardOnPlatformThread, CLIPBOARD_TIMEOUT_MS, out string? text)
+                ? text ?? string.Empty
+                : string.Empty;
+        }
         set
         {
-            if (context.Keyboards.FirstOrDefault() is { } keyboard) keyboard.ClipboardText = value;
+            string text = value ?? string.Empty;
+            if (host.IsPlatformThread)
+            {
+                WriteClipboardOnPlatformThread(text);
+                return;
+            }
+
+            WriteClipboardOffThread(text);
         }
     }
+
+    private string ReadClipboardOnPlatformThread()
+    {
+        if (context.Keyboards.Count == 0)
+            return string.Empty;
+
+        try
+        {
+            return context.Keyboards[0].ClipboardText ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private void WriteClipboardOnPlatformThread(string value)
+    {
+        if (context.Keyboards.Count == 0)
+            return;
+
+        try
+        {
+            context.Keyboards[0].ClipboardText = value;
+        }
+        catch
+        {
+        }
+    }
+
+    private void WriteClipboardOffThread(string value) =>
+        host.TryInvoke(() => WriteClipboardOnPlatformThread(value), CLIPBOARD_TIMEOUT_MS);
 
     public IPlatformGamepads? OpenGamepads() => host.OpenGamepads(context);
 

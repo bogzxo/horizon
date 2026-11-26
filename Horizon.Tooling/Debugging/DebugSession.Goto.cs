@@ -53,6 +53,6 @@ public sealed partial class DebugSession
         Interlocked.Increment(ref threadEpoch);
         await connection.Request("goto", new JsonObject { ["threadId"] = found.Thread, ["targetId"] = target }).ConfigureAwait(false);
         // The adapter's stopped/goto event supplies the new stack, scopes and execution line.
-        return true;
+        return State != DebugState.Ended;
     }
 }

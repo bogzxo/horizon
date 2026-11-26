@@ -28,13 +28,14 @@ public sealed partial class LanguageServer
             return [];
 
         var lenses = new List<LanguageServerLens>(list.Count);
-        foreach (JsonObject lens in list.OfType<JsonObject>())
+        for (int i = 0; i < list.Count; i++)
         {
-            if (lens["range"] is not JsonObject range)
+            if (list[i] is not JsonObject lens || lens["range"] is not JsonObject range)
                 continue;
 
             var (line, character, _, _) = RangeOf(range);
-            lenses.Add(new LanguageServerLens(line, character, lens["command"]?["title"]?.GetValue<string>() ?? string.Empty, lens.DeepClone()));
+            list[i] = null;
+            lenses.Add(new LanguageServerLens(line, character, lens["command"]?["title"]?.GetValue<string>() ?? string.Empty, lens));
         }
 
         return lenses;

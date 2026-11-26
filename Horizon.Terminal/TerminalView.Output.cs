@@ -23,7 +23,7 @@ public partial class TerminalView
     // A visible row's codes, a stride of columns each, and what the row was when they were worked out
     private byte[] outputCodes = [];
     private TerminalRow?[] outputRows = [];
-    private int[] outputHashes = [];
+    private int[] outputGenerations = [];
     private char[] outputText = new char[256];
     private int outputStride, outputOffset, outputVersion = -1, outputRulesVersion = -1;
 
@@ -43,7 +43,7 @@ public partial class TerminalView
         if (outputRows.Length < rows || stride != outputStride)
         {
             outputRows = new TerminalRow?[rows];
-            outputHashes = new int[rows];
+            outputGenerations = new int[rows];
             outputCodes = new byte[rows * stride];
         }
 
@@ -69,14 +69,12 @@ public partial class TerminalView
             }
 
             TerminalRow row = screen.RowAt(index);
-            int length = Math.Min(row.Length, stride), hash = 17;
-            for (int x = 0; x < length; x++)
-                hash = hash * 31 + row.Cells[x].CodePoint;
-            if (ReferenceEquals(outputRows[y], row) && outputHashes[y] == hash)
+            int generation = row.Generation;
+            if (ReferenceEquals(outputRows[y], row) && outputGenerations[y] == generation)
                 continue;
 
             outputRows[y] = row;
-            outputHashes[y] = hash;
+            outputGenerations[y] = generation;
             int used = row.Used;
             for (int x = 0; x < used && x < stride; x++)
             {

@@ -214,3 +214,26 @@
 - **`HexStartup`** (3 cold runs, median):
   - `Dawn`: `396 ms` first frame | WS `171.3 MiB` | Priv `203.2 MiB` | Idle CPU `0.977%` (**-1.941pp** vs P3 `2.918%`, **-33.2%** vs Baseline `1.463%`)
   - `Dusk`: `313 ms` first frame | WS `120.8 MiB` | Priv `154.1 MiB` | Idle CPU `7.361%`
+
+### Pass 5 — Horizon.Terminal, Horizon.Tooling, Desktop Platform, Audio & Scroll Tracing (`Horizon.Tests`: 2,546 passed / 0 failed)
+- **Changes**:
+  - `Horizon.Terminal`: fixed `TerminalScreen.Resize` `CursorY` & alternate saved-cursor preservation/clamping; cleared orphaned 2-cell wide-character halves across `EraseInLine`/`EraseCharacters`/`InsertBlankCharacters`/`DeleteCharacters`/`EraseInDisplay` & overwrites; added per-row `TerminalRow.Generation` dirty tracking; fixed `VtParser` strict UTF-8 validation (overlong/surrogate/out-of-range + interrupting byte replay), unified cross-chunk 7-bit `ESC \` & C1 `0x9C` ST handling, and added SIMD `SearchValues`/span ASCII bulk run scanning; fixed `TerminalView` atomic `Arrived`/`Ended` ordering (`exitedState` set before `Wake()`, draining `arrived` & synchronized output before ending), cached font cell measurement, skipped blink wakes when ended, and skipped unchanged `TerminalPanel` edge/backdrop work; fixed `TerminalKeys` non-BMP Kitty rune handling & X10 coordinate clamping; cached `TerminalProfiles.Discover()` and `TerminalCommandLookup` sets.
+  - `Horizon.Tooling`: replaced string-allocating `Content-Length` header parsing with zero-alloc `ReadOnlySpan<byte>` UTF-8 integer parsing (`ContentLengthFraming.cs`); fixed `JsonRpcConnection` & `DebugAdapterConnection` atomic close/dispose ordering so pending requests fail reliably cleanly, synchronized `output.Dispose()` vs `Send`, and replaced `JsonNode.DeepClone()` calls with detach/ownership transfers; added atomic `Failure` visibility & clean `pullTimers` disposal in `LanguageServer`; fixed `DebugSession.Configure` timeout/fault propagation, eliminated blocking `WaitForExit(500)` inside `DebugSession.End()`, and guarded post-await continuations against ended sessions.
+  - Desktop Platform, Audio & Scroll Tracing: added two-phase `WindowWakeGate` cross-thread wake coalescing across `DesktopWindow.Waiting.cs`, `DesktopWindow.cs` (`HandleEvents`), and `DesktopHost.cs` (`PumpUntil`), replacing 1000 Hz fallback spins with OS event waits; replaced 500 Hz `SdlAudioOutput.Pump` busy sleeps with event-signaled waits & progressive silent backoff; added bounded `PlatformDispatcher.TryInvoke` for off-thread `DesktopInput.ClipboardText` marshalling & `WindowsClipboard` progressive retry backoff; fixed `WM_DPICHANGED` re-entrancy & pre-resize scale ordering (`DesktopWindow.Frame.Windows.cs`); buffered `HORIZON_SCROLL_TRACE` file writes in `UIWheel.cs`.
+- **`Horizon.Testing --checks`**: `848 / 848` passed (`0` failed), median wall `37,182.2 ms`; binaries: `Horizon.Testing.exe` `24.74 MiB`, `Hex.exe` `60.15 MiB`
+- **`Horizon.Testing` scenes (Release NativeAOT)**:
+  - `ui-controls`: Startup `588 ms` (`-31 ms` vs P4) | GPU `0.073 ms` | WS/Priv `120.0 / 201.9 MiB` | Render `7,397.3 fps` / `0.137 ms` (**-19.4%** vs P4 `0.170 ms`) / `0 B/t` | Sim `0.150 ms` / `20.9 B/t` | Logic `0.030 ms` / `11.2 B/t` | Physics `0 / 0`
+  - `dungeon`: Startup `674 ms` (**-168 ms** vs P4 `842 ms`) | GPU `2.477 ms` (**-31.1%** vs Baseline) | WS/Priv `168.2 / 366.8 MiB` | Render `400 fps` / `2.513 ms` / `0.5 B/t` | Sim `0.157 ms` / `85.5 B/t` | Logic `0.033 ms` / `73.5 B/t` | Physics `0.010 ms` / `0.9 B/t`
+  - `fluid`: Startup `581 ms` (`-94 ms` vs P4) | GPU `0.067 ms` | WS/Priv `123.3 / 207.9 MiB` | Render `6,228.7 fps` / `0.163 ms` (**-25.9%** vs P4 `0.220 ms`) / `0 B/t` | Sim `1.107 ms` / `23.5 B/t` | Logic `0.027 ms` / `12.8 B/t` | Physics `0.993 ms` / `0 B/t`
+  - `meshes`: Startup `599 ms` | GPU `0.090 ms` | WS/Priv `119.5 / 201.2 MiB` | Render `6,536.7 fps` / `0.153 ms` (**-29.5%** vs P4 `0.217 ms`) / `0 B/t` | Sim `0.100 ms` / `23.1 B/t` | Logic `0.020 ms` / `11.2 B/t` | Physics `0 / 0`
+- **`Hex --selftest`** (`52,248.1 ms`, 7/7 passed):
+  - `idle`: Paint `0.432 ms` (`Layout 0.090`, `Compare 0.017`) | Quads/t `4,962` | Draw `0.170 ms` (**-43.1%** vs P4 `0.299 ms`) | `49,602` up (`3,100 KB`) | GPU `0.695 ms`
+  - `typing`: Paint `0.354 ms` (**-12.2%** vs P4 `0.403 ms`, `Layout 0.043`) | Draw `0.238 ms` (**-18.5%** vs P4 `0.292 ms`) | `699,804` up (`43,738 KB`) | GPU `1.053 ms`
+  - `wheel`: Paint `0.427 ms` | Draw `0.278 ms` | `1,421,695` up (`88,856 KB`) | GPU `1.014 ms`
+  - `drag`: Paint `0.533 ms` (**-49.9%** vs P4 `1.064 ms`) | Draw `0.359 ms` (**-12.0%** vs P4 `0.408 ms`) | GPU `1.809 ms`
+  - `notebook`: Paint `0.636 ms` | Draw `0.229 ms` | GPU `1.125 ms`
+  - `typing csharp`: `Avg 4.4 / Med 4.2 / P95 5.5 / Worst 32.3 ms` | `typing hor`: `Avg 4.2 / Med 4.2 / P95 4.6 / Worst 7.7 ms` (**-35.8%** worst vs P4 `12.0 ms`)
+  - `garbage`: designer `98 B/tick` | code `78 B/tick` | layoutCode `32 B/tick` (**-67.3%** vs P4 `98 B/tick`)
+- **`HexStartup`** (3 cold runs, median):
+  - `Dawn`: `396 ms` first frame | WS `171.3 MiB` | Priv `203.1 MiB` | Idle CPU `1.470%` (samples: `2.447%`, `1.470%`, `0%`)
+  - `Dusk`: `319 ms` first frame | WS `120.9 MiB` | Priv `154.1 MiB` | Idle CPU `6.897%` (**-49.7%** vs P3 `13.707%`, **-6.3%** vs P4 `7.361%`; samples: `6.897%`, `8.332%`, `3.433%`)

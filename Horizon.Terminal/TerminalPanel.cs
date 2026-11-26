@@ -42,6 +42,9 @@ public sealed class TerminalTab
     // The leaves as a list, read again whenever the tree changes, so a tick walks no iterator
     internal readonly List<SplitNode<TerminalView>> Leaves = [];
 
+    // Bumped whenever the tree structure changes, so panel per-tick checks skip unchanged trees
+    internal int TreeVersion;
+
     /// <summary>The pane over the whole of the tab, null while none is (see <see cref="TerminalPanel.ToggleZoom"/>).</summary>
     public SplitNode<TerminalView>? Zoomed { get; internal set; }
 
@@ -55,6 +58,7 @@ public sealed class TerminalTab
     {
         Leaves.Clear();
         Leaves.AddRange(Tree.Leaves);
+        TreeVersion++;
 
         // A split or a pane closed takes the zoom off, what was zoomed is part of a different tree now
         Zoomed = null;
@@ -829,6 +833,20 @@ public partial class TerminalPanel : UIComponent, IDisposable
     /// <summary>How wide the picture is against its own shape, 1 for the shape it has.</summary>
     public float BackdropStretch { get; set; } = 1.0f;
 
+    // Cached inputs for ShowBackdrop and SetEdges so idle ticks skip redundant tree walks and property writes
+    private TerminalTab? backdropTab;
+    private int backdropTreeVersion = -1;
+    private Horizon.Graphics.Texture? backdropTexture;
+    private UIRect backdropArea;
+    private float backdropScale, backdropOpacity, backdropStretch;
+    private Vector2 backdropOffset;
+
+    private TerminalTab? edgesTab;
+    private int edgesTreeVersion = -1;
+    private SplitNode<TerminalView>? edgesZoomed;
+    private bool edgesTitlesAlways;
+    private float edgesMinPane;
+
     /// <summary>Helper method to hand the picture to the panes of the tab that's showing, with the room they take together.</summary>
     private void ShowBackdrop()
     {
@@ -837,17 +855,33 @@ public partial class TerminalPanel : UIComponent, IDisposable
 
         UIRect area = default;
         bool first = true;
-        foreach (SplitNode<TerminalView> leaf in tab.Leaves)
+        var leaves = tab.Leaves;
+        for (int i = 0; i < leaves.Count; i++)
         {
-            if (leaf.Content is not { } view)
+            if (leaves[i].Content is not { } view)
                 continue;
             area = first ? view.Bounds : new UIRect(Vector2.Min(area.Min, view.Bounds.Min), Vector2.Max(area.Max, view.Bounds.Max));
             first = false;
         }
 
-        foreach (SplitNode<TerminalView> leaf in tab.Leaves)
+        if (ReferenceEquals(backdropTab, tab) && backdropTreeVersion == tab.TreeVersion
+            && ReferenceEquals(backdropTexture, Backdrop) && backdropArea == area
+            && backdropScale == BackdropScale && backdropOpacity == BackdropOpacity
+            && backdropOffset == BackdropOffset && backdropStretch == BackdropStretch)
+            return;
+
+        backdropTab = tab;
+        backdropTreeVersion = tab.TreeVersion;
+        backdropTexture = Backdrop;
+        backdropArea = area;
+        backdropScale = BackdropScale;
+        backdropOpacity = BackdropOpacity;
+        backdropOffset = BackdropOffset;
+        backdropStretch = BackdropStretch;
+
+        for (int i = 0; i < leaves.Count; i++)
         {
-            if (leaf.Content is not { } view)
+            if (leaves[i].Content is not { } view)
                 continue;
             view.Backdrop = Backdrop;
             view.BackdropScale = BackdropScale;
@@ -861,7 +895,9 @@ public partial class TerminalPanel : UIComponent, IDisposable
     protected override void Update(float dt)
     {
         base.Update(dt);
-        profilePicker.Visible = Profiles.Count > 1;
+        bool showPicker = Profiles.Count > 1;
+        if (profilePicker.Visible != showPicker)
+            profilePicker.Visible = showPicker;
 
         // Clicking into a pane gives it the keyboard, the tab's focused pane follows that
         if (current is { } tab && Module?.Compositor.Focus is TerminalView focused && focused != tab.FocusedView && tab.Tree.Find(focused) is { } leaf)
@@ -968,6 +1004,17 @@ public partial class TerminalPanel : UIComponent, IDisposable
 
     private void SetEdges(TerminalTab tab)
     {
+        if (ReferenceEquals(edgesTab, tab) && edgesTreeVersion == tab.TreeVersion
+            && ReferenceEquals(edgesZoomed, tab.Zoomed)
+            && edgesTitlesAlways == PaneTitlesAlways && edgesMinPane == MinPane)
+            return;
+
+        edgesTab = tab;
+        edgesTreeVersion = tab.TreeVersion;
+        edgesZoomed = tab.Zoomed;
+        edgesTitlesAlways = PaneTitlesAlways;
+        edgesMinPane = MinPane;
+
         var leaves = tab.Leaves;
         for (int i = 0; i < leaves.Count; i++)
         {

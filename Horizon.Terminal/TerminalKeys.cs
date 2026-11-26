@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 
 using Horizon.Input;
@@ -139,8 +140,8 @@ public static class TerminalKeys
         bool alt = (modifiers & Modifiers.Alt) != 0;
         if ((keyboardFlags & 1) != 0 && (modifiers & (Modifiers.Alt | Modifiers.Control | Modifiers.Super)) != 0 && text.Length > 0)
         {
-            int code = char.ConvertToUtf32(text, 0);
-            return $"\u001b[{(int)char.ToLowerInvariant((char)code)};{(int)modifiers + 1}u";
+            if (Rune.DecodeFromUtf16(text, out Rune rune, out _) == OperationStatus.Done)
+                return $"\u001b[{Rune.ToLowerInvariant(rune).Value};{(int)modifiers + 1}u";
         }
 
         return alt ? "\u001b" + text : text;
@@ -152,15 +153,20 @@ public static class TerminalKeys
     {
         int code = button + ((modifiers & Modifiers.Shift) != 0 ? 4 : 0) + ((modifiers & Modifiers.Alt) != 0 ? 8 : 0) + ((modifiers & Modifiers.Control) != 0 ? 16 : 0) + (motion ? 32 : 0);
         if (sgr)
-            return $"\u001b[<{code};{column + 1};{row + 1}{(pressed ? 'M' : 'm')}";
+            return $"\u001b[<{code};{Math.Clamp(column, 0, int.MaxValue - 1) + 1};{Math.Clamp(row, 0, int.MaxValue - 1) + 1}{(pressed ? 'M' : 'm')}";
 
         if (!pressed)
             code = (code & ~3) | 3;
-        var bytes = new StringBuilder("\u001b[M");
-        bytes.Append((char)(32 + code));
-        bytes.Append((char)Math.Min(255, 33 + column));
-        bytes.Append((char)Math.Min(255, 33 + row));
-        return bytes.ToString();
+
+        // X10 encodes button and 1-based coordinates as single bytes (+32 / +33); clamp to [0..222] so values never wrap past 255
+        Span<char> bytes = stackalloc char[6];
+        bytes[0] = '\u001b';
+        bytes[1] = '[';
+        bytes[2] = 'M';
+        bytes[3] = (char)(32 + Math.Clamp(code, 0, 223));
+        bytes[4] = (char)(33 + Math.Clamp(column, 0, 222));
+        bytes[5] = (char)(33 + Math.Clamp(row, 0, 222));
+        return new string(bytes);
     }
 
     /// <summary>What a paste looks like to a program that asked for bracketed paste, the text between its two marks.</summary>

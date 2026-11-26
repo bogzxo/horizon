@@ -26,11 +26,14 @@ public sealed partial class DebugSession
     public async Task SetFunctionBreakpoints(IEnumerable<string> names)
     {
         if (!Can("supportsFunctionBreakpoints")) throw new InvalidOperationException("The debugger does not support function breakpoints.");
+        if (state == DebugState.Ended) return;
         string[] wanted = names.Select(name => name.Trim()).Where(name => name.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
         await functionUpdates.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (state == DebugState.Ended) return;
             await SendFunctionBreakpoints(wanted, exceptionSelection).ConfigureAwait(false);
+            if (state == DebugState.Ended) return;
             functionNames = wanted;
         }
         finally { functionUpdates.Release(); }
@@ -38,10 +41,12 @@ public sealed partial class DebugSession
 
     private async Task SendFunctionBreakpoints(string[] wanted, IReadOnlySet<string> exceptions)
     {
+        if (state == DebugState.Ended) return;
         var list = new JsonArray(wanted.Select(name => (JsonNode?)new JsonObject { ["name"] = name }).ToArray());
         if (windowsLldb && exceptions.Contains("cpp_throw") && !wanted.Contains("_CxxThrowException", StringComparer.Ordinal))
             list.Add((JsonNode)new JsonObject { ["name"] = "_CxxThrowException" });
         JsonNode? response = await connection.Request("setFunctionBreakpoints", new JsonObject { ["breakpoints"] = list }).ConfigureAwait(false);
+        if (state == DebugState.Ended) return;
         JsonArray? placed = response?["breakpoints"] as JsonArray;
         lock (breakpoints)
             placedFunctions = wanted.Select((name, index) => FunctionPoint(name, index < (placed?.Count ?? 0) ? placed![index] : null)).ToArray();

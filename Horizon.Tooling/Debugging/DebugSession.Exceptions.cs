@@ -20,11 +20,13 @@ public sealed partial class DebugSession
 
     public async Task SetExceptionBreakpoints(IEnumerable<string> filters)
     {
+        if (state == DebugState.Ended) return;
         var selected = filters.ToHashSet(StringComparer.Ordinal);
         var available = ExceptionFilters.Select(filter => filter.Id).ToHashSet(StringComparer.Ordinal);
         if (!selected.IsSubsetOf(available)) throw new ArgumentException("The debugger does not offer this exception filter.", nameof(filters));
         var values = new JsonArray(selected.Order(StringComparer.Ordinal).Select(filter => (JsonNode?)JsonValue.Create(filter)).ToArray());
         await connection.Request("setExceptionBreakpoints", new JsonObject { ["filters"] = values }).ConfigureAwait(false);
+        if (state == DebugState.Ended) return;
         // LLDB's C++ language exception resolver targets the Itanium runtime. MSVC's runtime
         // throws through this exported function instead. Keep the native filter for MinGW programs.
         if (windowsLldb && Can("supportsFunctionBreakpoints"))
@@ -32,7 +34,9 @@ public sealed partial class DebugSession
             await functionUpdates.WaitAsync().ConfigureAwait(false);
             try
             {
+                if (state == DebugState.Ended) return;
                 await SendFunctionBreakpoints(functionNames, selected).ConfigureAwait(false);
+                if (state == DebugState.Ended) return;
                 exceptionSelection = selected;
             }
             finally { functionUpdates.Release(); }

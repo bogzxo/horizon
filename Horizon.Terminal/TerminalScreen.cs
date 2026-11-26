@@ -170,7 +170,9 @@ public sealed partial class TerminalScreen : IVtHandler
         var all = new List<TerminalRow>(scrollback.Count + Rows);
         all.AddRange(scrollback);
         all.AddRange(main);
-        int cursorRow = scrollback.Count + CursorY;
+        int mainCursorX = AlternateScreen ? Math.Clamp(savedMain.X, 0, Columns - 1) : Math.Clamp(CursorX, 0, Columns - 1);
+        int mainCursorY = AlternateScreen ? Math.Clamp(savedMain.Y, 0, Math.Max(0, main.Count - 1)) : Math.Clamp(CursorY, 0, Math.Max(0, main.Count - 1));
+        int cursorRow = scrollback.Count + mainCursorY;
 
         // Blank rows under the cursor on the grid are dropped, or every shrink leaves a trail of them in the scrollback
         int lastUsed = all.Count - 1;
@@ -179,7 +181,7 @@ public sealed partial class TerminalScreen : IVtHandler
         all.RemoveRange(lastUsed + 1, all.Count - lastUsed - 1);
 
         var reflowed = new List<TerminalRow>();
-        int newCursorRow = 0, newCursorX = CursorX;
+        int newCursorRow = 0, newCursorX = mainCursorX;
         for (int i = 0; i < all.Count;)
         {
             // One logical line, every row that wrapped into the next, its marks gathered for the first row it becomes
@@ -204,8 +206,8 @@ public sealed partial class TerminalScreen : IVtHandler
                 int used = row.Wrapped ? row.Length : row.Used;
                 if (i == cursorRow)
                 {
-                    used = Math.Max(used, Math.Min(CursorX, row.Length));
-                    cursorOffset = cells.Count + Math.Min(CursorX, used);
+                    used = Math.Max(used, Math.Min(mainCursorX, row.Length));
+                    cursorOffset = cells.Count + Math.Min(mainCursorX, used);
                 }
                 for (int c = 0; c < used; c++)
                     cells.Add(row.Cells[c]);
@@ -262,13 +264,12 @@ public sealed partial class TerminalScreen : IVtHandler
                 lastPrompt = first;
         }
 
-        // The grid is the last rows, the rest the scrollback, the cursor in sight
+        // The grid is the last rows, the rest the scrollback, the cursor tracked against the actual grid start
         Columns = columns;
         Rows = rows;
         scrollback.Clear();
         main = new List<TerminalRow>(rows);
-        int firstOnGrid = Math.Max(0, Math.Min(reflowed.Count - rows, newCursorRow - rows + 1));
-        firstOnGrid = Math.Max(firstOnGrid, Math.Max(0, newCursorRow - rows + 1));
+        int firstOnGrid = Math.Max(0, reflowed.Count - rows);
         for (int r = 0; r < firstOnGrid; r++)
         {
             reflowed[r].CompactForScrollback();
@@ -284,21 +285,34 @@ public sealed partial class TerminalScreen : IVtHandler
             moved.CompactForScrollback();
             scrollback.Add(moved);
             main.RemoveAt(0);
+            firstOnGrid++;
         }
         TrimScrollback();
 
-        int cursorY = newCursorRow - firstOnGrid;
+        int clampedMainY = Math.Clamp(newCursorRow - firstOnGrid, 0, rows - 1);
+        int clampedMainX = Math.Clamp(newCursorX, 0, columns - 1);
         if (!AlternateScreen)
         {
-            CursorY = Math.Clamp(cursorY, 0, rows - 1);
-            CursorX = Math.Clamp(newCursorX, 0, columns - 1);
+            CursorY = clampedMainY;
+            CursorX = clampedMainX;
+            savedMain = savedMain with { X = Math.Clamp(savedMain.X, 0, columns - 1), Y = Math.Clamp(savedMain.Y, 0, rows - 1) };
+        }
+        else
+        {
+            savedMain = savedMain with { X = clampedMainX, Y = clampedMainY };
         }
 
         // The alternate screen is cut or padded, and the cursor kept on it
         var resized = NewGrid(columns, rows);
         for (int y = 0; y < Math.Min(rows, alternate.Count); y++)
-            Array.Copy(alternate[y].Cells, resized[y].Cells, Math.Min(columns, alternate[y].Length));
+        {
+            int copy = Math.Min(columns, alternate[y].Length);
+            Array.Copy(alternate[y].Cells, resized[y].Cells, copy);
+            if (copy > 0 && resized[y].Cells[copy - 1].Style.Has(TerminalAttributes.Wide))
+                resized[y].Cells[copy - 1] = TerminalCell.Erased(resized[y].Cells[copy - 1].Style);
+        }
         alternate = resized;
+        savedAlternate = savedAlternate with { X = Math.Clamp(savedAlternate.X, 0, columns - 1), Y = Math.Clamp(savedAlternate.Y, 0, rows - 1) };
         if (AlternateScreen)
         {
             CursorY = Math.Clamp(CursorY, 0, rows - 1);
@@ -374,6 +388,7 @@ public sealed partial class TerminalScreen : IVtHandler
                 template.CodePoint = ascii[offset + k];
                 cells[x + k] = template;
             }
+            grid[CursorY].Touch();
 
             offset += count;
             if (end >= columns)
@@ -406,6 +421,7 @@ public sealed partial class TerminalScreen : IVtHandler
                 if (before.IsContinuation && x > 0)
                     before = ref grid[CursorY].Cells[x - 1];
                 before.Combining = (before.Combining ?? string.Empty) + char.ConvertFromUtf32(codePoint);
+                grid[CursorY].Touch();
             }
             return;
         }
@@ -428,7 +444,9 @@ public sealed partial class TerminalScreen : IVtHandler
         // A wide character that doesn't fit at the end goes to the next line, the cell it leaves is blank
         if (width == 2 && CursorX == Columns - 1)
         {
+            ClearWide(grid[CursorY], CursorX);
             grid[CursorY].Cells[CursorX] = TerminalCell.Erased(Style);
+            grid[CursorY].Touch();
             if (autowrap)
             {
                 grid[CursorY].Wrapped = true;
@@ -444,8 +462,11 @@ public sealed partial class TerminalScreen : IVtHandler
         TerminalRow row = grid[CursorY];
         if (insertMode)
         {
+            BreakWideAt(row, CursorX);
             for (int c = Columns - 1; c >= CursorX + width; c--)
                 row.Cells[c] = row.Cells[c - width];
+            if (Columns > 0 && row.Cells[Columns - 1].Style.Has(TerminalAttributes.Wide))
+                row.Cells[Columns - 1] = TerminalCell.Erased(row.Cells[Columns - 1].Style);
         }
 
         // Writing over half of a wide character blanks the other half
@@ -456,6 +477,7 @@ public sealed partial class TerminalScreen : IVtHandler
         row.Cells[CursorX] = new TerminalCell { CodePoint = codePoint, Style = Style with { Attributes = Style.Attributes | (width == 2 ? TerminalAttributes.Wide : 0) } };
         if (width == 2)
             row.Cells[CursorX + 1] = new TerminalCell { CodePoint = 0, Style = Style with { Attributes = Style.Attributes | TerminalAttributes.Continuation } };
+        row.Touch();
 
         CursorX += width;
         if (CursorX >= Columns)
@@ -474,6 +496,16 @@ public sealed partial class TerminalScreen : IVtHandler
             row.Cells[x - 1] = TerminalCell.Erased(row.Cells[x - 1].Style);
         else if (row.Cells[x].Style.Has(TerminalAttributes.Wide) && x + 1 < row.Length)
             row.Cells[x + 1] = TerminalCell.Erased(row.Cells[x + 1].Style);
+    }
+
+    // If a boundary cuts through a wide character (lands on its continuation cell), blank both halves so neither is orphaned
+    private static void BreakWideAt(TerminalRow row, int x)
+    {
+        if (x > 0 && x < row.Length && row.Cells[x].IsContinuation)
+        {
+            row.Cells[x - 1] = TerminalCell.Erased(row.Cells[x - 1].Style);
+            row.Cells[x] = TerminalCell.Erased(row.Cells[x].Style);
+        }
     }
 
     /// <summary>How many cells a character takes, 0 for a mark that combines, 2 for East Asian wide and emoji.</summary>
@@ -615,6 +647,7 @@ public sealed partial class TerminalScreen : IVtHandler
             Array.Fill(row.Cells, TerminalCell.Erased(Style));
         else
             row.Cells = Blanks();
+        row.Touch();
     }
 
     // The cells of a new row off the bottom, the oldest row's of a full scrollback made blank where it is the one to go,
@@ -807,7 +840,7 @@ public sealed partial class TerminalScreen : IVtHandler
             case 'P': DeleteCells(n); break;
             case 'S': ScrollUp(n, top, bottom); break;
             case 'T': ScrollDown(n, top, bottom); break;
-            case 'X': Current[CursorY].Fill(TerminalCell.Erased(Style), CursorX, CursorX + n); pendingWrap = false; break;
+            case 'X': EraseRange(Current[CursorY], CursorX, CursorX + n); pendingWrap = false; break;
             case 'Z': for (int i = 0; i < n; i++) BackTab(); break;
             case 'b': break;
             case 'c': Responses.Append("\u001b[?62;22c"); break;
@@ -863,21 +896,47 @@ public sealed partial class TerminalScreen : IVtHandler
     private void InsertCells(int count)
     {
         TerminalRow row = Current[CursorY];
-        count = Math.Min(count, Columns - CursorX);
-        for (int c = Columns - 1; c >= CursorX + count; c--)
-            row.Cells[c] = row.Cells[c - count];
-        row.Fill(TerminalCell.Erased(Style), CursorX, CursorX + count);
+        count = Math.Clamp(count, 0, Columns - CursorX);
+        if (count > 0)
+        {
+            BreakWideAt(row, CursorX);
+            for (int c = Columns - 1; c >= CursorX + count; c--)
+                row.Cells[c] = row.Cells[c - count];
+            row.Fill(TerminalCell.Erased(Style), CursorX, CursorX + count);
+            if (Columns > 0 && row.Cells[Columns - 1].Style.Has(TerminalAttributes.Wide))
+                row.Cells[Columns - 1] = TerminalCell.Erased(row.Cells[Columns - 1].Style);
+        }
         pendingWrap = false;
     }
 
     private void DeleteCells(int count)
     {
         TerminalRow row = Current[CursorY];
-        count = Math.Min(count, Columns - CursorX);
-        for (int c = CursorX; c < Columns - count; c++)
-            row.Cells[c] = row.Cells[c + count];
-        row.Fill(TerminalCell.Erased(Style), Columns - count, Columns);
+        count = Math.Clamp(count, 0, Columns - CursorX);
+        if (count > 0)
+        {
+            BreakWideAt(row, CursorX);
+            BreakWideAt(row, CursorX + count);
+            for (int c = CursorX; c < Columns - count; c++)
+                row.Cells[c] = row.Cells[c + count];
+            row.Fill(TerminalCell.Erased(Style), Columns - count, Columns);
+        }
         pendingWrap = false;
+    }
+
+    private void EraseRange(TerminalRow row, int from, int to)
+    {
+        from = Math.Clamp(from, 0, row.Length);
+        to = Math.Clamp(to, from, row.Length);
+        if (from >= to)
+            return;
+
+        if (from > 0 && row.Cells[from].IsContinuation)
+            row.Cells[from - 1] = TerminalCell.Erased(row.Cells[from - 1].Style);
+        if (to < row.Length && row.Cells[to - 1].Style.Has(TerminalAttributes.Wide))
+            row.Cells[to] = TerminalCell.Erased(row.Cells[to].Style);
+
+        row.Fill(TerminalCell.Erased(Style), from, to);
     }
 
     private void EraseInDisplay(int mode)
@@ -917,8 +976,8 @@ public sealed partial class TerminalScreen : IVtHandler
         TerminalRow row = Current[CursorY];
         switch (mode)
         {
-            case 0: row.Fill(TerminalCell.Erased(Style), CursorX, Columns); row.Wrapped = false; break;
-            case 1: row.Fill(TerminalCell.Erased(Style), 0, CursorX + 1); break;
+            case 0: EraseRange(row, CursorX, Columns); row.Wrapped = false; break;
+            case 1: EraseRange(row, 0, CursorX + 1); break;
             case 2: row.Fill(TerminalCell.Erased(Style), 0, Columns); row.Wrapped = false; break;
         }
 

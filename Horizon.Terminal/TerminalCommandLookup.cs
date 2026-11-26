@@ -53,6 +53,14 @@ public sealed class TerminalCommandLookup
     private static readonly string[] BashKeywords = ["if", "then", "else", "elif", "do", "while", "until", "sudo", "time", "exec", "nohup", "command", "builtin", "!", "xargs", "env", "watch"];
     private static readonly string[] CmdKeywords = ["call", "start"];
 
+    // Immutable per-shell built-in lookup sets shared across all instances
+    private static readonly HashSet<string> CmdWordSet = new(CmdWords, Names);
+    private static readonly HashSet<string> PowerShellWordSet = new(PowerShellWords, Names);
+    private static readonly HashSet<string> BashWordSet = new(BashWords, Names);
+    private static readonly HashSet<string> EmptyWordSet = new(Names);
+    private static readonly HashSet<string> CmdKeywordSet = new(CmdKeywords, Names);
+    private static readonly HashSet<string> BashKeywordSet = new(BashKeywords, Names);
+
     private static volatile HashSet<string>? pathCommands;
     private static int pathStarted;
 
@@ -71,9 +79,9 @@ public sealed class TerminalCommandLookup
     private FileSystemWatcher? watcher;
 
     /// <summary>Goes up whenever it has learned something, the PATH scanned or the shell's file read, so a line is looked up again.</summary>
-    public int Generation => Volatile.Read(ref generation) + pathGeneration;
+    public int Generation => Volatile.Read(ref generation) + Volatile.Read(ref pathGeneration);
 
-    private static volatile int pathGeneration;
+    private static int pathGeneration;
     private int reading;
 
     /// <param name="kind">Which shell, see <see cref="TerminalIntegration.KindOf"/>.</param>
@@ -82,8 +90,8 @@ public sealed class TerminalCommandLookup
     {
         Kind = kind;
         File = file;
-        words = new HashSet<string>(kind switch { "cmd" => CmdWords, "powershell" => PowerShellWords, "bash" => BashWords, _ => [] }, Names);
-        keywords = new HashSet<string>(kind switch { "cmd" => CmdKeywords, "powershell" => [], _ => BashKeywords }, Names);
+        words = kind switch { "cmd" => CmdWordSet, "powershell" => PowerShellWordSet, "bash" => BashWordSet, _ => EmptyWordSet };
+        keywords = kind switch { "cmd" => CmdKeywordSet, "powershell" => EmptyWordSet, _ => BashKeywordSet };
         wordLookup = words.GetAlternateLookup<ReadOnlySpan<char>>();
         keywordLookup = keywords.GetAlternateLookup<ReadOnlySpan<char>>();
         if (kind is "cmd" or "powershell")
@@ -234,42 +242,48 @@ public sealed class TerminalCommandLookup
 
         Task.Run(() =>
         {
-            var found = new HashSet<string>(Names);
-            string[] extensions = OperatingSystem.IsWindows()
-                ? (Horizon.Core.Processes.ProcessEnvironment.Variable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").Split(';', StringSplitOptions.RemoveEmptyEntries)
-                : [];
-            foreach (string folder in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            try
             {
-                try
+                var found = new HashSet<string>(Names);
+                string[] extensions = OperatingSystem.IsWindows()
+                    ? (Horizon.Core.Processes.ProcessEnvironment.Variable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").Split(';', StringSplitOptions.RemoveEmptyEntries)
+                    : [];
+                foreach (string folder in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
                 {
-                    if (!Directory.Exists(folder))
-                        continue;
-                    foreach (string file in Directory.EnumerateFiles(folder))
+                    try
                     {
-                        string name = Path.GetFileName(file);
-                        if (OperatingSystem.IsWindows())
+                        if (!Directory.Exists(folder))
+                            continue;
+                        foreach (string file in Directory.EnumerateFiles(folder))
                         {
-                            string extension = Path.GetExtension(name);
-                            if (!Array.Exists(extensions, e => e.Equals(extension, StringComparison.OrdinalIgnoreCase)))
-                                continue;
-                            found.Add(name);
-                            found.Add(Path.GetFileNameWithoutExtension(name));
-                        }
-                        else
-                        {
-                            found.Add(name);
+                            string name = Path.GetFileName(file);
+                            if (OperatingSystem.IsWindows())
+                            {
+                                string extension = Path.GetExtension(name);
+                                if (!Array.Exists(extensions, e => e.Equals(extension, StringComparison.OrdinalIgnoreCase)))
+                                    continue;
+                                found.Add(name);
+                                found.Add(Path.GetFileNameWithoutExtension(name));
+                            }
+                            else
+                            {
+                                found.Add(name);
+                            }
                         }
                     }
+                    catch (Exception)
+                    {
+                    }
                 }
-                catch (Exception)
-                {
-                }
-            }
 
-            pathCommands = found;
-            pathGeneration++;
-            pathScanned = path;
-            Volatile.Write(ref pathStarted, 0);
+                pathCommands = found;
+                Interlocked.Increment(ref pathGeneration);
+                pathScanned = path;
+            }
+            finally
+            {
+                Volatile.Write(ref pathStarted, 0);
+            }
         });
     }
 }

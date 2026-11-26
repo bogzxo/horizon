@@ -19,6 +19,7 @@ public sealed partial class DebugSession
                 runTarget = new(file, line, original);
             }
             await SetBreakpointsNow(file, original).ConfigureAwait(false);
+            if (State == DebugState.Ended) return;
             lock (breakpoints)
             {
                 if (!breakpoints.TryGetValue(file, out var placed) || !placed.Any(item => item.Wanted.Line == line && item.Verified))

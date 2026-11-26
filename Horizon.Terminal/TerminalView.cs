@@ -79,7 +79,9 @@ public partial class TerminalView : UIComponent, IDisposable
     private float lastClick;
     private int clicks;
 
-    // What the font came out as this paint, to turn points into cells
+    // What the font came out as this paint, to turn points into cells (cached per font + scale)
+    private UIFont? measuredFont;
+    private float measuredScale;
     private float cellWidth, cellHeight, paintedScale;
     private UIRect paintedArea;
 
@@ -266,7 +268,7 @@ public partial class TerminalView : UIComponent, IDisposable
     /// <summary>A program with no process behind it ended, with its code, which ends the terminal the way a shell ending does.</summary>
     public void End(int code)
     {
-        exitedWith = code;
+        Volatile.Write(ref exitedState, (1L << 32) | (uint)code);
         RequestFrame();
     }
 
@@ -298,20 +300,21 @@ public partial class TerminalView : UIComponent, IDisposable
     public void Send(string text) => Write(text);
 
     // On the pty's thread, queued for the next tick and the window woken for it
-    private void Arrived(byte[] bytes)
+    internal void Arrived(byte[] bytes)
     {
         if (arrived.Count < MAX_PENDING_CHUNKS)
             arrived.Enqueue(bytes);
         GameEngine.Instance?.WindowManager.Wake();
     }
 
-    private void Ended(int code)
+    internal void Ended(int code)
     {
+        Volatile.Write(ref exitedState, (1L << 32) | (uint)code);
         GameEngine.Instance?.WindowManager.Wake();
-        exitedWith = code;
     }
 
-    private int? exitedWith;
+    // Packed atomic exit state: 0 = running, non-zero = (1L << 32) | (uint)exitCode
+    private long exitedState;
 
     protected override void Update(float dt)
     {
@@ -382,11 +385,46 @@ public partial class TerminalView : UIComponent, IDisposable
 
         UpdateScrollBar(dt);
 
-        if (exitedWith is { } code)
+        if (Volatile.Read(ref exitedState) != 0)
         {
-            exitedWith = null;
-            MarkEnded(code);
-            OnExited?.Invoke(code);
+            // Drain any trailing output enqueued before Ended() so nothing written right before exit is dropped
+            bool drainedBeforeExit = false;
+            while (arrived.TryDequeue(out byte[]? trailing))
+            {
+                FeedHeld();
+                screen.Feed(trailing);
+                OnOutput?.Invoke(trailing);
+                changed = true;
+                drainedBeforeExit = true;
+            }
+            if (held.Count > 0)
+            {
+                FeedHeld();
+                changed = true;
+                drainedBeforeExit = true;
+            }
+            if (drainedBeforeExit)
+            {
+                if (screen.Title.Length > 0 && screen.Title != titleSaid)
+                {
+                    titleSaid = screen.Title;
+                    OnTitle?.Invoke(titleSaid);
+                }
+                long moreGone = screen.RowsScrolledOff - scrolledOffSeen;
+                scrolledOffSeen = screen.RowsScrolledOff;
+                if (scrolled > 0 && moreGone > 0)
+                    scrolled = (int)Math.Min(scrolled + moreGone, screen.Scrollback.Count);
+                if (scrolled > screen.Scrollback.Count)
+                    scrolled = screen.Scrollback.Count;
+            }
+
+            long exit = Interlocked.Exchange(ref exitedState, 0L);
+            if (exit != 0)
+            {
+                int code = unchecked((int)exit);
+                MarkEnded(code);
+                OnExited?.Invoke(code);
+            }
         }
 
         lastDt = dt;
@@ -396,9 +434,9 @@ public partial class TerminalView : UIComponent, IDisposable
         // With the motion off (the UI's animation at 0) it stays lit as well, the way the editor's caret does
         bool steady = MotionSpeed <= 0.0f;
         blink = steady || GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
-        if (!steady && IsFocused && screen.CursorVisible && scrolled == 0 && screen.CursorShape is not (2 or 4 or 6) &&
+        if (!steady && IsFocused && EndedWith is null && screen.CursorVisible && scrolled == 0 && screen.CursorShape is not (2 or 4 or 6) &&
             GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
-            blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
+            blinkingWindow.RequestTickIn(MathF.Max(0.001f, BLINK - blink % BLINK));
         if (bell > 0.0f)
             bell = MathF.Max(0.0f, bell - dt);
 
@@ -988,8 +1026,13 @@ public partial class TerminalView : UIComponent, IDisposable
         UIFont font = FontOf(skin);
         float scale = ScaleOf(skin);
         paintedScale = scale;
-        cellWidth = font.Measure("M", scale, markup: false).X;
-        cellHeight = font.LineHeight * scale;
+        if (!ReferenceEquals(measuredFont, font) || measuredScale != scale)
+        {
+            measuredFont = font;
+            measuredScale = scale;
+            cellWidth = font.Measure("M", scale, markup: false).X;
+            cellHeight = font.LineHeight * scale;
+        }
         // The gutter on the left once the shell says its marks, the blocks' marks are drawn in it. A pane with round corners
         // keeps its cells clear of them. The scroll bar and the minimap have room of their own down the right
         float pad = MathF.Max(PADDING, Radius * 0.85f);
@@ -1079,7 +1122,7 @@ public partial class TerminalView : UIComponent, IDisposable
                 cursorAt = wanted;
                 cursorPlaced = true;
             }
-            else
+            else if (cursorAt != wanted)
             {
                 float dt = MathF.Min(0.05f, lastDt);
                 cursorAt += (wanted - cursorAt) * (1.0f - MathF.Exp(-dt / CursorGlide));
@@ -1142,38 +1185,59 @@ public partial class TerminalView : UIComponent, IDisposable
         if (runBuffer.Length < columns * 2)
             runBuffer = new char[columns * 2];
 
+        bool reverseVideo = screen.ReverseVideo;
+        int selFrom = 0, selTo = 0;
+        bool rowSelected = false;
+        if (hasSelection)
+        {
+            var (x1, y1, x2, y2) = SelectionBounds();
+            if (rowIndex >= y1 && rowIndex <= y2)
+            {
+                rowSelected = true;
+                selFrom = rowIndex == y1 ? x1 : 0;
+                selTo = rowIndex == y2 ? x2 + 1 : screen.Columns;
+            }
+        }
+
         // Backgrounds first, then the text, each in runs of one look
+        TerminalCell[] cells = row.Cells;
         int runStart = 0;
         while (runStart < columns)
         {
-            ref TerminalCell first = ref row.Cells[runStart];
+            ref TerminalCell first = ref cells[runStart];
+            bool selected = rowSelected && runStart >= selFrom && runStart < selTo;
+            if (!selected && !reverseVideo && first.Style.Background.IsDefault && !first.Style.Has(TerminalAttributes.Inverse))
+            {
+                int skipEnd = runStart + 1;
+                while (skipEnd < columns && !(rowSelected && skipEnd >= selFrom && skipEnd < selTo)
+                    && cells[skipEnd].Style.Background.IsDefault && !cells[skipEnd].Style.Has(TerminalAttributes.Inverse))
+                    skipEnd++;
+                runStart = skipEnd;
+                continue;
+            }
+
             int runEnd = runStart + 1;
-            bool selected = CellSelected(runStart, rowIndex);
-            while (runEnd < columns && row.Cells[runEnd].Style.LooksLike(first.Style) && CellSelected(runEnd, rowIndex) == selected)
+            while (runEnd < columns && cells[runEnd].Style.LooksLike(first.Style) && (rowSelected && runEnd >= selFrom && runEnd < selTo) == selected)
                 runEnd++;
 
             Vector4 back = BackgroundOf(first.Style, palette);
             if (selected)
                 back = Blend(back, palette.Selection);
-            if (back != palette.Background || selected || screen.ReverseVideo)
+            if (back != palette.Background || selected || reverseVideo)
                 list.Rect(new UIRect(new Vector2(left + runStart * cellWidth, baseline), new Vector2(left + runEnd * cellWidth, top)), back);
 
             runStart = runEnd;
         }
 
         // Compacted scrollback rows omit trailing plain blanks; paint selection over any selected columns past row.Length
-        if (hasSelection && columns < screen.Columns)
+        if (rowSelected && columns < screen.Columns)
         {
-            var (x1, y1, x2, y2) = SelectionBounds();
-            if (rowIndex >= y1 && rowIndex <= y2)
+            int tailFrom = Math.Max(columns, selFrom);
+            int tailTo = Math.Min(screen.Columns, selTo);
+            if (tailFrom < tailTo)
             {
-                int selFrom = Math.Max(columns, rowIndex == y1 ? x1 : 0);
-                int selTo = Math.Min(screen.Columns, rowIndex == y2 ? x2 + 1 : screen.Columns);
-                if (selFrom < selTo)
-                {
-                    Vector4 back = Blend(BackgroundOf(TerminalStyle.Plain, palette), palette.Selection);
-                    list.Rect(new UIRect(new Vector2(left + selFrom * cellWidth, baseline), new Vector2(left + selTo * cellWidth, top)), back);
-                }
+                Vector4 back = Blend(BackgroundOf(TerminalStyle.Plain, palette), palette.Selection);
+                list.Rect(new UIRect(new Vector2(left + tailFrom * cellWidth, baseline), new Vector2(left + tailTo * cellWidth, top)), back);
             }
         }
 
@@ -1182,11 +1246,11 @@ public partial class TerminalView : UIComponent, IDisposable
         runStart = 0;
         while (runStart < columns)
         {
-            ref TerminalCell first = ref row.Cells[runStart];
+            ref TerminalCell first = ref cells[runStart];
             TerminalLineKind kind = onLine ? LineKindOf(rowIndex, runStart) : TerminalLineKind.None;
             byte code = OutputCodeOf(rowIndex, runStart);
             int runEnd = runStart + 1;
-            while (runEnd < columns && row.Cells[runEnd].Style.LooksLike(first.Style) && (!onLine || LineKindOf(rowIndex, runEnd) == kind) && OutputCodeOf(rowIndex, runEnd) == code)
+            while (runEnd < columns && cells[runEnd].Style.LooksLike(first.Style) && (!onLine || LineKindOf(rowIndex, runEnd) == kind) && OutputCodeOf(rowIndex, runEnd) == code)
                 runEnd++;
 
             if (!first.Style.Has(TerminalAttributes.Invisible))
@@ -1224,6 +1288,7 @@ public partial class TerminalView : UIComponent, IDisposable
         bool bold = style.Has(TerminalAttributes.Bold), italic = style.Has(TerminalAttributes.Italic);
         UITextStyle textStyle = (bold ? UITextStyle.Bold : 0) | (italic ? UITextStyle.Italic : 0);
         float y = baseline + cellHeight;
+        TerminalCell[] cells = row.Cells;
 
         int at = from;
         while (at < to)
@@ -1231,26 +1296,33 @@ public partial class TerminalView : UIComponent, IDisposable
             // A stretch of plain narrow cells goes in one piece
             int plainEnd = at;
             int length = 0;
-            while (plainEnd < to && !bold && row.Cells[plainEnd].CodePoint < 0x10000 && row.Cells[plainEnd].Combining is null
-                && TerminalSymbols.IconOf(row.Cells[plainEnd].CodePoint) is null
-                && !row.Cells[plainEnd].Style.Has(TerminalAttributes.Wide | TerminalAttributes.Continuation))
+            bool hasNonSpace = false;
+            while (plainEnd < to && !bold && cells[plainEnd].CodePoint < 0x10000 && cells[plainEnd].Combining is null
+                && TerminalSymbols.IconOf(cells[plainEnd].CodePoint) is null
+                && !cells[plainEnd].Style.Has(TerminalAttributes.Wide | TerminalAttributes.Continuation))
             {
-                runBuffer[length++] = (char)row.Cells[plainEnd].CodePoint;
+                char ch = (char)cells[plainEnd].CodePoint;
+                if (ch != ' ')
+                    hasNonSpace = true;
+                runBuffer[length++] = ch;
                 plainEnd++;
             }
 
             if (length > 0)
             {
-                // Trailing spaces draw nothing
-                int drawn = length;
-                while (drawn > 0 && runBuffer[drawn - 1] == ' ') drawn--;
-                if (drawn > 0)
-                    list.Text(runBuffer.AsSpan(0, drawn), new Vector2(left + at * cellWidth, y), scale, ink, false, textStyle, default);
+                if (hasNonSpace)
+                {
+                    // Trailing spaces draw nothing
+                    int drawn = length;
+                    while (drawn > 0 && runBuffer[drawn - 1] == ' ') drawn--;
+                    if (drawn > 0)
+                        list.Text(runBuffer.AsSpan(0, drawn), new Vector2(left + at * cellWidth, y), scale, ink, false, textStyle, default);
+                }
                 at = plainEnd;
                 continue;
             }
 
-            ref TerminalCell cell = ref row.Cells[at];
+            ref TerminalCell cell = ref cells[at];
             if (!cell.IsContinuation && cell.CodePoint > ' ')
                 PaintCell(list, font, scale, cell, new Vector2(left + at * cellWidth, baseline), Palette, ink, cursorInk: false);
             at++;

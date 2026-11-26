@@ -1,5 +1,5 @@
 using System.Buffers;
-using System.Text;
+using System.Buffers.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -105,23 +105,40 @@ internal sealed class ContentLengthReader(Stream input)
         }
     }
 
-    // The length a Content-Length header says, null for another header. Read the way it was as a string, each byte a
-    // char, trimmed of white space and the case of its name not minded
+    // The length a Content-Length header says, null for another header or an invalid value, parsed directly from UTF-8/ASCII
+    // bytes with no string or char-buffer allocation.
     private static int? ContentLength(ReadOnlySpan<byte> header)
     {
-        const string NAME = "Content-Length:";
-        if (header.Length < NAME.Length)
+        ReadOnlySpan<byte> name = "content-length:"u8;
+        if (header.Length < name.Length)
             return null;
 
-        char[]? rented = null;
-        Span<char> text = header.Length <= 256 ? stackalloc char[header.Length] : (rented = ArrayPool<char>.Shared.Rent(header.Length));
-        Encoding.Latin1.GetChars(header, text);
-        text = text[..header.Length];
-        int? length = text.StartsWith(NAME, StringComparison.OrdinalIgnoreCase) && int.TryParse(text[NAME.Length..].Trim(), out int parsed) ? parsed : null;
-        if (rented is not null)
-            ArrayPool<char>.Shared.Return(rented);
-        return length;
+        for (int i = 0; i < name.Length; i++)
+        {
+            byte b = header[i];
+            if ((uint)(b - 'A') <= ('Z' - 'A'))
+                b |= 0x20;
+            if (b != name[i])
+                return null;
+        }
+
+        ReadOnlySpan<byte> value = header[name.Length..];
+        int first = 0;
+        while (first < value.Length && IsAsciiWhiteSpace(value[first]))
+            first++;
+        int last = value.Length - 1;
+        while (last >= first && IsAsciiWhiteSpace(value[last]))
+            last--;
+        if (first > last)
+            return null;
+
+        value = value[first..(last + 1)];
+        return Utf8Parser.TryParse(value, out int parsed, out int consumed) && consumed == value.Length && parsed >= 0
+            ? parsed
+            : null;
     }
+
+    private static bool IsAsciiWhiteSpace(byte b) => b == ' ' || (uint)(b - '\t') <= ('\r' - '\t');
 }
 
 /// <summary>

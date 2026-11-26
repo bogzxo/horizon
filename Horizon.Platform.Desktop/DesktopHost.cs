@@ -113,6 +113,10 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
 
     public void Invoke(Action work) => dispatcher.Invoke(work);
 
+    internal bool TryInvoke(Action work, int timeoutMs) => dispatcher.TryInvoke(work, timeoutMs);
+
+    internal bool TryInvoke<T>(Func<T> work, int timeoutMs, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out T result) => dispatcher.TryInvoke(work, timeoutMs, out result);
+
     public void Wake() => window?.WakeWindow();
 
     public void RequestClose() => window?.RequestClose();
@@ -147,10 +151,15 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
 
     public void PumpUntil(Task done)
     {
+        if (!done.IsCompleted && window is { } w)
+            _ = done.ContinueWith(static (_, state) => ((DesktopWindow)state!).WakeWindow(), w, TaskContinuationOptions.ExecuteSynchronously);
+
         while (!done.IsCompleted)
         {
+            window?.ConsumeWake();
             dispatcher.Drain();
-            Window.WaitForWork();
+            if (!done.IsCompleted)
+                Window.WaitForWork();
         }
 
         dispatcher.Drain();

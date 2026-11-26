@@ -163,6 +163,11 @@ public sealed class TerminalRow
     /// <summary>What the shell integration marks said of the row, see <see cref="TerminalRowMark"/>.</summary>
     public TerminalRowMark Mark;
 
+    /// <summary>Goes up whenever this row's cells change, so minimap, highlighters and partial redraws skip untouched rows.</summary>
+    public int Generation { get; private set; }
+
+    internal void Touch() => Generation++;
+
     // What a view's minimap made of the row, its runs of ink, kept until the row changes so a minimap of thousands of
     // rows goes through the cells of the few that did (TerminalView.Minimap)
     internal Horizon.UI.Drawing.UIMinimapBar[]? MinimapBars;
@@ -232,8 +237,13 @@ public sealed class TerminalRow
 
     public void Fill(in TerminalCell cell, int from, int to)
     {
-        for (int i = Math.Max(0, from); i < Math.Min(to, Cells.Length); i++)
+        int start = Math.Max(0, from);
+        int end = Math.Min(to, Cells.Length);
+        if (start >= end)
+            return;
+        for (int i = start; i < end; i++)
             Cells[i] = cell;
+        Generation++;
     }
 
     /// <summary>The row as text, for copying and tests, a wide character once and nothing for the cell after it.</summary>

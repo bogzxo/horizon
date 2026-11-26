@@ -45,6 +45,12 @@ public sealed partial class DesktopWindow
             ? WindowsScaleOf(win32.Hwnd)
             : screenScale.X;
 
+        ApplyDisplayScale(scale);
+    }
+
+    /// <summary>Updates the cached display scale and notifies the engine when it changed. Thread of the window.</summary>
+    private void ApplyDisplayScale(float scale)
+    {
         if (!float.IsFinite(scale) || scale <= 0.0f || scale == displayScale)
             return;
 

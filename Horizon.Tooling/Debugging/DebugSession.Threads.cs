@@ -24,8 +24,10 @@ public sealed partial class DebugSession
 
     public async Task<IReadOnlyList<DebugThread>> Threads()
     {
+        if (state == DebugState.Ended) return [];
         if (threadBaseline is { } baseline) await baseline.Task.ConfigureAwait(false);
-        if (await connection.Request("threads").ConfigureAwait(false) is not JsonObject body || body["threads"] is not JsonArray threads) return [];
+        if (state == DebugState.Ended) return [];
+        if (await connection.Request("threads").ConfigureAwait(false) is not JsonObject body || state == DebugState.Ended || body["threads"] is not JsonArray threads) return [];
         return threads.OfType<JsonObject>().Select(thread => new DebugThread(JsonNumbers.Int(thread["id"], 0), thread["name"]?.GetValue<string>() ?? "?")).ToArray();
     }
 
@@ -55,8 +57,9 @@ public sealed partial class DebugSession
 
     private async Task<IReadOnlyList<DebugFrame>> StackTrace(int thread)
     {
+        if (state == DebugState.Ended) return [];
         var frames = new List<DebugFrame>();
-        if (await connection.Request("stackTrace", new JsonObject { ["threadId"] = thread, ["levels"] = 50 }).ConfigureAwait(false) is JsonObject body && body["stackFrames"] is JsonArray list)
+        if (await connection.Request("stackTrace", new JsonObject { ["threadId"] = thread, ["levels"] = 50 }).ConfigureAwait(false) is JsonObject body && state != DebugState.Ended && body["stackFrames"] is JsonArray list)
             foreach (JsonObject one in list.OfType<JsonObject>())
                 frames.Add(new DebugFrame(JsonNumbers.Int(one["id"], 0), one["name"]?.GetValue<string>() ?? "?", one["source"]?["path"]?.GetValue<string>(),
                     Math.Max(0, JsonNumbers.Int(one["line"], 1) - 1), Math.Max(0, JsonNumbers.Int(one["column"], 1) - 1))

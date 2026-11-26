@@ -440,6 +440,8 @@ public sealed partial class DesktopWindow : IPlatformWindow
     /// </summary>
     private void HandleEvents()
     {
+        // Consume any pending wake signal up front so a wakeup that unblocked the OS wait doesn't skip the next wait.
+        wakeGate.TryConsume();
         _window.DoEvents();
         FlushHitTestPress();
         HandOnFileDrops();

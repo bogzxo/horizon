@@ -131,6 +131,9 @@ public sealed partial class DebugSession
 
     private async Task SetBreakpointsNow(string file, IReadOnlyCollection<DebugBreakpoint> set)
     {
+        if (state == DebugState.Ended)
+            return;
+
         lock (breakpoints)
         {
             if (runTarget is { } target && string.Equals(target.File, file, StringComparison.OrdinalIgnoreCase))
@@ -159,6 +162,9 @@ public sealed partial class DebugSession
             ["source"] = new JsonObject { ["path"] = file, ["name"] = Path.GetFileName(file) },
             ["breakpoints"] = list
         }).ConfigureAwait(false);
+
+        if (state == DebugState.Ended)
+            return;
 
         // What it put where, in the order they were asked for, and moved later by its breakpoint events
         if (answer?["breakpoints"] is JsonArray said)
@@ -232,6 +238,8 @@ public sealed partial class DebugSession
             // A C# condition is a bool, only lldb's C has a number that isn't 0 for true
             bool bools = Evaluates is not null;
             DebugEvaluation met = await EvaluateIn(condition, frame).ConfigureAwait(false);
+            if (state == DebugState.Ended)
+                return true;
             switch (met.Value?.Value)
             {
                 case { } value when IsFalse(value, bools):
@@ -258,6 +266,8 @@ public sealed partial class DebugSession
         if (breakpoint.LogMessage is { Length: > 0 } log && !DebuggerLogs)
         {
             string said = await Logged(log, frame).ConfigureAwait(false);
+            if (state == DebugState.Ended)
+                return true;
             happened.Enqueue(new DebugEvent(DebugEventKind.Output, "console\t" + said + "\n", [], 0));
             return GoOnQuietly();
         }
@@ -275,6 +285,8 @@ public sealed partial class DebugSession
     // On from a stop nobody is told of, the thread that stopped going again
     private bool GoOnQuietly()
     {
+        if (state == DebugState.Ended)
+            return true;
         _ = Quietly(connection.Request("continue", new JsonObject { ["threadId"] = stoppedThread }));
         return true;
     }
@@ -296,6 +308,8 @@ public sealed partial class DebugSession
         var said = new StringBuilder();
         foreach (LogPart part in LogParts(message))
         {
+            if (state == DebugState.Ended)
+                break;
             if (!part.Evaluated)
             {
                 said.Append(part.Text.Replace("$FUNCTION", frame.Name, StringComparison.Ordinal));
@@ -303,6 +317,8 @@ public sealed partial class DebugSession
             }
 
             DebugEvaluation value = await EvaluateIn(part.Text, frame).ConfigureAwait(false);
+            if (state == DebugState.Ended)
+                break;
             said.Append(value.Value is { } got ? got.Value : $"<{part.Text}: {value.Error ?? "?"}>");
         }
 

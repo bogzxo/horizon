@@ -67,6 +67,7 @@ public sealed partial class DebugSession
             var active = wanted.Where(point => point.Enabled).ToArray();
             var list = new JsonArray(active.Select(point => (JsonNode?)new JsonObject { ["dataId"] = point.DataId, ["accessType"] = point.AccessType }).ToArray());
             var body = await connection.Request("setDataBreakpoints", new JsonObject { ["breakpoints"] = list }).ConfigureAwait(false);
+            if (State == DebugState.Ended) return false;
             var placed = body?["breakpoints"] as JsonArray;
             int index = 0;
             lock (breakpoints)
