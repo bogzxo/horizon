@@ -181,7 +181,7 @@ internal sealed class PhysicsCheck : Scene, ISelfCheck
             float lowest = float.MaxValue, highest = float.MinValue;
             foreach (ref readonly ParticleState2D drop in _water.Particles.Particles)
             {
-                if (drop.Position.X < 405.0f || drop.Position.X > 635.0f) continue;
+                if (drop.Position.X < 405.0f || drop.Position.X > 645.0f) continue;
                 inside++;
                 lowest = MathF.Min(lowest, drop.Position.Y);
                 highest = MathF.Max(highest, drop.Position.Y);

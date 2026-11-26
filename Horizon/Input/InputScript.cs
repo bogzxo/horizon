@@ -71,8 +71,9 @@ public sealed class InputScript
     /// </summary>
     public InputScript Hold(float at, GamepadInput input, float seconds)
     {
-        _steps.Add(new Step(at, at + MathF.Max(0.0f, seconds), input));
-        Length = MathF.Max(Length, at + seconds);
+        float duration = MathF.Max(0.0f, seconds);
+        _steps.Add(new Step(at, at + duration, input));
+        Length = MathF.Max(Length, at + duration);
         return this;
     }
 
@@ -82,8 +83,9 @@ public sealed class InputScript
     /// <summary>Holds a key of the keyboard down for a while.</summary>
     public InputScript HoldKey(float at, Key key, float seconds)
     {
-        _keySteps.Add(new KeyStep(at, at + MathF.Max(0.0f, seconds), key));
-        Length = MathF.Max(Length, at + seconds);
+        float duration = MathF.Max(0.0f, seconds);
+        _keySteps.Add(new KeyStep(at, at + duration, key));
+        Length = MathF.Max(Length, at + duration);
         return this;
     }
 
@@ -257,11 +259,10 @@ public sealed class InputScript
             name = "Number" + name;
 
         string named = name.Replace("ctrl", "Control", StringComparison.OrdinalIgnoreCase);
-        foreach (string side in new[] { "Left", "Right" })
-        {
-            if (named.Length > side.Length && named.StartsWith(side, StringComparison.OrdinalIgnoreCase))
-                named = named[side.Length..] + side;
-        }
+        if (named.Length > 4 && named.StartsWith("Left", StringComparison.OrdinalIgnoreCase))
+            named = named[4..] + "Left";
+        else if (named.Length > 5 && named.StartsWith("Right", StringComparison.OrdinalIgnoreCase))
+            named = named[5..] + "Right";
 
         // A modifier with no side is the left one, Ctrl is ControlLeft
         if (named.ToLowerInvariant() is "control" or "shift" or "alt" or "super")

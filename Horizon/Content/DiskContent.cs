@@ -5,7 +5,12 @@ public sealed class DiskContent(string? root = null) : IContentFiles
 {
     private readonly string? root = root is null ? null : Path.GetFullPath(root);
     public string Root => root ?? Environment.CurrentDirectory;
-    public string ResolvePath(string path) => Path.GetFullPath(path.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar), Root);
+    private static readonly char OtherSeparator = Path.DirectorySeparatorChar == '/' ? '\\' : '/';
+    public string ResolvePath(string path)
+    {
+        string normalized = path.Contains(OtherSeparator) ? path.Replace(OtherSeparator, Path.DirectorySeparatorChar) : path;
+        return Path.GetFullPath(normalized, Root);
+    }
     public Stream OpenRead(string path) => File.OpenRead(ResolvePath(path));
     public bool Exists(string path) => File.Exists(ResolvePath(path));
     public bool DirectoryExists(string path) => Directory.Exists(ResolvePath(path));

@@ -81,15 +81,17 @@ Directory: `Horizon.Platform.Desktop/`.
   DragArea only on SDL; HotKeys only custom-frame on Windows). `Attach` creates `DesktopWindow`; `Initialize` binds the
   dispatcher thread, creates `DesktopInput`, then `SilkSurface`. `Run()` -> `Window.RunUntilClosed()`.
 - `SilkSurface.cs` (Vulkan surface from Silk `IVkSurface`), `Win32SurfaceAhead.cs` (Windows present-without-surface probe).
-- `Window/DesktopWindow*.cs` - partial class split by concern: `.cs` (main), `.Sdl.cs`, `.Frame.cs` + `.Frame.Windows.cs`
+- `Window/DesktopWindow*.cs` - partial class split by concern: `.cs` (main), `.Sdl.cs`, `.Frame.cs` + `.Frame.Windows.cs` + `.Mac.cs`
   (custom/borderless frame), `.HitTest.cs`, `.Corners.cs`, `.DisplayScale.cs`, `.Icon.cs`, `.Quake.cs` (drop-down terminal
-  window, `PlatformFeatures.DropDown`), `.Waiting.cs` (event-wait loop).
+  window, `PlatformFeatures.DropDown`), `.Waiting.cs` (event-wait loop), `WindowsDropTarget.cs` (OLE file drop).
 - `Input/` - `DesktopInput`, GLFW wrappers (`Glfw/GlfwKeyboard|Mouse|Cursor`, `GlfwInputWithoutGamepads`), `SilkInputSource`,
-  `SilkGamepadSource`, `WindowsClipboard`, `WindowsTouch`.
+  `SilkGamepadSource`, `SdlTextEditing` (IME preedit + intact UTF-8 emoji commits), `WindowsClipboard`, `WindowsTouch`.
 - `Linux/` - `LinuxTouchpadState` (pure state machine tested in `Horizon.Tests/Input/LinuxTouchpadTests.cs`), `WaylandTouchpad`
   (native `libwayland-client.so.0` `wl_pointer` + `zwp_pointer_gestures_v1` v3 pinch/swipe/hold monitor attached to SDL's
   `wl_display` for 1:1 pixel scrolling, `axis_stop` release phase for glide/overscroll, hold-to-stop momentum, pinch zoom,
   and 3+ finger swipe), `X11Touchpad` (`libXi.so.6` XInput 2.4 `XI_GesturePinch*` / `XI_GestureSwipe*` via `SDL_SYSWMEVENT`).
+- `Mac/` - `MacMain.cs`, `MacScrollWatch.cs`, and native AppKit window/menu/chrome/dialog/appearance helpers (`13 Mac/*.cs` files).
+- `Power/DesktopPower.cs` - `[ModuleInitializer]` OS Low Power Mode observer across Windows, Linux, and macOS.
 - `SdlAudioOutput.cs` - SDL audio, `IAudioOutput`.
 
 Windowing backend choice (`Window/DesktopWindow.Sdl.cs:15`): `HORIZON_WINDOWING=glfw|sdl`; default is **GLFW on Windows,
@@ -167,7 +169,7 @@ a Mac with Xcode 27 + the .NET 11 iOS workload (see memory note: iOS builds happ
   `IosSession` (+`.Surface.cs`; process singleton `IosSession.Current`, one engine at a time, engine made first time the view lays out with a size).
 - `Bootstrap/IosBootstrap.cs`, `IosLogger.cs` (console + `Documents/debug.log`), `Content/IosContent.cs` (bundle as content),
   `Storage/IosStorage.cs` (Application Support + Caches), `Surface/IosSurface.cs` (`VK_KHR_surface`, `VK_EXT_metal_surface` via MoltenVK).
-- `Input/IosPointers` (touch/Pencil/trackpad), `IosKeys` (HID usage), `IosInput` (soft keyboard via UIKeyInput), `IosGamepads` (README says "Controllers aren't read yet" but a 191-line `IosGamepads.cs` exists; status unclear).
+- `Input/IosPointers` (touch/Pencil/trackpad), `IosKeys` (HID usage), `IosInput` (soft keyboard via UIKeyInput), `IosGamepads` (verified implemented: polls gamepads via `CADisplayLink`, wired from `IosInput.OpenGamepads()`).
 - `Audio/IosAudioOutput.cs` (AVAudioEngine one source node, ambient session).
 - Lifecycle: background => detach swapchain + surface (Metal kills GPU use in background); resign active => pause audio, release touches/keys.
 - Settings: `Documents/horizon.env` then process env (simulator fills from `SIMCTL_CHILD_HORIZON_*`). `HORIZON_SHADERS` always `packed`.
@@ -205,7 +207,7 @@ Core types (all `Horizon.Terminal/`):
 - `VtParser.cs` (`IVtHandler`, `VtParams`) - escape-sequence state machine incl. colon sub-params.
 - `TerminalScreen.cs` (1177 lines) - grid of `TerminalCell` (`TerminalCell.cs`), scrollback (default 10000), modes
   (alt screen, bracketed paste, mouse, origin, autowrap), OSC title/hyperlinks (OSC 8), reflowing resize; `Responses` = bytes to send back to the process.
-- `TerminalView.cs` + partials (`.Blocks`, `.Completion`, `.Editor`, `.Line`, `.Minimap`, `.Output`, `.Pane`, `.ScrollBar`) - UI component (kind name `terminal`). `Start(commandLine, folder, env)` spawns a pty via `PseudoTerminal.Start(... PseudoTerminal.DefaultShell() ...)` (`TerminalView.cs:206`); `Attach(PseudoTerminal)`; `Start(ITerminalProgram)` runs a process-less program.
+- `TerminalView.cs` + partials (`.Blocks`, `.Completion`, `.Editor`, `.Ended`, `.Ghost`, `.Line`, `.Minimap`, `.Output` (`TerminalOutputHighlighter`), `.Pane`, `.ScrollBar`, `.Secret`) - UI component (kind name `terminal`), using `PaintVersion` draw tracking. `Start(commandLine, folder, env)` spawns a pty via `PseudoTerminal.Start(... PseudoTerminal.DefaultShell() ...)` (`TerminalView.cs:206`); `Attach(PseudoTerminal)`; `Start(ITerminalProgram)` runs a process-less program. `TerminalSymbols.cs` & `TerminalDroppedPaths.cs` handle symbol icons and drag-dropped paths.
 - `TerminalPanel.cs` (tabs: `TerminalTab` holds a `SplitTree<TerminalView>` from `SplitTree.cs`), `.Find.cs`, `.Overflow.cs`. Kind `terminal_panel`.
 - `TerminalBlocks.cs` (command blocks from shell integration), `TerminalLine/LineCompletion/CommandLookup`, `TerminalKeys.cs`, `TerminalProfile.cs`, `TerminalOutputHighlighter.cs`.
 - `TerminalKinds.cs` - `[ModuleInitializer]` registers `terminal`/`terminal_panel` UI kinds and settings help; `TerminalKinds.Register()` explicit.
@@ -227,14 +229,14 @@ Tests: `Horizon.Tests/UI/Terminal*Tests.cs` (~25 files: Screen, Host, Tui, LineE
 "What's for an editor and not for a game, out of the engine" (csproj comment). Namespace `Horizon.UI.Scripting`. Two clients, no UI:
 
 Language server client (`Horizon.Tooling/LanguageServers/`):
-- `JsonRpcConnection.cs` - JSON-RPC over streams (`Request`, `Notify`, `OnNotification`, `OnRequest`, `OnRequestLater`, `Closed`); throws `RemoteException(code,msg)`.
+- `ContentLengthFraming.cs`, `JsonNumbers.cs`, `JsonRpcConnection.cs` - `Content-Length` framed JSON-RPC over streams (`Request`, `Notify`, `OnNotification`, `OnRequest`, `OnRequestLater`, `Closed`), optional `HORIZON_LSP_TRACE` traffic log; throws `RemoteException(code,msg)`.
 - `LanguageServers.cs` - static registry. `Register(name, command, args, languageId, extensions, settings?)` (e.g. csharp-ls for .cs, pyright for .py per the doc comment); `RegistrationFor(path)`; `For(path, rootDirectory, selectedSolution?, ...)` lazily starts a server per (registration, root, solution) and returns null if the command is not on the machine (callers must tolerate null); `Running`, `Stop`, `StopUnder(folder)`, `StopAll()`, `IsAvailable(cmd)`, `SolutionIn(folder)`.
-- `LanguageServer.cs` (+ ~15 partials: Navigation, Edits, Semantic, Hierarchy, Synchronization, Questions, CodeLens, Folding, Highlights, Selection, TypeHierarchy, OnTypeFormatting, DiagnosticLocations, EditRequest, Sources, HeaderSource). `LanguageServer.Start(name, command, args, languageId, root, settings)`, `Over(name, languageId, root, input, output)` (stream pair, for tests); `Open/Change/Close(path,text)`, `FilesChanged`, `Complete(path,line,char,start,trigger,again)`, `TryTake(out path, out diagnostics)` (polled by the UI), `IsRunning/IsReady/Failure/ErrorOutput`, `Woken` callback. Output types come from `Horizon.UI` (`UICompletion`, `UICodeDiagnostic`).
+- `LanguageServer.cs` (+ ~18 partials: Navigation, Edits, Semantic, Hierarchy, Synchronization, Questions, CodeLens, Folding, Highlights, Selection, TypeHierarchy, OnTypeFormatting, DiagnosticLocations, EditRequest, PullDiagnostics, Watchers, Sources, HeaderSource). `LanguageServer.Start(...)`, `Over(...)` (stream pair, for tests); `Open/Change/Close(path,text)`, `HoldBackground` typing debounce, `FilesChanged`, `Complete(...)`, `TryTake(out path, out diagnostics)` (polled by the UI), `IsRunning/IsReady/Failure/ErrorOutput`, `Woken` callback. Output types come from `Horizon.UI` (`UICompletion`, `UICodeDiagnostic`).
 - `LanguageServerProgram.cs` (`Locate` finds command on PATH incl. PATHEXT), `LanguageServerSemantics.cs`, `LanguageServerOutput.cs`.
 
 Debug adapter client (`Horizon.Tooling/Debugging/`):
 - `DebugAdapterConnection.cs` - DAP framing (`Content-Length` headers), `Request(command, args)`, `OnEvent`.
-- `DebugSession.cs` (+ partials Breakpoints, SourceBreakpoints, DataBreakpoints, InstructionBreakpoints, Functions, Exceptions, Goto, RunTo, Memory, Disassembly, Modules, Threads, Sources, Completions). `DebugSession.Start(command, args)` / `Over(input, output)`; `Launch(program, args, workdir, breakpointsByFile, kind = CORECLR|PYTHON "debugpy", ...)`, `Attach(pid, ...)`, `Continue/StepOver/StepIn/StepOut/Pause/Stop`, `Scopes/Variables/Evaluate/TryEvaluate/SetVariable`, event queue via `TryTake(out DebugEvent)`, `State` (`DebugState`), `JustMyCode`. Records: `DebugFrame`, `DebugScope`, `DebugVariable`, `DebugEvaluation`, `DebugEvent`/`DebugEventKind`, `DebugException`.
+- `DebugSession.cs` (+ `StartIsolated` / `lldb-dap` support, partials Breakpoints, SourceBreakpoints, DataBreakpoints, InstructionBreakpoints, Functions, Exceptions, Goto, RunTo, Memory, Disassembly, Modules, Threads, Sources, Completions). `DebugSession.Start(command, args)` / `Over(input, output)`; `Launch(program, args, workdir, breakpointsByFile, kind = CORECLR|PYTHON "debugpy", ...)`, `Attach(pid, ...)`, `Continue/StepOver/StepIn/StepOut/Pause/Stop`, `Scopes/Variables/Evaluate/TryEvaluate/SetVariable`, event queue via `TryTake(out DebugEvent)`, `State` (`DebugState`), `JustMyCode`. Records: `DebugFrame`, `DebugScope`, `DebugVariable`, `DebugEvaluation`, `DebugEvent`/`DebugEventKind`, `DebugException`.
 - Real adapter expected: netcoredbg (tests look next to Hex's exe at `hex/Hex/bin/Debug/net11.0/netcoredbg/netcoredbg.exe`, on PATH, or `HEX_NETCOREDBG`).
 
 Tests: `Horizon.Tests/Scripting/DebugSession*Tests.cs` (hand-played adapter over pipes, always runs; netcoredbg cases only when it's installed),
@@ -411,7 +413,7 @@ Mirror Android/iOS: `IPlatform` + `IPlatformHost` + `IPlatformSurface` + `IPlatf
 
 - Whether `Horizon.Shaders.Build` is meant to be in `Horizon.sln` (it is listed; `tasks.hor` comment says it isn't).
 - Whether Qodana is actually run anywhere (config exists, no workflow).
-- iOS gamepad support status (README vs `IosGamepads.cs`).
+- iOS gamepad support: `IosGamepads.cs` is implemented (polls controllers via `CADisplayLink` and is wired in `IosInput.OpenGamepads()`), though `Horizon.Platform.iOS/README.md` still notes gamepads as unimplemented.
 - Release signing for Android/iOS (only debug auto-signing documented).
 - Location of the referenced `notes/android-plan.md`, `android-host-results.md`.
-- Whether Platform.Desktop actually has a dedicated Linux/Wayland path beyond SDL defaults (only `DragArea` is gated; no further verification done).
+- Desktop Linux Wayland/X11: `WaylandTouchpad.cs`, `X11Touchpad.cs`, `LinuxTouchpadState.cs` are implemented and verified; `ConfigureLinuxSdlLoader` prefers system Wayland-capable SDL2 on Wayland sessions.

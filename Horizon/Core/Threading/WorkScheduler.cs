@@ -157,11 +157,17 @@ public sealed class WorkScheduler
         Start(key, title, context => Task.Run(() => work(context), context.Token), done, cancellable);
 
     /// <summary>Work with a result, handed to <paramref name="done"/> on the UI's thread, default when it didn't succeed.</summary>
-    public WorkItem Start<T>(string key, string title, Func<WorkContext, Task<T>> work, Action<WorkItem, T?> done, bool cancellable = true)
-    {
-        T? result = default;
-        return Start(key, title, async context => result = await work(context).ConfigureAwait(false), item => done(item, item.State == WorkState.Succeeded ? result : default), cancellable);
-    }
+    public WorkItem Start<T>(string key, string title, Func<WorkContext, Task<T>> work, Action<WorkItem, T?> done, bool cancellable = true) =>
+        Start(
+            key,
+            title,
+            async context =>
+            {
+                T value = await work(context).ConfigureAwait(false);
+                context.SetResult(value);
+            },
+            item => done(item, item.State == WorkState.Succeeded && item.Result is T typed ? typed : default),
+            cancellable);
 
     /// <summary>Asks everything waiting or going to stop.</summary>
     public void CancelAll()

@@ -98,7 +98,7 @@ public sealed partial class InputManager : GameComponent, IDisposable
     /// </summary>
     private void UpdateScript(float dt)
     {
-        if (_script is null) return;
+        if (_script is null || !float.IsFinite(dt) || dt < 0.0f) return;
 
         float from = _scriptTime;
         _scriptTime += dt;
@@ -130,7 +130,9 @@ public sealed partial class InputManager : GameComponent, IDisposable
     private void PlayScriptKeys(float after, float upTo)
     {
         _script!.KeyEdges(after, upTo, _scriptEdges);
-        _scriptEdges.Sort(static (a, b) => a.Time != b.Time ? a.Time.CompareTo(b.Time) : Order(a).CompareTo(Order(b)));
+        if (_scriptEdges.Count == 0) return;
+        if (_scriptEdges.Count > 1)
+            _scriptEdges.Sort(static (a, b) => a.Time != b.Time ? a.Time.CompareTo(b.Time) : Order(a).CompareTo(Order(b)));
 
         foreach (var (_, key, down) in _scriptEdges)
         {

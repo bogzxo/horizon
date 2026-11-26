@@ -60,6 +60,9 @@ public class PhysicsWorld : GameComponent
     private readonly List<PhysicsParticleFeed> particleFeeds = [];
     private readonly PhysicsStaticGrid staticGrid = new();
     private PhysicsShape[] dynamicShapes = new PhysicsShape[16];
+    private Vector2[] dynamicMin = [];
+    private Vector2[] dynamicMax = [];
+    private bool[] dynamicHasBounds = [];
 
     // Forces act over time, so they wait here to be applied during the next step
     private readonly List<(Vector2 Centre, float Radius, float Force, PhysicsRadialTargets Targets, PhysicsBodyComponent2D? Except)> radialForces = [];
@@ -241,8 +244,8 @@ public class PhysicsWorld : GameComponent
         }
         radialForces.Clear();
 
-        // 1. Reset contact state across dynamic and kinematic fixtures
-        foreach (var body in dynamicBodies)
+        // 1. Reset contact state across static, dynamic and kinematic fixtures
+        foreach (var body in StaticBodies)
         {
             foreach (var fixture in body.DynamicFixtures)
             {
@@ -258,6 +261,49 @@ public class PhysicsWorld : GameComponent
 
         foreach (var body in dynamicBodies)
         {
+            foreach (var fixture in body.DynamicFixtures)
+            {
+                fixture.IsTouching = false;
+                fixture.ActiveContacts.Clear();
+            }
+            foreach (var fixture in body.KinematicFixtures)
+            {
+                fixture.IsTouching = false;
+                fixture.ActiveContacts.Clear();
+            }
+        }
+
+        // Precompute aggregate world AABBs for dynamic bodies so dynamic-vs-dynamic broadphase skips distant bodies
+        int dynamicCount = dynamicBodies.Length;
+        if (dynamicCount > dynamicMin.Length)
+        {
+            int size = Math.Max(dynamicCount, Math.Max(dynamicMin.Length * 2, 16));
+            dynamicMin = new Vector2[size];
+            dynamicMax = new Vector2[size];
+            dynamicHasBounds = new bool[size];
+        }
+
+        for (int i = 0; i < dynamicCount; i++)
+        {
+            var body = dynamicBodies[i];
+            Vector2 min = new(float.MaxValue), max = new(float.MinValue);
+            bool hasBounds = false;
+            foreach (var fixture in body.DynamicFixtures)
+            {
+                if (!PhysicsShape.TryCreate(fixture, body.Position, Vector2.Zero, out var shape)) continue;
+                min = Vector2.Min(min, shape.Min);
+                max = Vector2.Max(max, shape.Max);
+                hasBounds = true;
+            }
+            dynamicMin[i] = min;
+            dynamicMax[i] = max;
+            dynamicHasBounds[i] = hasBounds;
+        }
+
+        for (int bodyIndex = 0; bodyIndex < dynamicCount; bodyIndex++)
+        {
+            var body = dynamicBodies[bodyIndex];
+
             // 2. Gravity is an acceleration and goes on as one, whatever the body weighs. A feather and a piano fall
             // alike, Galileo said so and he was nearly burned for less
             body.Velocity += (Gravity * body.GravityScale + (body.Force * body.InverseMass)) * dt;
@@ -281,116 +327,203 @@ public class PhysicsWorld : GameComponent
             // 3. Resolve X Axis
             var currentPosition = body.Position;
             var nextPositionX = new Vector2(currentPosition.X + body.Velocity.X * dt, currentPosition.Y);
+            bool bouncedX = false;
 
             foreach (var fixture in body.DynamicFixtures)
             {
+                bool hasLocal = PhysicsShape.TryCreate(fixture, Vector2.Zero, Vector2.Zero, out var local);
+
                 // Test against static bodies, the grid hands us only the ones nearby...
-                foreach (int candidate in FindStaticCandidates(fixture, currentPosition, nextPositionX))
+                if (hasLocal)
                 {
-                    var otherFixture = staticGrid.GetFixture(candidate);
-
-                    // A platform is nothing to walk into, only something to land on
-                    if (otherFixture.OneWay) continue;
-
-                    if (fixture.TestIntersection(otherFixture, nextPositionX, staticGrid.GetBodyPosition(candidate)))
+                    foreach (int candidate in staticGrid.Query(Vector2.Min(currentPosition, nextPositionX) + local.Min, Vector2.Max(currentPosition, nextPositionX) + local.Max))
                     {
-                        nextPositionX.X = body.StopsFlush
-                            ? currentPosition.X + (nextPositionX.X - currentPosition.X) * Reach(fixture, otherFixture, currentPosition, nextPositionX, staticGrid.GetBodyPosition(candidate))
-                            : currentPosition.X;
-                        body.Velocity = new Vector2(Bounce(body.Velocity.X, body.Restitution, dt), body.Velocity.Y);
+                        var otherFixture = staticGrid.GetFixture(candidate);
 
-                        fixture.IsTouching = true;
-                        otherFixture.IsTouching = true;
-                        fixture.ActiveContacts.Add(otherFixture);
-                    }
-                }
+                        // A platform is nothing to walk into, only something to land on
+                        if (otherFixture.OneWay) continue;
 
-                // Test against dynamic bodies...
-                foreach (var other in dynamicBodies)
-                {
-                    // Yeah lets not collide with ourselves, or with our own kind
-                    if (other == body || SameGroup(body, other)) continue;
-
-                    foreach (var otherFixture in other.DynamicFixtures)
-                    {
-                        if (fixture.TestIntersection(otherFixture, nextPositionX, other.Position))
+                        if (fixture.TestIntersection(otherFixture, nextPositionX, staticGrid.GetBodyPosition(candidate)))
                         {
-                            if (BodiesPush)
-                            {
-                                // Right up against it if it stops flush, or pushing something along is a stutter
-                                nextPositionX.X = body.StopsFlush
-                                    ? currentPosition.X + (nextPositionX.X - currentPosition.X) * Reach(fixture, otherFixture, currentPosition, nextPositionX, other.Position)
-                                    : currentPosition.X;
-                                Shove(body, other, sideways: true);
-                            }
-                            else
-                            {
-                                nextPositionX.X = currentPosition.X;
-                                body.Velocity = new Vector2(-body.Velocity.X * body.Restitution, body.Velocity.Y);
+                            nextPositionX.X = body.StopsFlush
+                                ? currentPosition.X + (nextPositionX.X - currentPosition.X) * Reach(fixture, otherFixture, currentPosition, nextPositionX, staticGrid.GetBodyPosition(candidate))
+                                : currentPosition.X;
 
-                                other.Velocity = -body.Velocity;
+                            if (!bouncedX)
+                            {
+                                body.Velocity = new Vector2(Bounce(body.Velocity.X, body.Restitution, dt), body.Velocity.Y);
+                                bouncedX = true;
                             }
 
                             fixture.IsTouching = true;
                             otherFixture.IsTouching = true;
                             fixture.ActiveContacts.Add(otherFixture);
+                            otherFixture.ActiveContacts.Add(fixture);
+                        }
+                    }
+                }
+
+                // Test against dynamic bodies...
+                if (dynamicCount > 1)
+                {
+                    Vector2 boxMinX = hasLocal ? nextPositionX + local.Min : default;
+                    Vector2 boxMaxX = hasLocal ? nextPositionX + local.Max : default;
+
+                    for (int otherIndex = 0; otherIndex < dynamicCount; otherIndex++)
+                    {
+                        // Yeah lets not collide with ourselves, or with distant bodies
+                        if (otherIndex == bodyIndex) continue;
+                        if (hasLocal && (!dynamicHasBounds[otherIndex] ||
+                            boxMaxX.X < dynamicMin[otherIndex].X || boxMinX.X > dynamicMax[otherIndex].X ||
+                            boxMaxX.Y < dynamicMin[otherIndex].Y || boxMinX.Y > dynamicMax[otherIndex].Y)) continue;
+
+                        var other = dynamicBodies[otherIndex];
+                        if (SameGroup(body, other)) continue;
+
+                        bool resolvedOther = false;
+                        foreach (var otherFixture in other.DynamicFixtures)
+                        {
+                            if (fixture.TestIntersection(otherFixture, nextPositionX, other.Position))
+                            {
+                                if (BodiesPush)
+                                {
+                                    // Right up against it if it stops flush, or pushing something along is a stutter
+                                    nextPositionX.X = body.StopsFlush
+                                        ? currentPosition.X + (nextPositionX.X - currentPosition.X) * Reach(fixture, otherFixture, currentPosition, nextPositionX, other.Position)
+                                        : currentPosition.X;
+                                    if (!resolvedOther)
+                                    {
+                                        Shove(body, other, sideways: true);
+                                        resolvedOther = true;
+                                    }
+                                }
+                                else
+                                {
+                                    nextPositionX.X = currentPosition.X;
+                                    if (!bouncedX)
+                                    {
+                                        body.Velocity = new Vector2(-body.Velocity.X * body.Restitution, body.Velocity.Y);
+                                        bouncedX = true;
+                                    }
+                                    if (!resolvedOther)
+                                    {
+                                        other.Velocity = new Vector2(-body.Velocity.X, other.Velocity.Y);
+                                        resolvedOther = true;
+                                    }
+                                }
+
+                                if (hasLocal)
+                                {
+                                    boxMinX = nextPositionX + local.Min;
+                                    boxMaxX = nextPositionX + local.Max;
+                                }
+
+                                fixture.IsTouching = true;
+                                otherFixture.IsTouching = true;
+                                fixture.ActiveContacts.Add(otherFixture);
+                                otherFixture.ActiveContacts.Add(fixture);
+                            }
                         }
                     }
                 }
             }
 
             // 4. Resolve Y Axis using updated X position
+            var startPositionY = new Vector2(nextPositionX.X, currentPosition.Y);
             var nextPositionY = new Vector2(nextPositionX.X, currentPosition.Y + body.Velocity.Y * dt);
+            bool bouncedY = false;
 
             foreach (var fixture in body.DynamicFixtures)
             {
+                bool hasLocal = PhysicsShape.TryCreate(fixture, Vector2.Zero, Vector2.Zero, out var local);
+
                 // Test against static bodies, the grid hands us only the ones nearby...
-                foreach (int candidate in FindStaticCandidates(fixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY))
+                if (hasLocal)
                 {
-                    var otherFixture = staticGrid.GetFixture(candidate);
-                    if (otherFixture.OneWay && !LandsOn(body, fixture, candidate, new Vector2(nextPositionX.X, currentPosition.Y))) continue;
-
-                    if (fixture.TestIntersection(otherFixture, nextPositionY, staticGrid.GetBodyPosition(candidate)))
+                    foreach (int candidate in staticGrid.Query(Vector2.Min(startPositionY, nextPositionY) + local.Min, Vector2.Max(startPositionY, nextPositionY) + local.Max))
                     {
-                        nextPositionY.Y = body.StopsFlush
-                            ? currentPosition.Y + (nextPositionY.Y - currentPosition.Y) * Reach(fixture, otherFixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY, staticGrid.GetBodyPosition(candidate))
-                            : currentPosition.Y;
-                        body.Velocity = new Vector2(body.Velocity.X, Bounce(body.Velocity.Y, body.Restitution, dt));
+                        var otherFixture = staticGrid.GetFixture(candidate);
+                        if (otherFixture.OneWay && !LandsOn(body, fixture, candidate, startPositionY)) continue;
 
-                        fixture.IsTouching = true;
-                        otherFixture.IsTouching = true;
-                        fixture.ActiveContacts.Add(otherFixture);
-                    }
-                }
-
-                // Test against dynamic bodies...
-                foreach (var other in dynamicBodies)
-                {
-                    // Yeah lets not collide with ourselves, or with our own kind
-                    if (other == body || SameGroup(body, other)) continue;
-
-                    foreach (var otherFixture in other.DynamicFixtures)
-                    {
-                        if (fixture.TestIntersection(otherFixture, nextPositionY, other.Position))
+                        if (fixture.TestIntersection(otherFixture, nextPositionY, staticGrid.GetBodyPosition(candidate)))
                         {
-                            if (BodiesPush)
-                            {
-                                nextPositionY.Y = body.StopsFlush
-                                    ? currentPosition.Y + (nextPositionY.Y - currentPosition.Y) * Reach(fixture, otherFixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY, other.Position)
-                                    : currentPosition.Y;
-                                Shove(body, other, sideways: false);
-                            }
-                            else
-                            {
-                                nextPositionY.Y = currentPosition.Y;
-                                body.Velocity = new Vector2(body.Velocity.X, -body.Velocity.Y * body.Restitution);
+                            nextPositionY.Y = body.StopsFlush
+                                ? currentPosition.Y + (nextPositionY.Y - currentPosition.Y) * Reach(fixture, otherFixture, startPositionY, nextPositionY, staticGrid.GetBodyPosition(candidate))
+                                : currentPosition.Y;
 
-                                other.Velocity = -body.Velocity;
+                            if (!bouncedY)
+                            {
+                                body.Velocity = new Vector2(body.Velocity.X, Bounce(body.Velocity.Y, body.Restitution, dt));
+                                bouncedY = true;
                             }
 
                             fixture.IsTouching = true;
                             otherFixture.IsTouching = true;
                             fixture.ActiveContacts.Add(otherFixture);
+                            otherFixture.ActiveContacts.Add(fixture);
+                        }
+                    }
+                }
+
+                // Test against dynamic bodies...
+                if (dynamicCount > 1)
+                {
+                    Vector2 boxMinY = hasLocal ? nextPositionY + local.Min : default;
+                    Vector2 boxMaxY = hasLocal ? nextPositionY + local.Max : default;
+
+                    for (int otherIndex = 0; otherIndex < dynamicCount; otherIndex++)
+                    {
+                        // Yeah lets not collide with ourselves, or with distant bodies
+                        if (otherIndex == bodyIndex) continue;
+                        if (hasLocal && (!dynamicHasBounds[otherIndex] ||
+                            boxMaxY.X < dynamicMin[otherIndex].X || boxMinY.X > dynamicMax[otherIndex].X ||
+                            boxMaxY.Y < dynamicMin[otherIndex].Y || boxMinY.Y > dynamicMax[otherIndex].Y)) continue;
+
+                        var other = dynamicBodies[otherIndex];
+                        if (SameGroup(body, other)) continue;
+
+                        bool resolvedOther = false;
+                        foreach (var otherFixture in other.DynamicFixtures)
+                        {
+                            if (fixture.TestIntersection(otherFixture, nextPositionY, other.Position))
+                            {
+                                if (BodiesPush)
+                                {
+                                    nextPositionY.Y = body.StopsFlush
+                                        ? currentPosition.Y + (nextPositionY.Y - currentPosition.Y) * Reach(fixture, otherFixture, startPositionY, nextPositionY, other.Position)
+                                        : currentPosition.Y;
+                                    if (!resolvedOther)
+                                    {
+                                        Shove(body, other, sideways: false);
+                                        resolvedOther = true;
+                                    }
+                                }
+                                else
+                                {
+                                    nextPositionY.Y = currentPosition.Y;
+                                    if (!bouncedY)
+                                    {
+                                        body.Velocity = new Vector2(body.Velocity.X, -body.Velocity.Y * body.Restitution);
+                                        bouncedY = true;
+                                    }
+                                    if (!resolvedOther)
+                                    {
+                                        other.Velocity = new Vector2(other.Velocity.X, -body.Velocity.Y);
+                                        resolvedOther = true;
+                                    }
+                                }
+
+                                if (hasLocal)
+                                {
+                                    boxMinY = nextPositionY + local.Min;
+                                    boxMaxY = nextPositionY + local.Max;
+                                }
+
+                                fixture.IsTouching = true;
+                                otherFixture.IsTouching = true;
+                                fixture.ActiveContacts.Add(otherFixture);
+                                otherFixture.ActiveContacts.Add(fixture);
+                            }
                         }
                     }
                 }
@@ -399,39 +532,63 @@ public class PhysicsWorld : GameComponent
             // 5. Update Kinematic Triggers against final position
             foreach (var fixture in body.KinematicFixtures)
             {
-                foreach (int candidate in FindStaticCandidates(fixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY))
+                bool hasLocal = PhysicsShape.TryCreate(fixture, Vector2.Zero, Vector2.Zero, out var local);
+
+                if (hasLocal)
                 {
-                    var otherFixture = staticGrid.GetFixture(candidate);
-
-                    // The feet of somebody going up through a platform aren't on it, where they ended up is where they're tested
-                    if (otherFixture.OneWay && !LandsOn(body, fixture, candidate, nextPositionY, trigger: true)) continue;
-
-                    if (fixture.TestIntersection(otherFixture, nextPositionY, staticGrid.GetBodyPosition(candidate)))
+                    foreach (int candidate in staticGrid.Query(Vector2.Min(startPositionY, nextPositionY) + local.Min, Vector2.Max(startPositionY, nextPositionY) + local.Max))
                     {
-                        fixture.IsTouching = true;
-                        otherFixture.IsTouching = true;
-                        fixture.ActiveContacts.Add(otherFixture);
-                    }
-                }
+                        var otherFixture = staticGrid.GetFixture(candidate);
 
-                foreach (var other in dynamicBodies)
-                {
-                    // Yeah lets not collide with ourselves, or with our own kind
-                    if (other == body || SameGroup(body, other)) continue;
+                        // The feet of somebody going up through a platform aren't on it, where they ended up is where they're tested
+                        if (otherFixture.OneWay && !LandsOn(body, fixture, candidate, nextPositionY, trigger: true)) continue;
 
-                    foreach (var otherFixture in other.DynamicFixtures)
-                    {
-                        if (fixture.TestIntersection(otherFixture, nextPositionY, other.Position))
+                        if (fixture.TestIntersection(otherFixture, nextPositionY, staticGrid.GetBodyPosition(candidate)))
                         {
                             fixture.IsTouching = true;
                             otherFixture.IsTouching = true;
                             fixture.ActiveContacts.Add(otherFixture);
+                            otherFixture.ActiveContacts.Add(fixture);
+                        }
+                    }
+                }
+
+                if (dynamicCount > 1)
+                {
+                    Vector2 boxMinK = hasLocal ? nextPositionY + local.Min : default;
+                    Vector2 boxMaxK = hasLocal ? nextPositionY + local.Max : default;
+
+                    for (int otherIndex = 0; otherIndex < dynamicCount; otherIndex++)
+                    {
+                        if (otherIndex == bodyIndex) continue;
+                        if (hasLocal && (!dynamicHasBounds[otherIndex] ||
+                            boxMaxK.X < dynamicMin[otherIndex].X || boxMinK.X > dynamicMax[otherIndex].X ||
+                            boxMaxK.Y < dynamicMin[otherIndex].Y || boxMinK.Y > dynamicMax[otherIndex].Y)) continue;
+
+                        var other = dynamicBodies[otherIndex];
+                        if (SameGroup(body, other)) continue;
+
+                        foreach (var otherFixture in other.DynamicFixtures)
+                        {
+                            if (fixture.TestIntersection(otherFixture, nextPositionY, other.Position))
+                            {
+                                fixture.IsTouching = true;
+                                otherFixture.IsTouching = true;
+                                fixture.ActiveContacts.Add(otherFixture);
+                                otherFixture.ActiveContacts.Add(fixture);
+                            }
                         }
                     }
                 }
             }
 
             body.Position = nextPositionY;
+            if (dynamicHasBounds[bodyIndex])
+            {
+                Vector2 delta = nextPositionY - currentPosition;
+                dynamicMin[bodyIndex] += delta;
+                dynamicMax[bodyIndex] += delta;
+            }
         }
 
         // 6. Step the particles against where everything ended up
@@ -617,41 +774,41 @@ public class PhysicsWorld : GameComponent
     {
         float width = DebugLineWidth;
 
-        void drawBody(in PhysicsBodyComponent2D body, in List<IPhysicsFixture> fixtures, Vector3 colour)
-        {
-            foreach (var fixture in fixtures)
-            {
-                if (fixture is CirclePhysicsFixture c)
-                {
-                    shapes.Circle(body.Position + c.Position, c.Radius, width, c.DebugColour ?? colour);
-                }
-                else if (fixture is OutlinePhysicsFixture outline)
-                {
-                    var pieces = outline.Segments;
-                    for (int i = 0; i + 1 < pieces.Length; i += 2)
-                        shapes.Line(body.Position + pieces[i], body.Position + pieces[i + 1], width, outline.DebugColour ?? colour);
-                }
-                else if (fixture is RectanglePhysicsFixture r)
-                {
-                    shapes.Rectangle(
-                        new Vector2(body.Position.X + r.Bounds.Left, body.Position.Y + r.Bounds.Top),
-                        new Vector2(body.Position.X + r.Bounds.Right, body.Position.Y + r.Bounds.Bottom),
-                        width,
-                        r.DebugColour ?? colour);
-                }
-            }
-        }
-
         foreach (var body in StaticBodies)
         {
-            drawBody(body, body.DynamicFixtures, new Vector3(1, 0, 0));
-            drawBody(body, body.KinematicFixtures, new Vector3(1, 1, 0));
+            DrawBody(shapes, width, body, body.DynamicFixtures, new Vector3(1, 0, 0));
+            DrawBody(shapes, width, body, body.KinematicFixtures, new Vector3(1, 1, 0));
         }
         foreach (var body in DynamicBodies)
         {
-            drawBody(body, body.DynamicFixtures, new Vector3(0, 0, 1));
-            drawBody(body, body.KinematicFixtures, new Vector3(0, 1, 1));
-            drawBody(body, body.ParticleFixtures, new Vector3(0, 1, 0));
+            DrawBody(shapes, width, body, body.DynamicFixtures, new Vector3(0, 0, 1));
+            DrawBody(shapes, width, body, body.KinematicFixtures, new Vector3(0, 1, 1));
+            DrawBody(shapes, width, body, body.ParticleFixtures, new Vector3(0, 1, 0));
+        }
+    }
+
+    private static void DrawBody(ShapeList shapes, float width, PhysicsBodyComponent2D body, List<IPhysicsFixture> fixtures, Vector3 colour)
+    {
+        foreach (var fixture in fixtures)
+        {
+            if (fixture is CirclePhysicsFixture c)
+            {
+                shapes.Circle(body.Position + c.Position, c.Radius, width, c.DebugColour ?? colour);
+            }
+            else if (fixture is OutlinePhysicsFixture outline)
+            {
+                var pieces = outline.Segments;
+                for (int i = 0; i + 1 < pieces.Length; i += 2)
+                    shapes.Line(body.Position + pieces[i], body.Position + pieces[i + 1], width, outline.DebugColour ?? colour);
+            }
+            else if (fixture is RectanglePhysicsFixture r)
+            {
+                shapes.Rectangle(
+                    new Vector2(body.Position.X + r.Bounds.Left, body.Position.Y + r.Bounds.Top),
+                    new Vector2(body.Position.X + r.Bounds.Right, body.Position.Y + r.Bounds.Bottom),
+                    width,
+                    r.DebugColour ?? colour);
+            }
         }
     }
 }

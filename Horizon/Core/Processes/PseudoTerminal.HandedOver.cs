@@ -14,12 +14,12 @@ namespace Horizon.Core.Processes;
 /// started it, so it's watched rather than run, and it's the program ending that ends it.
 /// </summary>
 [SupportedOSPlatform("windows")]
-internal sealed class HandedOverPseudoTerminal : PseudoTerminal
+internal sealed partial class HandedOverPseudoTerminal : PseudoTerminal
 {
     // What the console host takes down the signal pipe to change its size, three shorts, the signal and the size
     private const ushort PTY_SIGNAL_RESIZE_WINDOW = 8;
 
-    private readonly FileStream input, output;
+    private readonly FileStream input = null!, output = null!;
     private readonly SafeFileHandle signal, reference, server, client;
     private readonly RegisteredWaitHandle? watching;
     private readonly ManualResetEvent clientEnded = new(false);
@@ -34,20 +34,40 @@ internal sealed class HandedOverPseudoTerminal : PseudoTerminal
         this.reference = reference;
         this.server = server;
         this.client = client;
-        input = new FileStream(inputWrite, FileAccess.Write, 1, false);
-        output = new FileStream(outputRead, FileAccess.Read, 1, false);
 
-        // The program ending is the end of it, the way a shell ending is for a console of our own
-        clientEnded.SafeWaitHandle = new SafeWaitHandle(client.DangerousGetHandle(), ownsHandle: false);
-        watching = ThreadPool.RegisterWaitForSingleObject(clientEnded, (_, _) => ProgramEnded(), null, Timeout.Infinite, executeOnlyOnce: true);
-
-        var reader = new Thread(() =>
+        bool initialized = false;
+        try
         {
-            Pump(output);
-            // The console host went without the program going first (it was closed from outside), which ends it too
-            ProgramEnded();
-        }) { IsBackground = true, Name = "handed over console reader" };
-        reader.Start();
+            input = new FileStream(inputWrite, FileAccess.Write, 1, false);
+            output = new FileStream(outputRead, FileAccess.Read, 1, false);
+
+            // The program ending is the end of it, the way a shell ending is for a console of our own
+            clientEnded.SafeWaitHandle = new SafeWaitHandle(client.DangerousGetHandle(), ownsHandle: false);
+            watching = ThreadPool.RegisterWaitForSingleObject(clientEnded, (_, _) => ProgramEnded(), null, Timeout.Infinite, executeOnlyOnce: true);
+
+            var reader = new Thread(() =>
+            {
+                Pump(output);
+                // The console host went without the program going first (it was closed from outside), which ends it too
+                ProgramEnded();
+            }) { IsBackground = true, Name = "handed over console reader" };
+            reader.Start();
+            initialized = true;
+        }
+        finally
+        {
+            if (!initialized)
+            {
+                watching?.Unregister(null);
+                if (input is not null) try { input.Dispose(); } catch (Exception) { } else inputWrite.Dispose();
+                if (output is not null) try { output.Dispose(); } catch (Exception) { } else outputRead.Dispose();
+                signal.Dispose();
+                reference.Dispose();
+                server.Dispose();
+                client.Dispose();
+                clientEnded.Dispose();
+            }
+        }
     }
 
     // How long the console host is given to write out the last of what the program wrote, the same as a console of our own
@@ -89,10 +109,10 @@ internal sealed class HandedOverPseudoTerminal : PseudoTerminal
 
     protected override void ResizeTerminal(int columns, int rows)
     {
-        byte[] packet = new byte[6];
+        Span<byte> packet = stackalloc byte[6];
         System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(packet, PTY_SIGNAL_RESIZE_WINDOW);
-        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2), (ushort)columns);
-        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(4), (ushort)rows);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(packet[2..], (ushort)columns);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(packet[4..], (ushort)rows);
         try
         {
             if (!signal.IsClosed)
@@ -118,12 +138,15 @@ internal sealed class HandedOverPseudoTerminal : PseudoTerminal
         clientEnded.Dispose();
     }
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool WriteFile(SafeFileHandle file, byte[] buffer, uint count, out uint written, nint overlapped);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool WriteFile(SafeFileHandle file, ReadOnlySpan<byte> buffer, uint count, out uint written, nint overlapped);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool GetExitCodeProcess(SafeFileHandle process, out uint code);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetExitCodeProcess(SafeFileHandle process, out uint code);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool TerminateProcess(SafeFileHandle process, uint code);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool TerminateProcess(SafeFileHandle process, uint code);
 }

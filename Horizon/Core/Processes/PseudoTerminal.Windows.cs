@@ -15,81 +15,131 @@ namespace Horizon.Core.Processes;
 /// nothing of escapes still comes out as a stream of them.
 /// </summary>
 [SupportedOSPlatform("windows")]
-internal sealed class WindowsPseudoTerminal : PseudoTerminal
+internal sealed partial class WindowsPseudoTerminal : PseudoTerminal
 {
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000, CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const int STARTF_USESTDHANDLES = 0x00000100;
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
 
     private readonly IntPtr console;
-    private readonly SafeFileHandle inputWrite, outputRead;
-    private readonly FileStream input, output;
-    private readonly Process process;
+    private readonly SafeFileHandle inputWrite = null!, outputRead = null!;
+    private readonly FileStream input = null!, output = null!;
+    private readonly Process process = null!;
     private IntPtr attributes;
     private bool disposed;
 
     public WindowsPseudoTerminal(string commandLine, string workingDirectory, int columns, int rows, IReadOnlyDictionary<string, string>? environment)
         : base(commandLine, columns, rows)
     {
-        // The console reads what we write to inputWrite and writes what we read from outputRead
-        if (!CreatePipe(out SafeFileHandle inputRead, out inputWrite, IntPtr.Zero, 0) || !CreatePipe(out outputRead, out SafeFileHandle outputWrite, IntPtr.Zero, 0))
-            throw new InvalidOperationException($"The pipes for the console couldn't be made, {new Win32Exception().Message}");
+        SafeFileHandle? inputRead = null;
+        SafeFileHandle? outputWrite = null;
+        bool attributeListInitialized = false;
+        bool initialized = false;
 
-        int made = CreatePseudoConsole(new COORD((short)columns, (short)rows), inputRead, outputWrite, 0, out console);
-        if (made != 0)
-            throw new InvalidOperationException($"CreatePseudoConsole failed with {made}, Windows 10 1809 or newer is wanted.");
-
-        // The console has its own handles on those two ends now
-        inputRead.Dispose();
-        outputWrite.Dispose();
-
-        // The process, told about the console through its attribute list
-        IntPtr size = IntPtr.Zero;
-        InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
-        attributes = Marshal.AllocHGlobal(size);
-        if (!InitializeProcThreadAttributeList(attributes, 1, 0, ref size)
-            || !UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, console, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero))
-        {
-            throw new InvalidOperationException($"The console couldn't be given to the process, {new Win32Exception().Message}");
-        }
-
-        // The std handles are given as none on purpose. Without the flag a child copies its parent's std handles by value
-        // (a pipe to whoever started the editor, or nothing at all) and writes there instead of to the console, which is
-        // how cmd's prompt went to the test runner and pwsh ended at once in a window. Given none, the console fills them
-        // in with its own as the child starts, the way a console app started from a console gets them
-        var startup = new STARTUPINFOEX { StartupInfo = { cb = Marshal.SizeOf<STARTUPINFOEX>(), dwFlags = STARTF_USESTDHANDLES }, lpAttributeList = attributes };
-        var variables = Variables(environment);
-        string? block = EnvironmentBlock(variables);
-        IntPtr environmentBlock = block is null ? IntPtr.Zero : Marshal.StringToHGlobalUni(block);
-
-        // Found on the PATH the program gets, not this process's, which Windows would look on
-        commandLine = ProcessEnvironment.Resolve(commandLine, variables.TryGetValue("Path", out string? path) ? path : string.Empty);
         try
         {
-            if (!CreateProcessW(null, commandLine, IntPtr.Zero, IntPtr.Zero, false, EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
-                environmentBlock, Directory.Exists(workingDirectory) ? workingDirectory : null, ref startup, out PROCESS_INFORMATION information))
+            // The console reads what we write to inputWrite and writes what we read from outputRead
+            if (!CreatePipe(out inputRead, out inputWrite, IntPtr.Zero, 0) || !CreatePipe(out outputRead, out outputWrite, IntPtr.Zero, 0))
+                throw new InvalidOperationException($"The pipes for the console couldn't be made, {new Win32Exception().Message}");
+
+            int made = CreatePseudoConsole(new COORD((short)columns, (short)rows), inputRead, outputWrite, 0, out console);
+            if (made != 0)
+                throw new InvalidOperationException($"CreatePseudoConsole failed with {made}, Windows 10 1809 or newer is wanted.");
+
+            // The console has its own handles on those two ends now
+            inputRead.Dispose();
+            inputRead = null;
+            outputWrite.Dispose();
+            outputWrite = null;
+
+            // The process, told about the console through its attribute list
+            IntPtr size = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+            attributes = Marshal.AllocHGlobal(size);
+            if (!InitializeProcThreadAttributeList(attributes, 1, 0, ref size))
+                throw new InvalidOperationException($"The console couldn't be given to the process, {new Win32Exception().Message}");
+            attributeListInitialized = true;
+
+            if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, console, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero))
+                throw new InvalidOperationException($"The console couldn't be given to the process, {new Win32Exception().Message}");
+
+            // The std handles are given as none on purpose. Without the flag a child copies its parent's std handles by value
+            // (a pipe to whoever started the editor, or nothing at all) and writes there instead of to the console, which is
+            // how cmd's prompt went to the test runner and pwsh ended at once in a window. Given none, the console fills them
+            // in with its own as the child starts, the way a console app started from a console gets them
+            var startup = new STARTUPINFOEX { StartupInfo = { cb = Marshal.SizeOf<STARTUPINFOEX>(), dwFlags = STARTF_USESTDHANDLES }, lpAttributeList = attributes };
+            var variables = Variables(environment);
+            string? block = EnvironmentBlock(variables);
+            IntPtr environmentBlock = block is null ? IntPtr.Zero : Marshal.StringToHGlobalUni(block);
+
+            // Found on the PATH the program gets, not this process's, which Windows would look on
+            commandLine = ProcessEnvironment.Resolve(commandLine, variables.TryGetValue("Path", out string? path) ? path : string.Empty);
+            char[] commandBuffer = new char[commandLine.Length + 1];
+            commandLine.CopyTo(0, commandBuffer, 0, commandLine.Length);
+            try
             {
-                throw new InvalidOperationException($"'{commandLine}' couldn't be started, {new Win32Exception().Message}");
+                PROCESS_INFORMATION information;
+                unsafe
+                {
+                    fixed (char* cmd = commandBuffer)
+                    {
+                        if (!CreateProcessW(null, (IntPtr)cmd, IntPtr.Zero, IntPtr.Zero, false, EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                            environmentBlock, Directory.Exists(workingDirectory) ? workingDirectory : null, ref startup, out information))
+                        {
+                            throw new InvalidOperationException($"'{commandLine}' couldn't be started, {new Win32Exception().Message}");
+                        }
+                    }
+                }
+
+                CloseHandle(information.hThread);
+                CloseHandle(information.hProcess);
+                process = Process.GetProcessById(information.dwProcessId);
+            }
+            finally
+            {
+                if (environmentBlock != IntPtr.Zero)
+                    Marshal.FreeHGlobal(environmentBlock);
             }
 
-            CloseHandle(information.hThread);
-            CloseHandle(information.hProcess);
-            process = Process.GetProcessById(information.dwProcessId);
+            input = new FileStream(inputWrite, FileAccess.Write, 1, false);
+            output = new FileStream(outputRead, FileAccess.Read, 1, false);
+
+            process.EnableRaisingEvents = true;
+            process.Exited += (_, _) => ProcessEnded();
+
+            var reader = new Thread(() => Pump(output)) { IsBackground = true, Name = "conpty reader" };
+            reader.Start();
+            initialized = true;
         }
         finally
         {
-            if (environmentBlock != IntPtr.Zero)
-                Marshal.FreeHGlobal(environmentBlock);
+            inputRead?.Dispose();
+            outputWrite?.Dispose();
+
+            if (!initialized)
+            {
+                CloseConsole();
+                if (attributes != IntPtr.Zero)
+                {
+                    if (attributeListInitialized)
+                        DeleteProcThreadAttributeList(attributes);
+                    Marshal.FreeHGlobal(attributes);
+                    attributes = IntPtr.Zero;
+                }
+
+                if (input is not null)
+                    try { input.Dispose(); } catch (Exception) { }
+                else
+                    inputWrite?.Dispose();
+
+                if (output is not null)
+                    try { output.Dispose(); } catch (Exception) { }
+                else
+                    outputRead?.Dispose();
+
+                process?.Dispose();
+            }
         }
-
-        input = new FileStream(inputWrite, FileAccess.Write, 1, false);
-        output = new FileStream(outputRead, FileAccess.Read, 1, false);
-
-        process.EnableRaisingEvents = true;
-        process.Exited += (_, _) => ProcessEnded();
-
-        var reader = new Thread(() => Pump(output)) { IsBackground = true, Name = "conpty reader" };
-        reader.Start();
     }
 
     // How long conhost is given to write out the last of what the process wrote before the console is closed. ConPTY
@@ -236,13 +286,19 @@ internal sealed class WindowsPseudoTerminal : PseudoTerminal
 
             try
             {
-                var entry = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32W>() };
-                for (bool more = Process32FirstW(snapshot, ref entry); more; more = Process32NextW(snapshot, ref entry))
+                unsafe
                 {
-                    if (entry.th32ParentProcessID == (uint)process.Id && entry.th32ProcessID != (uint)process.Id
-                        && !entry.szExeFile.Equals("conhost.exe", StringComparison.OrdinalIgnoreCase)
-                        && !entry.szExeFile.Equals("OpenConsole.exe", StringComparison.OrdinalIgnoreCase))
-                        return true;
+                    var entry = new PROCESSENTRY32W { dwSize = (uint)sizeof(PROCESSENTRY32W) };
+                    for (bool more = Process32FirstW(snapshot, ref entry); more; more = Process32NextW(snapshot, ref entry))
+                    {
+                        if (entry.th32ParentProcessID != (uint)process.Id || entry.th32ProcessID == (uint)process.Id)
+                            continue;
+
+                        ReadOnlySpan<char> exe = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(entry.szExeFile);
+                        if (!exe.Equals("conhost.exe", StringComparison.OrdinalIgnoreCase)
+                            && !exe.Equals("OpenConsole.exe", StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
                 }
 
                 return false;
@@ -256,26 +312,27 @@ internal sealed class WindowsPseudoTerminal : PseudoTerminal
 
     private const uint TH32CS_SNAPPROCESS = 0x2;
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct PROCESSENTRY32W
+    [StructLayout(LayoutKind.Sequential)]
+    private unsafe struct PROCESSENTRY32W
     {
         public uint dwSize, cntUsage, th32ProcessID;
         public IntPtr th32DefaultHeapID;
         public uint th32ModuleID, cntThreads, th32ParentProcessID;
         public int pcPriClassBase;
         public uint dwFlags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-        public string szExeFile;
+        public fixed char szExeFile[260];
     }
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool Process32FirstW(IntPtr snapshot, ref PROCESSENTRY32W entry);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool Process32FirstW(IntPtr snapshot, ref PROCESSENTRY32W entry);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool Process32NextW(IntPtr snapshot, ref PROCESSENTRY32W entry);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool Process32NextW(IntPtr snapshot, ref PROCESSENTRY32W entry);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct PROCESS_INFORMATION
@@ -284,31 +341,36 @@ internal sealed class WindowsPseudoTerminal : PseudoTerminal
         public int dwProcessId, dwThreadId;
     }
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CreatePipe(out SafeFileHandle hReadPipe, out SafeFileHandle hWritePipe, IntPtr lpPipeAttributes, int nSize);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool CreatePipe(out SafeFileHandle hReadPipe, out SafeFileHandle hWritePipe, IntPtr lpPipeAttributes, int nSize);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern int CreatePseudoConsole(COORD size, SafeFileHandle hInput, SafeFileHandle hOutput, uint dwFlags, out IntPtr phPC);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial int CreatePseudoConsole(COORD size, SafeFileHandle hInput, SafeFileHandle hOutput, uint dwFlags, out IntPtr phPC);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern int ResizePseudoConsole(IntPtr hPC, COORD size);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial int ResizePseudoConsole(IntPtr hPC, COORD size);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern void ClosePseudoConsole(IntPtr hPC);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial void ClosePseudoConsole(IntPtr hPC);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool InitializeProcThreadAttributeList(IntPtr lpAttributeList, int dwAttributeCount, int dwFlags, ref IntPtr lpSize);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool InitializeProcThreadAttributeList(IntPtr lpAttributeList, int dwAttributeCount, int dwFlags, ref IntPtr lpSize);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool UpdateProcThreadAttribute(IntPtr lpAttributeList, uint dwFlags, IntPtr attribute, IntPtr lpValue, IntPtr cbSize, IntPtr lpPreviousValue, IntPtr lpReturnSize);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool UpdateProcThreadAttribute(IntPtr lpAttributeList, uint dwFlags, IntPtr attribute, IntPtr lpValue, IntPtr cbSize, IntPtr lpPreviousValue, IntPtr lpReturnSize);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern void DeleteProcThreadAttributeList(IntPtr lpAttributeList);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial void DeleteProcThreadAttributeList(IntPtr lpAttributeList);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool CreateProcessW(string? lpApplicationName, string lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes,
-        bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string? lpCurrentDirectory, ref STARTUPINFOEX lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+    [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool CreateProcessW(string? lpApplicationName, IntPtr lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes,
+        [MarshalAs(UnmanagedType.Bool)] bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string? lpCurrentDirectory, ref STARTUPINFOEX lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CloseHandle(IntPtr hObject);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool CloseHandle(IntPtr hObject);
 }

@@ -292,8 +292,21 @@ public class GamepadInputManager : Entity
     /// </param>
     public Gamepad AddVirtualGamepad(string name = "Virtual Gamepad", bool takeFreeSlot = false)
     {
+        Gamepad? waiting = null;
+        if (takeFreeSlot)
+        {
+            for (int i = 0; i < _gamepads.Count; i++)
+            {
+                if (!_gamepads[i].IsConnected)
+                {
+                    waiting = _gamepads[i];
+                    break;
+                }
+            }
+        }
+
         Gamepad gamepad;
-        if (takeFreeSlot && _gamepads.Find(known => !known.IsConnected) is { } waiting)
+        if (waiting is not null)
         {
             gamepad = new Gamepad(waiting.Slot, Sanitize(name), waiting.Bindings.Clone(), isVirtual: true);
             _gamepads[waiting.Slot] = gamepad;
@@ -324,7 +337,15 @@ public class GamepadInputManager : Entity
 
         // A slot that is waiting for a device of this name is the keyboard of the last run. One saved with no keys in it
         // is from before a keyboard had keys of its own, which played a fight through the buttons its keys stood for
-        int waiting = _gamepads.FindIndex(known => !known.IsConnected && known.Name == name);
+        int waiting = -1;
+        for (int i = 0; i < _gamepads.Count; i++)
+        {
+            if (!_gamepads[i].IsConnected && _gamepads[i].Name == name)
+            {
+                waiting = i;
+                break;
+            }
+        }
         GamepadBindings fresh = bindings ?? DefaultBindings;
         var saved = waiting >= 0 ? _gamepads[waiting].Bindings : null;
         var chosen = saved is not null && (bindings is null || saved.HasKeys) ? saved.Clone() : fresh.Clone();
@@ -534,7 +555,7 @@ public class GamepadInputManager : Entity
         {
             // A copy, so a handler is free to change the bindings (a menu that rebinds on the next press).
             _actionScratch.Clear();
-            _actionScratch.AddRange(gamepad.Bindings.Actions);
+            gamepad.Bindings.CopyActionsTo(_actionScratch);
 
             foreach (string action in _actionScratch)
             {

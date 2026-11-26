@@ -1,6 +1,5 @@
 using System;
 using System.Buffers.Binary;
-using System.Text;
 
 namespace Horizon.Audio;
 
@@ -12,18 +11,21 @@ public static class WaveFile
 {
     public static Sound Read(ReadOnlySpan<byte> file, string name = "")
     {
-        if (file.Length < 12 || !Is(file, 0, "RIFF") || !Is(file, 8, "WAVE")) throw new FormatException("it isn't a RIFF WAVE file.");
+        if (file.Length < 12 || !Is(file, 0, "RIFF"u8) || !Is(file, 8, "WAVE"u8)) throw new FormatException("it isn't a RIFF WAVE file.");
 
         int format = 0, channels = 0, rate = 0, bits = 0;
         ReadOnlySpan<byte> data = default;
 
         for (int at = 12; at + 8 <= file.Length;)
         {
-            int size = BinaryPrimitives.ReadInt32LittleEndian(file[(at + 4)..]);
-            if (size < 0 || at + 8 + size > file.Length) size = file.Length - at - 8;
+            uint rawSize = BinaryPrimitives.ReadUInt32LittleEndian(file[(at + 4)..]);
+            long remaining = file.Length - at - 8;
+            if (rawSize > remaining) throw new FormatException("it has a chunk larger than the file.");
+
+            int size = (int)rawSize;
             ReadOnlySpan<byte> chunk = file.Slice(at + 8, size);
 
-            if (Is(file, at, "fmt ") && chunk.Length >= 16)
+            if (Is(file, at, "fmt "u8) && chunk.Length >= 16)
             {
                 format = BinaryPrimitives.ReadUInt16LittleEndian(chunk);
                 channels = BinaryPrimitives.ReadUInt16LittleEndian(chunk[2..]);
@@ -33,23 +35,29 @@ public static class WaveFile
                 // The extensible kind says what it really is further in
                 if (format == 0xFFFE && chunk.Length >= 26) format = BinaryPrimitives.ReadUInt16LittleEndian(chunk[24..]);
             }
-            else if (Is(file, at, "data")) data = chunk;
+            else if (Is(file, at, "data"u8)) data = chunk;
 
             // Chunks are padded to an even length
-            at += 8 + size + (size & 1);
+            long nextAt = (long)at + 8 + size + (size & 1);
+            if (nextAt > file.Length) break;
+            at = (int)nextAt;
         }
 
         if (channels < 1 || rate < 1 || data.IsEmpty) throw new FormatException("it has no format or no samples.");
         if (format != 1 && format != 3) throw new FormatException($"its samples are kind {format}, only plain whole numbers and floats are read.");
 
         int bytes = bits / 8;
-        if (bytes < 1 || (format == 3 && bits != 32)) throw new FormatException($"its samples are {bits} bits.");
+        if (bits % 8 != 0 || bytes < 1 || bytes > 4 || (format == 3 && bits != 32)) throw new FormatException($"its samples are {bits} bits.");
 
-        int frames = data.Length / (bytes * channels);
-        var samples = new short[frames * 2];
-        for (int frame = 0; frame < frames; frame++)
+        long frameBytes = (long)bytes * channels;
+        long frames = data.Length / frameBytes;
+        if (frames * 2 > Array.MaxLength) throw new FormatException("it has too many samples to fit in memory.");
+
+        int frameCount = (int)frames;
+        var samples = new short[frameCount * 2];
+        for (int frame = 0; frame < frameCount; frame++)
         {
-            int at = frame * bytes * channels;
+            int at = (int)(frame * frameBytes);
             short left = Sample(data[at..], format, bytes);
             short right = channels > 1 ? Sample(data[(at + bytes)..], format, bytes) : left;
             samples[frame * 2] = left;
@@ -73,6 +81,6 @@ public static class WaveFile
         };
     }
 
-    private static bool Is(ReadOnlySpan<byte> file, int at, string tag) =>
-        at + 4 <= file.Length && file.Slice(at, 4).SequenceEqual(Encoding.ASCII.GetBytes(tag));
+    internal static bool Is(ReadOnlySpan<byte> file, int at, ReadOnlySpan<byte> tag) =>
+        at >= 0 && tag.Length <= file.Length - at && file.Slice(at, tag.Length).SequenceEqual(tag);
 }

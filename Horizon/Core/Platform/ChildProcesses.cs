@@ -46,18 +46,20 @@ public static partial class ChildProcesses
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         int size = Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
         IntPtr info = Marshal.AllocHGlobal(size);
+        bool configured = false;
         try
         {
             Marshal.StructureToPtr(limits, info, false);
-            if (!SetInformationJobObject(made, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS, info, (uint)size))
-                return IntPtr.Zero;
+            configured = SetInformationJobObject(made, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS, info, (uint)size);
         }
         finally
         {
             Marshal.FreeHGlobal(info);
+            if (!configured)
+                CloseHandle(made);
         }
 
-        return made;
+        return configured ? made : IntPtr.Zero;
     }
 
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
@@ -109,4 +111,8 @@ public static partial class ChildProcesses
     [LibraryImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool CloseHandle(IntPtr handle);
 }

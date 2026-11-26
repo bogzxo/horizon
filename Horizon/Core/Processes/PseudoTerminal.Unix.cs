@@ -28,71 +28,95 @@ internal sealed class UnixPseudoTerminal : PseudoTerminal
         int O_RDWR = 2, O_NOCTTY = mac ? 0x20000 : 0x100;
 
         master = posix_openpt(O_RDWR | O_NOCTTY);
-        if (master < 0 || grantpt(master) != 0 || unlockpt(master) != 0)
+        if (master < 0)
             throw new InvalidOperationException($"No pty could be opened, errno {Marshal.GetLastPInvokeError()}.");
 
-        IntPtr namePointer = ptsname(master);
-        string? slave = namePointer == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(namePointer);
-        if (slave is null)
-            throw new InvalidOperationException("The pty has no name.");
-
-        // The slave held open here until the child has it, with the size set on it. A Mac forgets a size given to the
-        // master before the slave was first opened, and the child saw 0 rows and 0 columns
-        int held = open(slave, O_RDWR | O_NOCTTY);
-        SetSize(columns, rows);
-
-        // The child, in a session of its own, the slave opened as its 0, 1 and 2
-        string[] argv = SplitCommandLine(commandLine);
-        string[] envp = EnvironmentOf(environment);
-
-        // What these are is the C library's business and their size with it: glibc's file actions are 80 bytes and its
-        // attributes 336, a Mac's a pointer each. Plenty either way, zeroed
-        IntPtr actions = Marshal.AllocHGlobal(SPAWN_STRUCT), attributes = Marshal.AllocHGlobal(SPAWN_STRUCT);
-        unsafe
-        {
-            new Span<byte>((void*)actions, SPAWN_STRUCT).Clear();
-            new Span<byte>((void*)attributes, SPAWN_STRUCT).Clear();
-        }
-
+        bool streamOwnsMaster = false;
+        int held = -1;
         try
         {
-            posix_spawn_file_actions_init(actions);
-            posix_spawn_file_actions_addopen(actions, 0, slave, O_RDWR, 0);
-            posix_spawn_file_actions_adddup2(actions, 0, 1);
-            posix_spawn_file_actions_adddup2(actions, 0, 2);
-            if (Directory.Exists(workingDirectory))
-                posix_spawn_file_actions_addchdir_np(actions, workingDirectory);
+            if (grantpt(master) != 0 || unlockpt(master) != 0)
+                throw new InvalidOperationException($"No pty could be opened, errno {Marshal.GetLastPInvokeError()}.");
 
-            posix_spawnattr_init(attributes);
-            short POSIX_SPAWN_SETSID = (short)(mac ? 0x0400 : 0x80);
-            posix_spawnattr_setflags(attributes, POSIX_SPAWN_SETSID);
+            IntPtr namePointer = ptsname(master);
+            string? slave = namePointer == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(namePointer);
+            if (slave is null)
+                throw new InvalidOperationException("The pty has no name.");
 
-            IntPtr argvBlock = StringArray(argv), envpBlock = StringArray(envp);
+            // The slave held open here until the child has it, with the size set on it. A Mac forgets a size given to the
+            // master before the slave was first opened, and the child saw 0 rows and 0 columns
+            held = open(slave, O_RDWR | O_NOCTTY);
+            SetSize(columns, rows);
+
+            // The child, in a session of its own, the slave opened as its 0, 1 and 2
+            string[] argv = SplitCommandLine(commandLine);
+            string[] envp = EnvironmentOf(environment);
+
+            // What these are is the C library's business and their size with it: glibc's file actions are 80 bytes and its
+            // attributes 336, a Mac's a pointer each. Plenty either way, zeroed
+            IntPtr actions = Marshal.AllocHGlobal(SPAWN_STRUCT), attributes = Marshal.AllocHGlobal(SPAWN_STRUCT);
+            unsafe
+            {
+                new Span<byte>((void*)actions, SPAWN_STRUCT).Clear();
+                new Span<byte>((void*)attributes, SPAWN_STRUCT).Clear();
+            }
+
+            bool actionsInit = false, attributesInit = false;
             try
             {
-                int spawned = posix_spawnp(out pid, argv[0], actions, attributes, argvBlock, envpBlock);
-                if (spawned != 0)
-                    throw new InvalidOperationException($"'{commandLine}' couldn't be started, errno {spawned}.");
+                if (posix_spawn_file_actions_init(actions) == 0)
+                    actionsInit = true;
+                posix_spawn_file_actions_addopen(actions, 0, slave, O_RDWR, 0);
+                posix_spawn_file_actions_adddup2(actions, 0, 1);
+                posix_spawn_file_actions_adddup2(actions, 0, 2);
+                if (Directory.Exists(workingDirectory))
+                    posix_spawn_file_actions_addchdir_np(actions, workingDirectory);
+
+                if (posix_spawnattr_init(attributes) == 0)
+                    attributesInit = true;
+                short POSIX_SPAWN_SETSID = (short)(mac ? 0x0400 : 0x80);
+                posix_spawnattr_setflags(attributes, POSIX_SPAWN_SETSID);
+
+                IntPtr argvBlock = StringArray(argv), envpBlock = StringArray(envp);
+                try
+                {
+                    int spawned = posix_spawnp(out pid, argv[0], actions, attributes, argvBlock, envpBlock);
+                    if (spawned != 0)
+                        throw new InvalidOperationException($"'{commandLine}' couldn't be started, errno {spawned}.");
+                }
+                finally
+                {
+                    FreeStringArray(argvBlock, argv.Length);
+                    FreeStringArray(envpBlock, envp.Length);
+                }
             }
             finally
             {
-                FreeStringArray(argvBlock, argv.Length);
-                FreeStringArray(envpBlock, envp.Length);
+                if (actionsInit)
+                    posix_spawn_file_actions_destroy(actions);
+                if (attributesInit)
+                    posix_spawnattr_destroy(attributes);
+                Marshal.FreeHGlobal(actions);
+                Marshal.FreeHGlobal(attributes);
+
+                // Let go of, or the master would never read the end of the child
+                if (held >= 0)
+                {
+                    close(held);
+                    held = -1;
+                }
             }
+
+            stream = new FileStream(new SafeFileHandle((IntPtr)master, ownsHandle: true), FileAccess.ReadWrite, 1, false);
+            streamOwnsMaster = true;
         }
         finally
         {
-            posix_spawn_file_actions_destroy(actions);
-            posix_spawnattr_destroy(attributes);
-            Marshal.FreeHGlobal(actions);
-            Marshal.FreeHGlobal(attributes);
-
-            // Let go of, or the master would never read the end of the child
             if (held >= 0)
                 close(held);
+            if (!streamOwnsMaster && master >= 0)
+                close(master);
         }
-
-        stream = new FileStream(new SafeFileHandle((IntPtr)master, ownsHandle: true), FileAccess.ReadWrite, 1, false);
 
         var reader = new Thread(() =>
         {

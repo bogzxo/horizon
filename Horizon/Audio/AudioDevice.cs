@@ -132,14 +132,13 @@ public sealed class AudioDevice : IDisposable
     {
         lock (rendering)
         {
-            if (paused || disposed || Mixer.Playing == 0)
+            if (paused || disposed)
             {
                 buffer.Clear();
                 return false;
             }
 
-            Mixer.Mix(buffer);
-            return true;
+            return Mixer.Mix(buffer);
         }
     }
 

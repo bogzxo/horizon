@@ -56,6 +56,13 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     private readonly Dictionary<string, HashSet<AssetScope>> users = [];
     private readonly HashSet<string> pinned = [];
 
+    // Reverse index from GPU handle to its named entry (and count if multiple names ever share one handle),
+    // so Remove and RemoveUnnamedExcept avoid scanning NamedAssets or allocating temporary sets
+    private readonly Dictionary<uint, (string? Name, int Count)> handleNames = [];
+
+    // Reusable scratch list for scope teardown so Release allocates nothing per call
+    private readonly List<string> nameScratch = [];
+
     // Everything above, and the two lists that are out in the open, are only ever touched while holding this
     private readonly object sync = new();
 
@@ -122,7 +129,13 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     /// </summary>
     public HashSet<uint> GetOwnedHandles()
     {
-        lock (sync) return OwnedAssets.Select(asset => asset.Handle).ToHashSet();
+        lock (sync)
+        {
+            var handles = new HashSet<uint>(OwnedAssets.Count);
+            for (int i = 0; i < OwnedAssets.Count; i++)
+                handles.Add(OwnedAssets[i].Handle);
+            return handles;
+        }
     }
 
     /// <summary>
@@ -131,7 +144,18 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     /// </summary>
     public AssetType[] CopyAll()
     {
-        lock (sync) return [.. OwnedAssets.Concat(NamedAssets.Values).Distinct()];
+        lock (sync)
+        {
+            var seen = new HashSet<AssetType>(OwnedAssets.Count + NamedAssets.Count);
+            for (int i = 0; i < OwnedAssets.Count; i++)
+                seen.Add(OwnedAssets[i]);
+            foreach (var pair in NamedAssets)
+                seen.Add(pair.Value);
+
+            var copy = new AssetType[seen.Count];
+            seen.CopyTo(copy);
+            return copy;
+        }
     }
 
     /// <summary>
@@ -144,18 +168,29 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     {
         lock (sync)
         {
-            var named = NamedAssets.Values.Select(asset => asset.Handle).ToHashSet();
-            // One pass over the list. Taking them out one at a time shuffled the whole list along for every
-            // single one of them, which is a lot of shuffling for a scene with a few hundred things in it
-            return OwnedAssets.RemoveAll(asset =>
+            // One in-place compaction pass over OwnedAssets with no closures or temporary sets
+            int write = 0;
+            int removed = 0;
+            int total = OwnedAssets.Count;
+            for (int i = 0; i < total; i++)
             {
-                if (keep.Contains(asset.Handle) || named.Contains(asset.Handle) || shared.Contains(asset.Handle))
-                    return false;
+                AssetType asset = OwnedAssets[i];
+                uint handle = asset.Handle;
+                if (keep.Contains(handle) || handleNames.ContainsKey(handle) || shared.Contains(handle))
+                {
+                    OwnedAssets[write++] = asset;
+                    continue;
+                }
 
-                owners.Remove(asset.Handle);
+                owners.Remove(handle);
                 AssetDisposerType.Dispose(asset);
-                return true;
-            });
+                removed++;
+            }
+
+            if (write < total)
+                OwnedAssets.RemoveRange(write, total - write);
+
+            return removed;
         }
     }
 
@@ -171,6 +206,18 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     {
         lock (sync)
         {
+            if (NamedAssets.ContainsKey(name))
+            {
+                MessageCallback?.Invoke(LogLevel.Error, $"[{this.name}] Failed to add {assetName} '{name}', it already exists!");
+                result = new()
+                {
+                    Asset = default!,
+                    Status = AssetCreationStatus.Failed,
+                    Message = $"{assetName} '{name}' already exists."
+                };
+                return false;
+            }
+
             CheckThread();
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
             AssetFactoryType.TryCreate(description, out result);
@@ -181,6 +228,20 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
                 return false;
             }
 
+            // Defensively guard against external mutation of NamedAssets so a rejected duplicate is never leaked
+            if (!NamedAssets.TryAdd(name, result.Asset))
+            {
+                AssetDisposerType.Dispose(result.Asset);
+                MessageCallback?.Invoke(LogLevel.Error, $"[{this.name}] Failed to add {assetName} '{name}'!");
+                result = new()
+                {
+                    Asset = default!,
+                    Status = AssetCreationStatus.Failed,
+                    Message = $"Failed to add {assetName} '{name}'."
+                };
+                return false;
+            }
+
             // With how long it took, which is how a hitch gets found. Making a shader or a texture is done with the game standing still
             MessageCallback?.Invoke(
                 LogLevel.Info,
@@ -188,11 +249,8 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
             );
 
             OwnedAssets.Add(result.Asset);
-
-            if (!NamedAssets.TryAdd(name, OwnedAssets[OwnedAssets.Count - 1]))
-                MessageCallback?.Invoke(LogLevel.Error, $"[{this.name}] Failed to add {assetName} '{name}'!");
-            else
-                Retain(name);
+            IndexNamedHandle(name, result.Asset.Handle);
+            Retain(name);
 
             // Made, and it had something to say about it anyway
             if (!string.IsNullOrEmpty(result.Message))
@@ -281,32 +339,46 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
         {
             int count = 0;
 
-            var mine = owners.Where(owner => ReferenceEquals(owner.Value, scope)).Select(owner => owner.Key).ToHashSet();
-            if (mine.Count > 0)
+            if (owners.Count > 0)
             {
-                // In one pass, see RemoveUnnamedExcept
-                count += OwnedAssets.RemoveAll(asset =>
+                // Single in-place compaction pass over OwnedAssets with no temporary HashSet or closure
+                int write = 0;
+                int total = OwnedAssets.Count;
+                for (int i = 0; i < total; i++)
                 {
-                    if (!mine.Contains(asset.Handle))
-                        return false;
+                    AssetType asset = OwnedAssets[i];
+                    uint handle = asset.Handle;
+                    if (owners.TryGetValue(handle, out AssetScope? owner) && ReferenceEquals(owner, scope))
+                    {
+                        owners.Remove(handle);
+                        AssetDisposerType.Dispose(asset);
+                        count++;
+                    }
+                    else
+                    {
+                        OwnedAssets[write++] = asset;
+                    }
+                }
 
-                    AssetDisposerType.Dispose(asset);
-                    return true;
-                });
-
-                foreach (uint handle in mine)
-                    owners.Remove(handle);
+                if (write < total)
+                    OwnedAssets.RemoveRange(write, total - write);
             }
 
-            foreach (var (name, scopes) in users.ToArray())
+            nameScratch.Clear();
+            foreach (var (assetKey, scopes) in users)
             {
-                if (!scopes.Remove(scope) || scopes.Count > 0)
-                    continue;
+                if (scopes.Remove(scope) && scopes.Count == 0)
+                    nameScratch.Add(assetKey);
+            }
 
-                users.Remove(name);
-                if (!pinned.Contains(name) && Remove(name))
+            for (int i = 0; i < nameScratch.Count; i++)
+            {
+                string assetKey = nameScratch[i];
+                users.Remove(assetKey);
+                if (!pinned.Contains(assetKey) && RemoveLocked(assetKey))
                     count++;
             }
+            nameScratch.Clear();
 
             return count;
         }
@@ -334,25 +406,22 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
         {
             // Its handle is free for the next asset to be given, which is not to inherit an owner. Before the
             // asset is disposed of, that may well be what clears the handle
-            owners.Remove(asset.Handle);
-            shared.Remove(asset.Handle);
+            uint handle = asset.Handle;
+            owners.Remove(handle);
+            shared.Remove(handle);
 
-            // The name it goes by, if it goes by exactly one. Looked for before it is disposed of, which may clear the handle
-            string? name = null;
-            int names = 0;
-            foreach (var (key, value) in NamedAssets)
-            {
-                if (value.Handle != asset.Handle) continue;
-                name = key;
-                names++;
-            }
+            // The name it goes by, if it goes by exactly one. Looked up in O(1) via handleNames before dispose
+            string? singleName = null;
+            if (handleNames.TryGetValue(handle, out var entry) && entry.Count == 1)
+                singleName = entry.Name;
 
             AssetDisposerType.Dispose(asset);
-            if (names == 1)
+            if (singleName is not null)
             {
-                _ = NamedAssets.TryRemove(name!, out _);
-                users.Remove(name!);
-                pinned.Remove(name!);
+                _ = NamedAssets.TryRemove(singleName, out _);
+                handleNames.Remove(handle);
+                users.Remove(singleName);
+                pinned.Remove(singleName);
             }
 
             return OwnedAssets.Remove(asset);
@@ -366,10 +435,13 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     {
         lock (sync)
         {
-            var asset = OwnedAssets.Find((item) => item.Handle == handle);
-            if (asset is null) return false;
+            for (int i = 0; i < OwnedAssets.Count; i++)
+            {
+                if (OwnedAssets[i].Handle == handle)
+                    return Remove(OwnedAssets[i]);
+            }
 
-            return Remove(asset);
+            return false;
         }
     }
 
@@ -380,17 +452,59 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     {
         lock (sync)
         {
-            if (NamedAssets.TryRemove(name, out var asset))
-            {
-                users.Remove(name);
-                pinned.Remove(name);
-
-                OwnedAssets.Remove(asset);
-                AssetDisposerType.Dispose(asset);
-                return true;
-            }
-            return false;
+            return RemoveLocked(name);
         }
+    }
+
+    private bool RemoveLocked(string name)
+    {
+        if (!NamedAssets.TryRemove(name, out var asset))
+            return false;
+
+        uint handle = asset.Handle;
+        UnindexNamedHandle(name, handle);
+        users.Remove(name);
+        pinned.Remove(name);
+
+        OwnedAssets.Remove(asset);
+        AssetDisposerType.Dispose(asset);
+        return true;
+    }
+
+    private void IndexNamedHandle(string name, uint handle)
+    {
+        if (handleNames.TryGetValue(handle, out var entry))
+            handleNames[handle] = (entry.Name, entry.Count + 1);
+        else
+            handleNames[handle] = (name, 1);
+    }
+
+    private void UnindexNamedHandle(string name, uint handle)
+    {
+        if (!handleNames.TryGetValue(handle, out var entry))
+            return;
+
+        if (entry.Count <= 1)
+        {
+            handleNames.Remove(handle);
+            return;
+        }
+
+        string? remaining = entry.Name;
+        if (remaining == name)
+        {
+            remaining = null;
+            foreach (var (key, value) in NamedAssets)
+            {
+                if (value.Handle == handle)
+                {
+                    remaining = key;
+                    break;
+                }
+            }
+        }
+
+        handleNames[handle] = (remaining, entry.Count - 1);
     }
 
     /// <summary>
@@ -410,10 +524,22 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
         lock (sync)
         {
             // Everything that has a name is among the owned ones as well. Freeing those twice is an error as far as the GPU is concerned
-            var all = OwnedAssets.Concat(NamedAssets.Values).DistinctBy(asset => asset.Handle).ToArray();
-            int count = all.Length + DisposeOther();
+            var seenHandles = new HashSet<uint>(OwnedAssets.Count + NamedAssets.Count);
+            var unique = new List<AssetType>(OwnedAssets.Count);
+            for (int i = 0; i < OwnedAssets.Count; i++)
+            {
+                AssetType asset = OwnedAssets[i];
+                if (seenHandles.Add(asset.Handle))
+                    unique.Add(asset);
+            }
+            foreach (var pair in NamedAssets)
+            {
+                if (seenHandles.Add(pair.Value.Handle))
+                    unique.Add(pair.Value);
+            }
 
-            AssetDisposerType.DisposeAll(all);
+            int count = unique.Count + DisposeOther();
+            AssetDisposerType.DisposeAll(unique);
 
             OwnedAssets.Clear();
             NamedAssets.Clear();
@@ -421,6 +547,8 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
             shared.Clear();
             users.Clear();
             pinned.Clear();
+            handleNames.Clear();
+            nameScratch.Clear();
 
             MessageCallback?.Invoke(
                 LogLevel.Info,

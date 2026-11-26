@@ -55,18 +55,18 @@ begins/ends frames itself.
 | `Device/GraphicsDevice.State.cs` | bind API, blend/depth/stencil/cull, samplers, `BindlessSlot` (`:257`), `BindRenderTarget` (`:280`), lazy descriptor/pipeline flush |
 | `Device/GraphicsDevice.Commands.cs` | `Draw/DrawIndexed/DrawIndexedInstanced/DrawInstanced/DrawIndirect(Count)`, `Dispatch` (`:148`), `Barrier` (`:157`), `Transition`, clears, copies, uploads, mipmaps, `ReadPixels`, `EndRendering` |
 | `Device/GraphicsDevice.Resources.cs` | internal buffer/texture/shader-module create+destroy |
-| `Device/GraphicsDevice.Surface.cs`, `SurfaceState.cs`, `Vulkan/SurfaceLifecycle.cs` | surface detach/attach/loss |
+| `Device/GraphicsDevice.Surface.cs`, `GraphicsDevice.Scaling.cs`, `SurfaceState.cs`, `Vulkan/SurfaceLifecycle.cs` | surface detach/attach/loss; render-scale target redirection |
 | `Device/ObjectManager.cs` | `GameComponent` owning 5 asset managers, factories, `Snapshot/ReleaseSince/Release(scope)` |
 | `Device/RenderState.cs` | static `RenderState` Save/Restore; `BlendMode` presets Alpha/Premultiplied/Additive/Replace |
 | `Device/GraphicsEnums.cs` | CullMode, Topology, PixelFormat, BufferUsage/Access, ShaderStage, BlendFactor, AttachmentPoint, `GraphicsFeature` |
 | `Resources/GpuResource.cs:19` | base: unique uint `Handle`, `Destroy()` -> `DestroyCore()` |
-| `Resources/GpuBuffer.cs`, `StreamBuffer.cs` | general buffer; mapped per-frame ring (3 regions) |
+| `Resources/GpuBuffer.cs`, `StreamBuffer.cs` | general buffer (`BufferAccess.Dynamic` updates in-place via `GlobalBarrier`); mapped per-frame ring (3 regions) |
 | `Resources/Texture.cs`, `RenderTarget.cs`, `VertexArray.cs`, `IVertex.cs`, `ImageFile.cs` | textures (bindless slot on creation), MRT targets, vertex layouts |
 | `Descriptions/*.cs` | `BufferDescription`, `RenderTargetDescription`, `TextureDefinition` presets, `ShaderDescription` |
-| `Vulkan/VulkanContext.cs` | instance/device/queues, feature requirements, portability, env switches |
+| `Vulkan/VulkanContext.cs` | instance/device/queues, `Prepare`/`AttachSurface`/`DetachSurface` ahead-of-window lifecycle, `SurfaceTransformPolicy`, Vulkan 1.4 feature detection (`HasPushDescriptors`, `HasHostImageCopy`, `HasIndexUint8`, `HasMaintenance56`), portability, env switches |
 | `Vulkan/VulkanLoader.cs` | loader env tweaks (drops implicit layers, remembers GPU vendor driver) |
 | `Vulkan/PipelineCache.cs` | `GraphicsKey` -> pipeline map, persistent `pipelines.cache` |
-| `Vulkan/DescriptorLayouts.cs`, `BindlessTextures.cs`, `FrameResources.cs`, `VulkanMemory.cs`, `Swapchain.cs` | shared layout, bindless table, per-frame arenas, suballocator, swapchain |
+| `Vulkan/DescriptorLayouts.cs`, `BindlessTextures.cs`, `FrameResources.cs`, `VulkanMemory.cs`, `Swapchain.cs` | shared layout, bindless table (clamped `[256, 4096]`), per-frame arenas + `RetiredBuffers`, suballocator, swapchain |
 | `Shaders/Shader.cs`, `Technique.cs` | `Shader` (modules + Params layout), `Technique` (shader + CPU Params copy) |
 | `Shaders/ShaderCompiler*.cs`, `ShaderPreprocessor.cs`, `UniformBlockLayout.cs`, `ShaderLines.cs` | compile pipeline |
 | `Shaders/Packing/*.cs` | `ShaderPack`, `ShaderPackSet`, `ShaderPackWriter/Builder`, `ShaderManifest`, `ShaderManifestRecorder` |
@@ -74,19 +74,19 @@ begins/ends frames itself.
 ### `Horizon/Rendering/` (namespace `Horizon.Rendering`)
 | Path | What |
 |---|---|
-| `Common/Renderer2D.cs:25` | base renderer: `FrameBuffer`, `Technique`, `PostProcessing`, `FollowWindow`, `Resize`, hooks `BeforeResolve`/`Clear`/`Resized` |
+| `Common/Renderer2D.cs:25` | base renderer: `FrameBuffer`, `Technique`, `PostProcessing`, `FollowWindow`, `Resize`, hooks `BeforeResolve`/`Clear`/`Resized`, `FullScreenPass` |
 | `Common/Renderer2DTechnique.cs` | `ScreenTechnique`, `Renderer2DTechnique` (`shaders/renderer2d/standard.slang`) |
 | `Common/CameraBlock.cs` | static camera UBO writer; `CameraBlock.Use(camera)`; mirrors `shaders/common/camera.slang` |
-| `Common/PostProcessing/` | `PostProcessor` (ping-pong), `PostEffect`, `PostLayer`, `PostTarget`, Bloom/Blur/Crt/Exposure, `GaussianBlur` |
+| `Common/PostProcessing/` | `PostProcessor` (ping-pong), `PostEffect`, `PostLayer` (retained UI overlay), `PostTarget`, `BlurredBackdrop`, `ShrunkCache`, `BloomEffect`/`BlurEffect`/`CrtEffect`/`ExposureEffect`, `GaussianBlur` |
 | `Common/Transitions/` | Fade/Blur/Rot transitions |
 | `Scaling/` | `FrameScaler`, plan/settings/environment, CAS, FSR1 EASU+RCAS, GSR1, nearest, `DensityRenderScale` |
 | `2D/DeferredRenderer2D.cs:25` | G-buffer (albedo, surface, material) + lights (`MaxLights=64`) + optional path-traced GI |
 | `2D/Lighting/` | `Light2D`, `LightCells/LightTiles`, `OcclusionMap2D`, `PathTracedLighting2D`, `SpriteShadows`, `AmbientOcclusion2D` |
 | `2D/Spriting/` | `SpriteBatch` (`:24`), `SpriteBatchMeshComponent.cs`, `SpriteItem` (GPU struct), `TextureAtlas`, Aseprite import |
-| `2D/Tiling/` | `TileMap`, `TileMapBatch` (compute culling), pathfinder, rooms |
+| `2D/Tiling/` | `TileMap`, `TileMapBatch` (compute culling), `TileMapGeometryOcclusion`, `TileMapSilhouettes`, pathfinder, rooms |
 | `2D/Primitives/` | `PrimitiveRenderer` (SDF shapes, one draw), `ShapeInstance` |
 | `2D/Particles/` | `ParticleRenderer`, CPU and compute simulators |
-| `2D/Text/` | `DistanceFieldFont` (SDF R8 atlas from TTF/BMFont); text drawn via sprite pipeline |
+| `2D/Text/` | `DistanceFieldFont` (SDF R8 atlas from TTF/BMFont), `GlyphAtlas`, `GlyphOutlines`, `GlyphSmoothing` |
 | `3D/` | `Renderer3D` (depth-on `Renderer2D`), `Mesh3D`, `Vertex3D`, `Voxels/` (`VoxelRenderer` compute path tracer) |
 
 UI rendering is in `Horizon.UI` (separate project; engine shader `Horizon/shaders/ui/ui.slang`); not covered here.
@@ -107,7 +107,7 @@ UI rendering is in `Horizon.UI` (separate project; engine shader `Horizon/shader
 - MoltenVK: `VK_KHR_portability_enumeration` (instance) and `VK_KHR_portability_subset` (device), `IsPortability`; bindless capacity may drop below 4096
   (`BindlessTextures.Capacity`, `MAX_CAPACITY=4096`); MoltenVK lacks multi-draw indirect count (`:88` comment).
 - Queues: graphics plus optional async compute and transfer; submissions serialized by `QueueLock`.
-- Env: `HORIZON_VULKAN_VALIDATION`, `HORIZON_VULKAN_LABELS` (default on in Debug), `HORIZON_VULKAN_LAYERS=all`, `HORIZON_VULKAN_DRIVER=all`, `HORIZON_GPU_SCOPES=off`.
+- Env: `HORIZON_VULKAN_VALIDATION`, `HORIZON_VULKAN_LABELS` (default on in Debug), `HORIZON_VULKAN_LAYERS=all`, `HORIZON_VULKAN_DRIVER=all`, `HORIZON_VULKAN14=off`, `HORIZON_GPU_SCOPES=off`, `HORIZON_LIGHT_CELLS=off`, `HORIZON_VOXEL_TRACE=1`.
 - Surfaces implement `IPlatformSurface`: `Horizon.Platform.Desktop/SilkSurface.cs` (SDL window), `Horizon.Platform.Android/Surface/AndroidSurface.cs`
   (native window), `Horizon.Platform.iOS/Surface/IosSurface.cs` (CAMetalLayer, VK_EXT_metal_surface). The window makes the `GraphicsDevice` with its surface;
   `GraphicsDevice.Current` throws before then (`IsAvailable` probes).
@@ -144,8 +144,7 @@ released) -> `Shader.TryCreate` -> `ShaderCompiler.Compile` (`ShaderCompiler.cs:
 1. Preprocess; record to manifest if `HORIZON_SHADER_MANIFEST` set (before cache lookup, so hits are recorded too).
 2. `UnitsOf` -> `ShaderUnit` with `Key = SHA256(fingerprint|language|entry|source)`, each part length-prefixed (`ShaderCompiler.Keys.cs`).
    `CompilerFingerprint = CACHE_FORMAT | Slangc.NET version | compiler args`.
-3. `Resolve` (`ShaderCompiler.cs:~150`): Packed (or Automatic with `slangMissing`) -> pack only; else disk cache (`.spv` + `.notes`), else `CompileFresh`.
-   `DllNotFound/EntryPointNotFound/BadImageFormat` sets `slangMissing` and falls back to the pack for good.
+3. `Resolve` (`ShaderCompiler.cs:193-201`): Packed -> pack only; Automatic checks disk cache (`.spv` + `.notes`) -> **shipped `ShaderPackSet` (`*.hzshaders`) BEFORE `CompileFresh`** (avoiding loading Slang unless needed), falling back to pack on missing Slang natives (`DllNotFound`/`EntryPointNotFound`/`BadImageFormat` sets `slangMissing`).
 4. `CompiledShader` (stages, SPIR-V, thread group sizes, merged `Params` layout from reflection) -> `VkShaderModule`s (one per distinct SPIR-V array).
 Failure returns `Shader.Invalid` and logs `[ShaderCompiler] <name> didn't compile:`; drawing with an invalid technique draws nothing.
 

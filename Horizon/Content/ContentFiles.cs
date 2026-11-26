@@ -5,15 +5,20 @@ namespace Horizon.Content;
 /// <summary>The content source installed by the host before it loads game assets.</summary>
 public static class ContentFiles
 {
-    private sealed record Installed(IContentFiles Source, long Version);
-    private static Installed installed = new(new DiskContent(), 0);
+    private sealed record Installed(IContentFiles Source, long Version, string Prefix);
+    private static Installed installed = new(new DiskContent(), 0, "0|");
     private static long version;
 
     /// <summary>Install before starting engine threads. Replacing a source gives decoded caches a new identity.</summary>
     public static IContentFiles Source
     {
         get => Volatile.Read(ref installed).Source;
-        set => Volatile.Write(ref installed, new Installed(value ?? throw new ArgumentNullException(nameof(value)), Interlocked.Increment(ref version)));
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            long next = Interlocked.Increment(ref version);
+            Volatile.Write(ref installed, new Installed(value, next, $"{next}|"));
+        }
     }
 
     public static Stream OpenRead(string path) => Source.OpenRead(path);
@@ -38,7 +43,7 @@ public static class ContentFiles
     {
         Installed current = Volatile.Read(ref installed);
         string resolved = current.Source.ResolvePath(path);
-        return new FoundContent(current.Source, resolved, $"{current.Version}|{resolved}");
+        return new FoundContent(current.Source, resolved, string.Concat(current.Prefix, resolved));
     }
 
     public static byte[] ReadAllBytes(string path) => ReadAllBytes(Source, path);

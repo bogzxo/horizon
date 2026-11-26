@@ -21,6 +21,8 @@ public class ConcurrentLogger : ILoggerDisposable
 
     public static ConcurrentLogger Instance => _logger.Value;
 
+    internal static bool HasInstance => _logger.IsValueCreated;
+
     private readonly BlockingCollection<LogMessage> messages = new(new ConcurrentQueue<LogMessage>());
     private readonly StreamWriter? writer;
     private readonly Thread worker;
@@ -103,7 +105,7 @@ public class ConcurrentLogger : ILoggerDisposable
         {
             messages.Add(new LogMessage(message, level));
         }
-        catch (InvalidOperationException)
+        catch (Exception e) when (e is InvalidOperationException or ObjectDisposedException)
         {
             // Closed between the test above and here, the message is too late
             Interlocked.Decrement(ref pending);
@@ -117,61 +119,100 @@ public class ConcurrentLogger : ILoggerDisposable
     /// </summary>
     private void Write()
     {
-        foreach (LogMessage message in messages.GetConsumingEnumerable())
+        try
         {
-            string line = Show(message);
-            int written = 1;
+            foreach (LogMessage message in messages.GetConsumingEnumerable())
+            {
+                string prefix = Show(message);
+                int written = 1;
 
-            if (fileGate is null)
-            {
-                writer?.WriteLine(line);
-                if (messages.Count == 0) writer?.Flush();
-            }
-            else if (writer is not null)
-            {
-                EnterFile();
-                try
+                if (fileGate is null)
                 {
-                    // Another instance may have reset or appended to the same file since this process last wrote.
-                    writer.BaseStream.Seek(0, SeekOrigin.End);
-                    writer.WriteLine(line);
-
-                    // Whatever else has come in by now goes in on the same turn of the file. Taking the lock between
-                    // processes, seeking and flushing for every single line made a burst of the log (a program
-                    // starting) a few system calls a line
-                    while (written < MOST_AT_ONCE && messages.TryTake(out LogMessage next))
+                    if (writer is not null)
                     {
-                        writer.WriteLine(Show(next));
-                        written++;
+                        try
+                        {
+                            writer.Write(prefix);
+                            writer.WriteLine(message.Message);
+                            if (messages.Count == 0) writer.Flush();
+                        }
+                        catch (IOException)
+                        {
+                        }
                     }
-
-                    writer.Flush();
                 }
-                finally { fileGate.ReleaseMutex(); }
+                else if (writer is not null)
+                {
+                    EnterFile();
+                    try
+                    {
+                        // Another instance may have reset or appended to the same file since this process last wrote.
+                        writer.BaseStream.Seek(0, SeekOrigin.End);
+                        writer.Write(prefix);
+                        writer.WriteLine(message.Message);
+
+                        // Whatever else has come in by now goes in on the same turn of the file. Taking the lock between
+                        // processes, seeking and flushing for every single line made a burst of the log (a program
+                        // starting) a few system calls a line
+                        while (written < MOST_AT_ONCE && messages.TryTake(out LogMessage next))
+                        {
+                            string nextPrefix = Show(next);
+                            writer.Write(nextPrefix);
+                            writer.WriteLine(next.Message);
+                            written++;
+                        }
+
+                        writer.Flush();
+                    }
+                    catch (IOException)
+                    {
+                    }
+                    finally { fileGate.ReleaseMutex(); }
+                }
+
+                Interlocked.Add(ref pending, -written);
             }
-
-            Interlocked.Add(ref pending, -written);
         }
-
-        // The file is closed by this thread and no other, once it has written the last of the queue. Closed from Dispose
-        // when its wait ran out, a thread still at it (starved on a busy machine) wrote on to a closed file and the
-        // exception took the whole process down
-        writer?.Dispose();
+        finally
+        {
+            // The file is closed by this thread and no other, once it has written the last of the queue. Closed from Dispose
+            // when its wait ran out, a thread still at it (starved on a busy machine) wrote on to a closed file and the
+            // exception took the whole process down
+            try { writer?.Dispose(); } catch (Exception) { }
+            fileGate?.Dispose();
+            Volatile.Write(ref pending, 0);
+        }
     }
 
     /// <summary>
-    /// Helper method to write a message to the console in its colour, and make the line it is in the file.
+    /// Helper method to write a message to the console in its colour, returning the static level prefix for the file.
     /// </summary>
     private static string Show(in LogMessage message)
     {
-        string line = $"[{message.Level}] {message.Message}";
+        string prefix = PrefixOf(message.Level);
 
-        Console.ForegroundColor = ColorOf(message.Level);
-        Console.WriteLine(line);
-        Console.ResetColor();
+        try
+        {
+            Console.ForegroundColor = ColorOf(message.Level);
+            Console.Write(prefix);
+            Console.WriteLine(message.Message);
+            Console.ResetColor();
+        }
+        catch (IOException)
+        {
+        }
 
-        return line;
+        return prefix;
     }
+
+    private static string PrefixOf(LogLevel level) => level switch
+    {
+        LogLevel.Success => "[Success] ",
+        LogLevel.Warning => "[Warning] ",
+        LogLevel.Error => "[Error] ",
+        LogLevel.Fatal => "[Fatal] ",
+        _ => "[Info] "
+    };
 
     private void EnterFile()
     {
@@ -208,7 +249,8 @@ public class ConcurrentLogger : ILoggerDisposable
         messages.CompleteAdding();
         try { worker.Priority = ThreadPriority.Normal; }
         catch (ThreadStateException) { /* Already finished */ }
-        worker.Join(LONGEST_FLUSH);
+        if (worker.Join(LONGEST_FLUSH))
+            messages.Dispose();
 
         GC.SuppressFinalize(this);
     }

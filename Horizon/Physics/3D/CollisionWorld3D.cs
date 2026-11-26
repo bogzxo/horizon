@@ -96,11 +96,20 @@ public sealed class CollisionWorld3D
     /// <summary>Whether a box would be in anything solid where it is, for whether something fits (a block placed where somebody stands).</summary>
     public bool Overlaps(in Box3 box)
     {
-        scratch.Clear();
-        CollectSolids(box, scratch);
-        foreach (Box3 solid in scratch)
+        for (int i = 0; i < boxes.Count; i++)
         {
-            if (solid.Intersects(box)) return true;
+            BoxCollider3D collider = boxes[i];
+            if (collider.Enabled && collider.Bounds.Intersects(box)) return true;
+        }
+
+        for (int i = 0; i < fields.Count; i++)
+        {
+            scratch.Clear();
+            fields[i].CollectSolids(box, scratch);
+            for (int j = 0; j < scratch.Count; j++)
+            {
+                if (scratch[j].Intersects(box)) return true;
+            }
         }
 
         return false;

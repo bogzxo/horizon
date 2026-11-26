@@ -180,7 +180,7 @@ public partial class WindowManager
     /// <summary>Schedules the next timed UI change without requesting unchanged frames. Simulation thread only.</summary>
     public void RequestTickIn(double seconds)
     {
-        if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0 && !windowMinimised)
+        if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0 && !windowMinimised && !dormant)
             simulation?.RequestTickIn(seconds);
     }
 
@@ -352,11 +352,14 @@ public partial class WindowManager
     }
 
     /// <summary>
-    /// Whether frames are held back because the window is minimised and has been for a moment, whatever painted
+    /// Whether frames are held back because the window is dormant, or minimised and has been for a moment, whatever painted
     /// something new. There's nothing to see, and the window has been sized down already. An application only.
     /// </summary>
-    private bool Hidden => Mode == RunMode.Application && windowMinimised &&
-        Stopwatch.GetTimestamp() - Volatile.Read(ref minimisedAt) > (long)(FRAMES_MINIMISED * Stopwatch.Frequency);
+    private bool Hidden => IsHidden(Mode, dormant, windowMinimised, Stopwatch.GetTimestamp(), Volatile.Read(ref minimisedAt));
+
+    internal static bool IsHidden(RunMode mode, bool isDormant, bool minimized, long now, long minimizedAtStamp) =>
+        mode == RunMode.Application
+        && (isDormant || (minimized && now - minimizedAtStamp > (long)(FRAMES_MINIMISED * Stopwatch.Frequency)));
 
     /// <summary>
     /// Helper method to hold the thread that draws until a frame is wanted, or a second has gone by. Nothing for a window

@@ -99,7 +99,7 @@ public sealed class PhysicsFluidParticleSimulator2D : ParticleSimulator2D
     protected internal override bool Prepare(out ParticleDraw draw)
     {
         draw = default;
-        if (instances is null || frontCount < 1)
+        if (instances is null)
             return false;
 
         // One bulk copy of only the live particles into this frame's region of the stream, which waits for the GPU
@@ -108,6 +108,9 @@ public sealed class PhysicsFluidParticleSimulator2D : ParticleSimulator2D
         lock (frameLock)
         {
             live = frontCount;
+            if (live < 1)
+                return false;
+
             Span<ParticleInstance> into = instances.Begin(live);
             if (into.IsEmpty)
                 return false;

@@ -345,9 +345,10 @@ public class SceneManager : Entity
     {
         lock (_changeLock)
         {
-            // Whoever is on screen is on their way out from here on, and can tell
-            if (CurrentInstance is { } leaving && !ReferenceEquals(leaving, scene))
-                leaving.IsLeaving = true;
+            // Whoever is on screen is on their way out from here on, and can tell.
+            // If the current scene is chosen again before Change runs, it is no longer leaving.
+            if (CurrentInstance is { } leaving)
+                leaving.IsLeaving = !ReferenceEquals(leaving, scene);
 
             // One that was set and never got as far as being shown. One that is kept underneath was only going
             // to be gone back to, and stays where it is
@@ -717,6 +718,26 @@ public class SceneManager : Entity
         Scene? left = CurrentInstance;
         if (ReferenceEquals(incoming, left))
         {
+            if (left is not null)
+                left.IsLeaving = false;
+
+            if (change == Way.Reset)
+            {
+                lock (_changeLock)
+                {
+                    Kept[] below = _below;
+                    _below = [];
+                    lock (_retired)
+                    {
+                        foreach (Kept under in below)
+                        {
+                            if (!under.Scene.Persistent && !ReferenceEquals(under.Scene, incoming))
+                                _retired.Add(under.Scene);
+                        }
+                    }
+                }
+            }
+
             Uncover(transition);
             DisposeRetired();
             return;
@@ -934,8 +955,84 @@ public class SceneManager : Entity
                 Log.Error($"[SceneManager] '{scene.Name}' didn't go quietly: {exception.Message}");
             }
 
-            int freed = GameEngine.Instance.ObjectManager.Release(scene.Assets);
-            Log.Info($"[SceneManager] Left '{scene.Assets.Name}', freed the {freed} GPU objects it still had.");
+            if (GameEngine.Instance?.ObjectManager is { } objects)
+            {
+                int freed = objects.Release(scene.Assets);
+                Log.Info($"[SceneManager] Left '{scene.Assets.Name}', freed the {freed} GPU objects it still had.");
+            }
+        }
+    }
+
+    protected override void DisposeOther()
+    {
+        var toDispose = new HashSet<Scene>(ReferenceEqualityComparer.Instance);
+
+        lock (_changeLock)
+        {
+            if (CurrentInstance is { } current)
+            {
+                toDispose.Add(current);
+                CurrentInstance = null;
+            }
+
+            foreach (Kept kept in _below)
+                toDispose.Add(kept.Scene);
+            _below = [];
+
+            if (_incoming is { } incoming)
+            {
+                toDispose.Add(incoming);
+                _incoming = null;
+            }
+
+            if (_toPreload is { } toPreload)
+            {
+                toDispose.Add(toPreload);
+                _toPreload = null;
+            }
+
+            if (_preloaded is { } preloaded)
+            {
+                toDispose.Add(preloaded);
+                _preloaded = null;
+            }
+
+            _incomingTransition = null;
+            _whileCovered = null;
+            _halt = false;
+            _covering = false;
+            _lastFrame = false;
+        }
+
+        lock (_retired)
+        {
+            foreach (Scene retired in _retired)
+                toDispose.Add(retired);
+            _retired.Clear();
+        }
+
+        _tweens.KillAll();
+        _drawn?.Finish();
+        _drawn = null;
+        _running = null;
+
+        ObjectManager? objects = GameEngine.Instance?.ObjectManager;
+        foreach (Scene scene in toDispose)
+        {
+            if (!scene.IsDisposed)
+            {
+                try
+                {
+                    scene.Enabled = false;
+                    scene.Dispose();
+                }
+                catch (Exception exception)
+                {
+                    Log.Error($"[SceneManager] '{scene.Name}' didn't go quietly: {exception.Message}");
+                }
+            }
+
+            objects?.Release(scene.Assets);
         }
     }
 

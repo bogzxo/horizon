@@ -42,20 +42,27 @@ public static class Localisation
     /// <summary>What a text in a layout starts with when it is a key and not the text itself.</summary>
     public const char KEY_MARK = '@';
 
-    private static FrozenDictionary<string, string> texts = FrozenDictionary<string, string>.Empty;
+    private sealed class Snapshot(FrozenDictionary<string, string> texts, string language, string folder)
+    {
+        public readonly FrozenDictionary<string, string> Texts = texts;
+        public readonly string Language = language;
+        public readonly string Folder = folder;
+    }
+
+    private static Snapshot current = new(FrozenDictionary<string, string>.Empty, string.Empty, string.Empty);
 
     // The keys that were asked for and aren't there, said in the log once each
     private static readonly HashSet<string> missing = [];
     private static readonly Lock missingLock = new();
 
     /// <summary>The language that was loaded last, empty for none.</summary>
-    public static string Language { get; private set; } = string.Empty;
+    public static string Language => Volatile.Read(ref current).Language;
 
     /// <summary>The folder the language was loaded out of, empty for none.</summary>
-    public static string Folder { get; private set; } = string.Empty;
+    public static string Folder => Volatile.Read(ref current).Folder;
 
     /// <summary>How many texts the language has.</summary>
-    public static int Count => texts.Count;
+    public static int Count => Volatile.Read(ref current).Texts.Count;
 
     /// <summary>Called after a language has been loaded, for whatever put texts on screen that aren't keys to swap them.</summary>
     public static event Action? Changed;
@@ -74,15 +81,18 @@ public static class Localisation
             return false;
         }
 
+        FrozenDictionary<string, string> loaded;
         try
         {
-            texts = Read(ContentFiles.ReadAllText(file), file);
+            loaded = Read(ContentFiles.ReadAllText(file), file);
         }
         catch (Exception e)
         {
             Log.Error($"[Localisation] {e.Message}");
             return false;
         }
+
+        Volatile.Write(ref current, new Snapshot(loaded, language, folder));
 
         lock (missingLock)
             missing.Clear();
@@ -91,9 +101,7 @@ public static class Localisation
         lock (othersLock)
             others.Clear();
 
-        Language = language;
-        Folder = folder;
-        Log.Info($"[Localisation] {language}, {texts.Count} texts out of {folder}.");
+        Log.Info($"[Localisation] {language}, {loaded.Count} texts out of {folder}.");
 
         Changed?.Invoke();
         return true;
@@ -135,7 +143,14 @@ public static class Localisation
     }
 
     /// <summary>The languages there are in the folder the loaded one came out of, empty with none loaded.</summary>
-    public static IReadOnlyList<string> Languages => Folder.Length > 0 ? Available(Folder) : [];
+    public static IReadOnlyList<string> Languages
+    {
+        get
+        {
+            string folder = Volatile.Read(ref current).Folder;
+            return folder.Length > 0 ? Available(folder) : [];
+        }
+    }
 
     // The other languages of the folder, read the first time something asks what they say, by the file they are in
     private static readonly Dictionary<string, FrozenDictionary<string, string>?> others = [];
@@ -147,10 +162,11 @@ public static class Localisation
     /// </summary>
     public static string? In(string language, string key)
     {
-        if (language == Language)
-            return texts.TryGetValue(key, out string? here) ? here : null;
+        Snapshot snapshot = Volatile.Read(ref current);
+        if (language == snapshot.Language)
+            return snapshot.Texts.TryGetValue(key, out string? here) ? here : null;
 
-        string file = Path.Combine(Folder, language + ".hor");
+        string file = Path.Combine(snapshot.Folder, language + ".hor");
         string cacheKey = ContentFiles.CacheKey(file);
         FrozenDictionary<string, string>? read;
         lock (othersLock)
@@ -175,15 +191,15 @@ public static class Localisation
     }
 
     /// <summary>Every key the language has, for whatever offers them to somebody typing one.</summary>
-    public static IEnumerable<string> Keys => texts.Keys;
+    public static IEnumerable<string> Keys => Volatile.Read(ref current).Texts.Keys;
 
     /// <summary>Whether the language has a text by that key.</summary>
-    public static bool Has(string key) => texts.ContainsKey(key);
+    public static bool Has(string key) => Volatile.Read(ref current).Texts.ContainsKey(key);
 
     /// <summary>The text by a key, the key itself if there is none (and the log says so, once).</summary>
     public static string Get(string key)
     {
-        if (texts.TryGetValue(key, out string? text))
+        if (Volatile.Read(ref current).Texts.TryGetValue(key, out string? text))
             return text;
 
         Missing(key);
@@ -245,7 +261,7 @@ public static class Localisation
         if (text[1] == KEY_MARK)
             return EscapedOf(text);
 
-        var lookup = texts.GetAlternateLookup<ReadOnlySpan<char>>();
+        var lookup = Volatile.Read(ref current).Texts.GetAlternateLookup<ReadOnlySpan<char>>();
         if (lookup.TryGetValue(text.AsSpan(1), out string? found))
             return found;
 

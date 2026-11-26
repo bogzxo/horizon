@@ -86,6 +86,12 @@ public sealed class GamepadBindings
     /// <summary>The actions that have bindings, including the ones bound to nothing.</summary>
     public IReadOnlyCollection<string> Actions => actions.Keys;
 
+    internal void CopyActionsTo(List<string> destination)
+    {
+        foreach (string action in actions.Keys)
+            destination.Add(action);
+    }
+
     /// <summary>Whether any action is bound to a key at all, which a keyboard's bindings from before there were keys aren't.</summary>
     public bool HasKeys
     {

@@ -259,17 +259,20 @@ public sealed class CharacterController3D(CollisionWorld3D world, Vector3 feet) 
 
         Vector3 moved = SlideThrough(box, step, out _);
 
+        // Remember whether an actual solid wall stopped the horizontal move before crouch edge clamping runs
+        bool wallBlocked = MathF.Abs(moved.X - step.X) > SKIN || MathF.Abs(moved.Z - step.Z) > SKIN;
+
         // Crouched on the ground, an edge is a wall. Each flat way is undone if it would leave nothing under the feet
-        if (Crouching && IsGrounded && !Flying)
+        bool keepOnEdge = Crouching && IsGrounded && !Flying;
+        if (keepOnEdge)
         {
             moved = KeepOnEdge(box, moved);
         }
 
-        // Stopped by something low enough to step onto, and standing, so try going over it and take whichever went further
-        bool blocked = MathF.Abs(moved.X - step.X) > SKIN || MathF.Abs(moved.Z - step.Z) > SKIN;
-        HitWall = blocked;
+        // Stopped by something low enough to step onto, so try going over it and take whichever went further
+        HitWall = wallBlocked;
 
-        if (blocked && StepHeight > 0.0f && (IsGrounded || step.Y <= 0.0f && OnGround()) && !IsSwimming)
+        if (wallBlocked && StepHeight > 0.0f && (IsGrounded || step.Y <= 0.0f && OnGround()) && !IsSwimming)
         {
             Vector3 up = new(step.X, StepHeight, step.Z);
             Vector3 over = SlideThrough(box, up, out Box3 raised);
@@ -278,6 +281,12 @@ public sealed class CharacterController3D(CollisionWorld3D world, Vector3 feet) 
             float down = -StepHeight;
             foreach (Box3 solid in solids) down = solid.ClipY(raised, down);
             over.Y += down;
+
+            // Even when stepping up while crouched, never step off an unsupported edge
+            if (keepOnEdge)
+            {
+                over = KeepOnEdge(box.Offset(new Vector3(0.0f, over.Y, 0.0f)), over);
+            }
 
             float flatBefore = moved.X * moved.X + moved.Z * moved.Z;
             float flatAfter = over.X * over.X + over.Z * over.Z;

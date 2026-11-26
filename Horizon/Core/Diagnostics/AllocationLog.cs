@@ -19,7 +19,7 @@ namespace Horizon.Core.Diagnostics;
 /// bytes a tick" finds nobody. "The input display, four hundred bytes a tick" does.
 /// </para>
 /// </summary>
-internal sealed class AllocationLog : EventListener
+internal sealed partial class AllocationLog : EventListener
 {
     /// <summary>Whether anybody is counting. Read on every update of every entity, so it is a field and nothing cleverer.</summary>
     internal static bool Tracking;
@@ -185,9 +185,9 @@ internal sealed class AllocationLog : EventListener
         return taken.Count == 0 && by.Count == 0 ? "Allocating next to nothing." : text.ToString();
     }
 
-    [DllImport("kernel32.dll")]
-    private static extern uint GetCurrentThreadId();
+    [LibraryImport("kernel32.dll")]
+    private static partial uint GetCurrentThreadId();
 
-    [DllImport("libc", SetLastError = false)]
-    private static extern int gettid();
+    [LibraryImport("libc", SetLastError = false)]
+    private static partial int gettid();
 }

@@ -60,22 +60,53 @@ internal sealed class PhysicsStaticGrid
     public int[] CellShapes => _cellShapes;
 
     /// <summary>
-    /// Rebuilds the grid if fixtures were added to (or taken off) the static bodies since the last time.
-    /// Static bodies are expected to stay where they are, moving one is not picked up.
+    /// Rebuilds the grid if static bodies or fixtures were added, removed, swapped, moved or resized since the last time.
     /// </summary>
     public void Refresh(List<PhysicsBodyComponent2D> staticBodies)
     {
-        int fixtureCount = 0;
-        foreach (var body in staticBodies)
+        int index = 0;
+        bool changed = false;
+
+        for (int b = 0; b < staticBodies.Count; b++)
         {
-            fixtureCount += body.DynamicFixtures.Count;
+            var body = staticBodies[b];
+            Vector2 bodyPos = body.Position;
+            var fixtures = body.DynamicFixtures;
+
+            for (int f = 0; f < fixtures.Count; f++)
+            {
+                IPhysicsFixture fixture = fixtures[f];
+                if (!PhysicsShape.TryCreate(fixture, bodyPos, Vector2.Zero, out var shape)) continue;
+
+                if (!changed)
+                {
+                    if (index >= _shapes.Length ||
+                        !ReferenceEquals(_fixtures[index], fixture) ||
+                        _bodyPositions[index] != bodyPos ||
+                        !SameShape(in _shapes[index], in shape))
+                    {
+                        changed = true;
+                    }
+                }
+
+                index++;
+            }
         }
 
-        if (fixtureCount == _builtFrom) return;
-        _builtFrom = fixtureCount;
+        if (!changed && index == _shapes.Length && _builtFrom == index) return;
+        _builtFrom = index;
 
-        Build(staticBodies, fixtureCount);
+        Build(staticBodies, index);
     }
+
+    private static bool SameShape(in PhysicsShape a, in PhysicsShape b) =>
+        a.Min == b.Min &&
+        a.Max == b.Max &&
+        a.Radius == b.Radius &&
+        a.IsCircle == b.IsCircle &&
+        a.OutlineCount == b.OutlineCount &&
+        a.OutlineVersion == b.OutlineVersion &&
+        ReferenceEquals(a.Outline, b.Outline);
 
     private void Build(List<PhysicsBodyComponent2D> staticBodies, int fixtureCount)
     {
@@ -160,6 +191,59 @@ internal sealed class PhysicsStaticGrid
         foreach (int shape in GetShapes(x, y))
         {
             if (_shapes[shape].Contains(point)) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Tests whether the line segment from <paramref name="from"/> to <paramref name="to"/> enters or crosses
+    /// any shape in the grid, returning the earliest hit fraction and outward surface normal.
+    /// </summary>
+    public bool TryIntersectSegment(Vector2 from, Vector2 to, out float hitT, out Vector2 hitNormal)
+    {
+        hitT = float.MaxValue;
+        hitNormal = default;
+
+        Vector2 min = Vector2.Min(from, to), max = Vector2.Max(from, to);
+        if (!TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return false;
+
+        for (int y = y0; y <= y1; y++)
+        {
+            for (int x = x0; x <= x1; x++)
+            {
+                foreach (int index in GetShapes(x, y))
+                {
+                    if (_shapes[index].TryIntersectSegment(from, to, out float t, out Vector2 normal) && t < hitT)
+                    {
+                        hitT = t;
+                        hitNormal = normal;
+                    }
+                }
+            }
+        }
+
+        return hitT <= 1.0f;
+    }
+
+    /// <summary>
+    /// Tests whether the line segment from <paramref name="from"/> to <paramref name="to"/> enters or crosses
+    /// any shape in the grid.
+    /// </summary>
+    public bool IntersectsSegment(Vector2 from, Vector2 to)
+    {
+        Vector2 min = Vector2.Min(from, to), max = Vector2.Max(from, to);
+        if (!TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return false;
+
+        for (int y = y0; y <= y1; y++)
+        {
+            for (int x = x0; x <= x1; x++)
+            {
+                foreach (int index in GetShapes(x, y))
+                {
+                    if (_shapes[index].TryIntersectSegment(from, to, out _, out _)) return true;
+                }
+            }
         }
 
         return false;

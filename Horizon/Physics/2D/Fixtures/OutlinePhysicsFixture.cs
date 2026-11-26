@@ -35,6 +35,7 @@ public class OutlinePhysicsFixture(string tag = "") : IPhysicsFixture
     // For the world, which reads them every step
     internal Vector2[] Points => points;
     internal int PointCount => pointCount;
+    internal int Version { get; private set; }
 
     /// <summary>
     /// Gives the fixture another outline.
@@ -47,6 +48,7 @@ public class OutlinePhysicsFixture(string tag = "") : IPhysicsFixture
 
         segments[..count].CopyTo(points);
         pointCount = count;
+        Version++;
 
         Vector2 min = new(float.MaxValue), max = new(float.MinValue);
         for (int i = 0; i < count; i++)

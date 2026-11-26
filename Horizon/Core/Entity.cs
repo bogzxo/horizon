@@ -207,8 +207,14 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             if (AllocationLog.Tracking)
             {
                 long before = AllocationLog.Begin(out long nested);
-                source.Capture();
-                AllocationLog.End(component, before, nested);
+                try
+                {
+                    source.Capture();
+                }
+                finally
+                {
+                    AllocationLog.End(component, before, nested);
+                }
             }
             else
             {
@@ -224,8 +230,14 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             if (AllocationLog.Tracking)
             {
                 long before = AllocationLog.Begin(out long nested);
-                child.Capture();
-                AllocationLog.End(child, before, nested);
+                try
+                {
+                    child.Capture();
+                }
+                finally
+                {
+                    AllocationLog.End(child, before, nested);
+                }
             }
             else
             {
@@ -322,9 +334,15 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
 
             long before = AllocationLog.Begin(out long nested);
-            if (physics) component.UpdatePhysics(dt);
-            else component.UpdateState(dt);
-            AllocationLog.End(component, before, nested);
+            try
+            {
+                if (physics) component.UpdatePhysics(dt);
+                else component.UpdateState(dt);
+            }
+            finally
+            {
+                AllocationLog.End(component, before, nested);
+            }
         }
 
         foreach (Entity child in _childrenCache)
@@ -332,9 +350,15 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
 
             long before = AllocationLog.Begin(out long nested);
-            if (physics) child.UpdatePhysics(dt);
-            else child.UpdateState(dt);
-            AllocationLog.End(child, before, nested);
+            try
+            {
+                if (physics) child.UpdatePhysics(dt);
+                else child.UpdateState(dt);
+            }
+            finally
+            {
+                AllocationLog.End(child, before, nested);
+            }
         }
     }
 
@@ -500,15 +524,18 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     /// </summary>
     public T AddComponent<T>(T component) where T : IGameComponent
     {
-        PushToInitializationQueue(component);
-
-        component.Parent = this;
-        component.Enabled = false;
-        if (string.IsNullOrEmpty(component.Name)) component.Name = component.GetType().Name;
+        ObjectDisposedException.ThrowIf(_disposed, this);
 
         lock (_structuralLock)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_components.Contains(component)) return component;
+
+            PushToInitializationQueue(component);
+
+            component.Parent = this;
+            component.Enabled = false;
+            if (string.IsNullOrEmpty(component.Name)) component.Name = component.GetType().Name;
 
             _components.Add(component);
             _componentsCache = [.. _components];
@@ -522,6 +549,8 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     public void PushToInitializationQueue(IInstantiable entity)
     {
+        if (_disposed) return;
+
         // Set up already (it was somewhere else before, or is added a second time), once is enough
         if (entity is Entity { IsInitialized: true }) return;
 
@@ -540,17 +569,22 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     /// </summary>
     public T AddEntity<T>(T entity) where T : Entity
     {
-        PushToInitializationQueue(entity);
-
-        entity.Parent = this;
-
-        // Off until it has been set up, which one that comes from somewhere else has been already
-        if (!entity.IsInitialized) entity.Enabled = false;
-        if (entity.Name.Length == 0) entity.Name = entity.GetType().Name;
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(entity._disposed, entity);
 
         lock (_structuralLock)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            ObjectDisposedException.ThrowIf(entity._disposed, entity);
             if (_children.Contains(entity)) return entity;
+
+            PushToInitializationQueue(entity);
+
+            entity.Parent = this;
+
+            // Off until it has been set up, which one that comes from somewhere else has been already
+            if (!entity.IsInitialized) entity.Enabled = false;
+            if (entity.Name.Length == 0) entity.Name = entity.GetType().Name;
 
             _children.Add(entity);
             _childrenCache = [.. _children];

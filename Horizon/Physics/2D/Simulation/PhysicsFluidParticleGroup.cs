@@ -23,6 +23,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     private const float SPREAD_RANGE = 1.5f;    // How far (in diameters) the particles of a pile keep nudging each other away
     private const float SPREAD_RATE = 80.0f;    // How far they nudge at a Spread of 1, in diameters a second (for two right up against each other it is a ninth of this)
     private const float SETTLE_RATE = 0.25f;    // How much (in diameters) of an old overlap two particles are put apart by every step
+    private const float SQUEEZE_RATE = 120.0f;  // Maximum newly acquired squeeze speed (in diameters a second) so sub-120Hz steps stay consistent
     private const float FLOW_TIME = 0.08f;      // How long (in seconds) the speed of a particle is averaged over for Flow
 
     // Where every particle was before it was moved, how fast it is going is worked out from how far it got
@@ -194,15 +195,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         // the passes could undo) is put apart a little at a time, and what is merely close is nudged apart (the spread).
         // Where it was is moved along with it, so that none of this is taken for speed. It is what keeps a deep pool
         // from boiling, a crowded spot from firing particles off and what is poured from spraying all over.
-        Settle(live, diameter, range, spread, grid);
-
-        // Who is near the map is looked at again, the settling moves a particle at the edge of a pile by up to its
-        // own size, far enough to put one that wasn't near a wall inside of it, and one that isn't marked never gets
-        // pushed out. About one in seventy of a pile poured against a wall went through it that way
-        for (int i = 0; i < live; i++)
-        {
-            if (!_nearMap[i]) _nearMap[i] = IsNearMap(particles[i].Position, mapReach, grid);
-        }
+        Settle(live, diameter, range, spread, mapReach, grid);
 
         // 4. Then push them out of each other, the map and the bodies. Getting out of one thing can mean ending up in
         // the next, so it is done over and over, every pass gets the whole lot a bit closer to where nothing overlaps.
@@ -214,12 +207,18 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             // as long as the last pass is one of them, nothing may be left inside of the map
             if (((iterations - 1 - pass) & 1) != 0) continue;
 
+            bool finalPass = pass == iterations - 1;
             for (int i = 0; i < live; i++)
             {
                 if (_nearBodies[i]) SeparateFromBodies(ref particles[i].Position, ref _previous[i], ref _shoves[i], bodies);
 
+                if (!_nearMap[i] && finalPass && IsNearMap(particles[i].Position, Radius, grid))
+                {
+                    _nearMap[i] = true;
+                }
+
                 // The map goes last as it is the one thing which never gives way
-                if (_nearMap[i]) SeparateFromMap(ref particles[i].Position, ref _contacts[i], grid);
+                if (_nearMap[i]) SeparateFromMap(ref particles[i].Position, _origins[i], ref _contacts[i], grid);
             }
         }
 
@@ -231,11 +230,12 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             ref ParticleState2D p = ref particles[i];
             Vector2 contact = _contacts[i];
 
-            // The weight of a pile (or a body) can press a particle into the map harder than the map pushes back.
-            // The map always wins, rather than end up inside of it the particle stays where it was.
-            // Unless it was inside already (spawned there), then it has to be let out.
-            // Where it was is taken from before anything was done to it, settling and bodies move that along with them.
-            if (contact != Vector2.Zero && grid.Contains(p.Position) && !grid.Contains(_origins[i]))
+            // The weight of a pile (or a body) can press a particle into or across a thin wall harder than the map
+            // pushes back. The map always wins, rather than end up inside of it or on the far side of a wall the
+            // particle stays where it was. Unless it was inside already (spawned there), then it has to be let out.
+            if ((_nearMap[i] || contact != Vector2.Zero) &&
+                (grid.Contains(p.Position) || grid.IntersectsSegment(_origins[i], p.Position)) &&
+                !grid.Contains(_origins[i]))
             {
                 p.Position = _origins[i];
                 p.Velocity = Vector2.Zero;
@@ -248,11 +248,15 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             // Being squeezed out from between the others can be very sudden. Around a body more so, everything it
             // ploughs through is pressed into its neighbours at once, which would spray the lot into the air.
             // What is near a body comes away no faster than a body could have sent it, unless it already was.
-            float limit = _nearBodies[i] ? MathF.Min(maxSpeed, MathF.Max(BodyPushLimit, p.Velocity.Length())) : maxSpeed;
+            float baseLimit = _nearBodies[i] ? MathF.Min(maxSpeed, BodyPushLimit) : MathF.Min(maxSpeed, diameter * SQUEEZE_RATE);
             float speedSquared = velocity.LengthSquared();
-            if (speedSquared > limit * limit)
+            if (speedSquared > baseLimit * baseLimit)
             {
-                velocity *= limit / MathF.Sqrt(speedSquared);
+                float limit = MathF.Min(maxSpeed, MathF.Max(baseLimit, p.Velocity.Length()));
+                if (speedSquared > limit * limit)
+                {
+                    velocity *= limit / MathF.Sqrt(speedSquared);
+                }
             }
 
             // The shove of a body is a speed to be brought up to, not one to add to every step it is leant on
@@ -335,6 +339,15 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
         _cellStart = new int[slots + 1];
         _cellMask = slots - 1;
+
+        // Pre-size pair scratch buffers up front for this capacity so FindPairs does not repeatedly resize during simulation
+        int pairCapacity = capacity > 0 ? Math.Max(capacity * 16, 1024) : 0;
+        if (pairCapacity > _pairs.Length)
+        {
+            _pairs = new int[pairCapacity];
+            _pairGaps = new float[pairCapacity / 2];
+            _pairNormals = new float[pairCapacity];
+        }
     }
 
     private int GetCell(int x, int y) => ((x * 73856093) ^ (y * 19349663)) & _cellMask;
@@ -380,6 +393,9 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     private void FindPairs(int live, float range)
     {
         var particles = _particles;
+        var cellStart = _cellStart;
+        var cellParticles = _cellParticles;
+        var pairs = _pairs;
         float rangeSquared = range * range;
         float scale = 1.0f / range;
         int count = 0;
@@ -400,29 +416,39 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
                     int cell = GetCell(x, y);
 
                     // Two of the cells around us sharing a slot would have us find everyone in it twice
-                    if (cells[..cellCount].Contains(cell)) continue;
+                    bool seen = false;
+                    for (int k = 0; k < cellCount; k++)
+                    {
+                        if (cells[k] == cell)
+                        {
+                            seen = true;
+                            break;
+                        }
+                    }
+                    if (seen) continue;
                     cells[cellCount++] = cell;
 
-                    int end = _cellStart[cell + 1];
-                    for (int entry = _cellStart[cell]; entry < end; entry++)
+                    int end = cellStart[cell + 1];
+                    for (int entry = cellStart[cell]; entry < end; entry++)
                     {
                         // Every pair is only listed from the side of the one that comes first
-                        int j = _cellParticles[entry];
+                        int j = cellParticles[entry];
                         if (j <= i) continue;
 
                         ref ParticleState2D other = ref particles[j];
                         float awayX = other.Position.X - position.X, awayY = other.Position.Y - position.Y;
                         if (awayX * awayX + awayY * awayY >= rangeSquared) continue;
 
-                        if (count + 2 > _pairs.Length)
+                        if (count + 2 > pairs.Length)
                         {
                             Array.Resize(ref _pairs, Math.Max(_pairs.Length * 2, 1024));
                             Array.Resize(ref _pairGaps, _pairs.Length / 2);
                             Array.Resize(ref _pairNormals, _pairs.Length);
+                            pairs = _pairs;
                         }
 
-                        _pairs[count++] = i;
-                        _pairs[count++] = j;
+                        pairs[count++] = i;
+                        pairs[count++] = j;
                     }
                 }
             }
@@ -448,7 +474,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     /// here too, the way they were apart before moving, as after it one may sit right on top of the other.
     /// </summary>
     /// <param name="spread">How far the ones that are merely close nudge each other away, see <see cref="Spread"/>.</param>
-    private void Settle(int live, float diameter, float range, float spread, PhysicsStaticGrid grid)
+    private void Settle(int live, float diameter, float range, float spread, float mapReach, PhysicsStaticGrid grid)
     {
         var particles = _particles;
         var previous = _previous;
@@ -502,17 +528,21 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             secondParticle.Position.X += x; secondParticle.Position.Y += y;
         }
 
-        // Which must not end with anyone inside of the map
+        // Which must not end with anyone inside of the map or pushed across a thin wall
         for (int i = 0; i < live; i++)
         {
-            if (!_nearMap[i]) continue;
+            if (!_nearMap[i])
+            {
+                _nearMap[i] = IsNearMap(previous[i], mapReach, grid) || IsNearMap(particles[i].Position, mapReach, grid);
+                if (!_nearMap[i]) continue;
+            }
 
             Vector2 before = previous[i], contact = default;
-            SeparateFromMap(ref previous[i], ref contact, grid);
+            SeparateFromMap(ref previous[i], _origins[i], ref contact, grid);
 
-            // Getting out of one tile can end inside of the one next to it (in a corner). The map always wins,
-            // rather than that, the particle isn't put anywhere at all this time
-            if (contact != Vector2.Zero && grid.Contains(previous[i]) && !grid.Contains(_origins[i]))
+            // Getting out of one tile can end inside of the one next to it (in a corner) or across a thin wall.
+            // The map always wins, rather than that, the particle isn't put anywhere at all this time
+            if ((grid.Contains(previous[i]) || grid.IntersectsSegment(_origins[i], previous[i])) && !grid.Contains(_origins[i]))
             {
                 previous[i] = _origins[i];
             }
@@ -604,8 +634,27 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     }
 
     /// <param name="contact">Set to the way the map pushed, if it did.</param>
-    private void SeparateFromMap(ref Vector2 position, ref Vector2 contact, PhysicsStaticGrid grid)
+    private void SeparateFromMap(ref Vector2 position, Vector2 reference, ref Vector2 contact, PhysicsStaticGrid grid)
     {
+        // If neighbours pushed the particle past the midpoint (or all the way across) a thin wall, resolve it back
+        // to the entry face along the segment from where it started rather than letting Overlaps eject it out the far side.
+        if (position != reference)
+        {
+            for (int sweep = 0; sweep < 2; sweep++)
+            {
+                if (!grid.TryIntersectSegment(reference, position, out float hitT, out Vector2 hitNormal)) break;
+
+                Vector2 hitPoint = reference + (position - reference) * hitT;
+                float signedDistance = Vector2.Dot(position - hitPoint, hitNormal);
+                if (signedDistance < Radius)
+                {
+                    position += hitNormal * (Radius - signedDistance);
+                }
+
+                contact = hitNormal;
+            }
+        }
+
         Vector2 reach = new(Radius);
         if (!grid.TryGetCells(position - reach, position + reach, out int x0, out int y0, out int x1, out int y1)) return;
 

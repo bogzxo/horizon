@@ -13,6 +13,9 @@ public sealed class TweenContext
     // What a tick walks, so that tweens can be played and killed from the callbacks of the ones being ticked.
     private Tween[] ticking = [];
 
+    // Reusable scratch buffer for Kill(channel) when more than one tween matches the same channel.
+    private Tween[]? killScratch;
+
     /// <summary>How many tweens are being held, paused ones included.</summary>
     public int Count
     {
@@ -80,31 +83,68 @@ public sealed class TweenContext
     /// <summary>Kills whatever is running on a channel, see <see cref="Play"/>.</summary>
     public void Kill(object channel)
     {
-        // Play asks this every time it is given a channel, and nearly every time there is sod all on it.
-        // Looking first saves copying the whole list out just to find that out
-        Tween[] snapshot;
+        // Play asks this every time it is given a channel, and nearly every time there is either nothing or one tween
+        // on it. Keeping the single-match case in a local avoids touching any array, and multiple matches reuse scratch storage.
+        Tween? single = null;
+        Tween[]? scratch = null;
+        int count = 0;
+
         lock (tweensLock)
         {
-            bool running = false;
-            foreach (var tween in tweens)
+            for (int i = 0; i < tweens.Count; i++)
             {
+                Tween tween = tweens[i];
                 if (tween.IsFinished || !Equals(tween.Channel, channel))
                     continue;
 
-                running = true;
-                break;
+                if (count == 0)
+                {
+                    single = tween;
+                    count = 1;
+                }
+                else
+                {
+                    if (scratch is null)
+                    {
+                        scratch = killScratch;
+                        killScratch = null;
+                        if (scratch is null || scratch.Length < 4)
+                            scratch = new Tween[4];
+                        scratch[0] = single!;
+                        single = null;
+                    }
+                    else if (count == scratch.Length)
+                    {
+                        Array.Resize(ref scratch, scratch.Length * 2);
+                    }
+
+                    scratch[count++] = tween;
+                }
             }
-
-            if (!running)
-                return;
-
-            snapshot = [.. tweens];
         }
 
-        foreach (var tween in snapshot)
+        if (count == 0)
+            return;
+
+        if (single is not null)
         {
-            if (Equals(tween.Channel, channel))
-                tween.Kill();
+            single.Kill();
+            return;
+        }
+
+        try
+        {
+            for (int i = 0; i < count; i++)
+                scratch![i].Kill();
+        }
+        finally
+        {
+            Array.Clear(scratch!, 0, count);
+            lock (tweensLock)
+            {
+                if (killScratch is null || scratch!.Length > killScratch.Length)
+                    killScratch = scratch;
+            }
         }
     }
 

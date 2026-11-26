@@ -37,19 +37,19 @@ Scope: `horizon/Horizon.UI/` (assembly `Horizon.UI`, namespaces `Horizon.UI`, `.
 | `UICompositor.Input.cs` | `RouteKeyboard` 51, `RoutePointer` 447, scroll/tooltip/hover/context routing |
 | `UICompositor.Focus.cs`, `.Touch.cs`, `.MiddleScroll.cs` | Focus hand-back for windows, touch/fling/pan gestures, middle-click autoscroll |
 | `UIModule.cs`, `.Runtime.cs`, `.Helpers.cs` | Module: `Root`, layers, design size/fit, popup slot, `Layout` ~330, `Paint` ~357, `HitTest`, `ToLocal/ToWorld`. `.Runtime.cs` registers every component kind for HIDL (`SetupRuntime` ~88) |
-| `UITweens.cs` | Extension tween helpers (`PopIn`, `SlideIn`, `TweenOpacity`, `TweenOffset`, ...) |
-| `Components/UIComponent*.cs` | Base class split by concern: `.cs` (tree/layout/paint), `.Interaction.cs` (pointer/keys/focus virtuals), `.Hover.cs`, `.Resizing.cs` (drag-edge grips), `.Sliding.cs` (slide in/out layout), `.Scripting.cs` (`DefineScript`/`Expose`) |
-| `Components/Containers/` | `Panel`, `StackPanel`, `GridPanel`, `ScrollPanel`, `Group`, `Collapsible`, `TabPanel`, `WindowPanel`, `TitleBar`, `Divider`, `Spacer`, `Include` |
-| `Components/Controls/` | Interactive: `Button`, `ToggleButton`, `TextBox`, `NumberBox`, `Slider`, `Dropdown`, `Selector`, `ListBox`, `TreeView`, `Table`, `TabStrip`, `Breadcrumbs`, `ColorPicker`, `CodeEditor` (+ ~25 partials), `FormPanel`, `Settings/*`, `OnScreenKeyboard`, pickers, `ArrangeOverlay`, `DrawingPanel` |
-| `Components/Display/` | Non-interactive: `Label`, `Image`, `Symbol`, `ProgressBar`, `Meter`, `Graph`, `Readout`, `SegmentBar`, `Sparks`, `Lights`, `GlowField`, `StatusBar`, `Notifications`, `CodeView`, `UIWorkCards` |
-| `Components/Popups/` | `MenuBar`/`MenuPanel`/`ContextMenu`, `UIDialog`, `UIChooser` (command-palette style list), `UICommands`, `UIFileBrowser`/`UIFileDialogs`, `UIScrim`, `UIRecentList` |
+| `UITweens.cs` | Extension tween helpers (`PopIn`, `SlideIn`, `TweenOpacity`, `TweenOffset`, ...); paired with `UIDecorative` for capped decorative idle ticks |
+| `Components/UIComponent*.cs` | Base class split by concern: `.cs` (tree/layout/paint), `.Interaction.cs` (pointer/keys/focus virtuals), `.Hover.cs`, `.Resizing.cs` (drag-edge grips), `.Sliding.cs` (slide in/out layout), `.Scripting.cs` (`DefineScript`/`Expose`/`InvokeScript` + `ScriptCaller` sandboxing) |
+| `Components/Containers/` | `Panel`, `StackPanel`, `VirtualStack`, `GridPanel`, `ScrollPanel` (+`.Bar`), `Group`, `Collapsible`, `TabPanel`, `WindowPanel` (+`.Modal/.Motion/.TitleActions`), `TitleBar` (+`.Caption/.TitleActions`), `Divider`, `Spacer`, `Include` |
+| `Components/Controls/` | Interactive: `Button`, `ToggleButton`, `TextBox`, `NumberBox`, `Slider`, `Dropdown`, `Selector`, `ListBox` (+`.Choices`), `TreeView` (+8 partials), `Table`, `TabStrip`, `Breadcrumbs`, `ColorPicker`, `CodeEditor` (+~33 partials), `FormPanel` (`UIFormField`), `Settings/*`, `OnScreenKeyboard`, pickers, `ArrangeOverlay`, `DrawingPanel` |
+| `Components/Display/` | Non-interactive: `Label`, `Image`, `Symbol`, `Badge`, `ProgressBar`, `Meter`, `Graph`, `Readout`, `SegmentBar`, `Sparks`, `Lights`, `GlowField`, `StatusBar`, `Notifications`, `CodeView`, `UIWorkCards` |
+| `Components/Popups/` | `MenuBar`, `MenuPanel` (+`.Keys/.Placing`), `ContextMenu`, `UIDialog`, `UIChooser` (+`.Search/.Spans`), `UICommands`, `UIFileBrowser`/`UIFileDialogs`, `UIScrim`, `UIRecentList`, `UIShortcutText` |
 | `Components/Terminal/` | Empty here; the terminal component lives in `horizon/Horizon.Terminal` and registers via `UIModule.AddKind<T>` |
 | `Layout/` | `UILayout` (HIDL layout loader/binder), `UIRect`, `UIEdges`, `UIFit`, `OriginExtensions`, `UILayoutOverlay` (debug boxes) |
-| `Drawing/` | `UIDrawList` (+ `.Text/.Icons/.Frames/.Fades/.Squiggles/.Reuse`), `UIRenderer` (draw list -> `SpriteBatch`), `UIFont`, `UIRichText` (markdown/rich), `UIGlass`/`UIGlassPass` (backdrop blur), `UIInBetween` (tick interpolation), `UIScrollBar`, `UITooltip`, `UIMinimap`, `UISymbols` (Codicons) |
-| `Skinning/` | `UISkin` (616 lines) + `.Loading`, `UISkins`, `UIPalette`, `UITheme`, `UIRegion`, `UISyntaxColors*`, `UITextRole` |
+| `Drawing/` | `UIDrawList` (+ `.Text/.Icons/.Frames/.Fades/.Squiggles/.Reuse`), `UIRenderer` (draw list -> `SpriteBatch`), `UIFont`, `UIRichText` (+ `.Code/.Document`), `UIGlass` (`.Frosted/.Clear/.Optics`)/`UIGlassPass`, `UIInBetween` (tick interpolation), `UIScrollBar`, `UITooltip`, `UIMinimap`, `UIAnimatedIcons`, `UIDecorative`, `UIKeycaps`, `UISymbols` (Codicons) |
+| `Skinning/` | `UISkin` (616 lines) + `.Loading`, `UISkins`, `UIPalette` (+`.Derive`), `UITheme`, `UIRegion`, `UISyntaxColors*`, `UITextRole` |
 | `Input/` | `UIKeyboard` (char-queue of editing keys), `UIKeys`, `UIShortcuts` (chords), `UINavigator` (gamepad/keyboard nav), `UIPointer`, `UICursor` |
-| `Scripting/` | `UIScript` (HIDL value <-> C# conversions), `UIScriptedLayout`/`UIScriptedScreens` (script-owned views, Hex extensions), `ICodeHighlighter`, `TextMateHighlighter`, `HidlHighlighter`, `CodeLanguages`, `Grammars/`, `SemanticOverlay`, `UIPropertyHelp` |
-| `Diagnostics/` | `UIStatistics`, `UIPaintProfile`, `PerformanceOverlay` |
+| `Scripting/` | `UIScript` (HIDL value <-> C# conversions), `UIScriptedLayout`/`UIScriptedScreens` (script-owned views, Hex extensions), `UIPropertyHelp`, `ICodeHighlighter`, `TextMateHighlighter` (`CodeLineStart`/`LongLineSpans`), `HidlHighlighter`, `CodeLanguages` (+`.Files`), `Grammars/`, `SemanticOverlay` |
+| `Diagnostics/` | `UIStatistics`, `UIPaintProfile`, `PerformanceOverlay`, `PerformanceFace`, `PerformanceSample` |
 | `Engine/Scene2D.cs` | A `Scene` that comes with a camera, renderers and `UI` (`UICompositor.ForScreen()`) at line 84 |
 | `Engine/Debugging/` | `SkylineDebugger` (menu bar, scene tree, inspector). **Debug builds only**; `csproj` removes `Engine\Debugging\**` from non-Debug configs |
 | Tests | `horizon/Horizon.Tests/UI/` (~94 files; e.g. `ChooserInteractionTests.cs`, `InBetweenTests.cs`, `ModuleReplacementTests.cs`) |
@@ -211,21 +211,21 @@ colours if `skin.TryGetRegion` fails.
   `Horizon.Content.Localisation`).
 - `Label` handles wrap and `WrapAround` (text flowing around a `UIWrapShape`), `UIRichText` renders markdown/rich
   (`.Code.cs`, `.Document.cs`).
-- `TextBox` single line (first line of paste). `UITextDocument` (`Controls/UITextDocument.cs:47`) is the headless
+- `UITextDocument` (`Controls/UITextDocument.cs:47` + `.Edits/.Lines/.Comments/.External`) is the headless
   multi-line model: lines as immutable strings, snapshot undo steps share unchanged lines, multi-caret
-  (`ExtraCarets`), auto-indent/bracket pairing, find options (`UIFindOptions`), comments (`.Comments.cs`),
-  `Version` counter (used to invalidate decorations, e.g. `AgentHints`). Testable without a window.
-- `CodeEditor` (`Controls/CodeEditor.cs:105` + partials by feature: `.Gutter .Minimap .Squiggles .Lenses .Inlays
-  .SignaturePopup .NativeFolding .Semantic .Todos .Rulers .Whitespace .Ranges .Rows .Fit .Flow .Backdrop .Bar
-  .MiddleScroll .CompletionDocumentation .AgentHints .Reuse`). Language-server data enters through hooks
+  (`ExtraCarets`, capped at `MAX_OCCURRENCE_CARETS = 10000`), auto-indent/bracket pairing, find options (`UIFindOptions`), comments (`.Comments.cs`),
+  external rebase (`ExternalPositionMap`, `RebaseHistory`), and `Version` counter. Testable without a window.
+- `CodeEditor` (`Controls/CodeEditor.cs:105` + partials by feature: `.Gutter .Minimap .Squiggles .Lenses .LensesAbove .Inlays
+  .SignaturePopup .NativeFolding .Semantic .Todos .Rulers .Whitespace .Ranges .Rows .Fit .Flow .Backdrop .Bar .Blocks
+  .DiagnosticCard .Jumps .Lightbulb .MiddleScroll .CompletionDocumentation .AgentHints .Prediction .RemoteCarets .Reuse .Spelling`). Language-server data enters through hooks
   (`Diagnostics`, `CompletionSource`, `HoverSource`) as `UICodeDiagnostic`, completion items etc.; **colour** comes
   from `ICodeHighlighter` (`Scripting/ICodeHighlighter.cs`): `TextMateHighlighter` (VS Code grammars in
   `Scripting/Grammars/`, Oniguruma via Onigwrap; `CutNear` guards UTF-16 surrogate pairs so emoji/non-BMP text never
-  splits across highlight chunks) or `HidlHighlighter` (`Scripting/HidlHighlighter.cs`, native C# scanner);
+  splits across highlight chunks, `LongLineSpans` pieces `2048`-char chunks, `CodeLineStart` matches `Depth` & `RuleStack`) or `HidlHighlighter` (`Scripting/HidlHighlighter.cs`, native C# scanner + `Overlay` full-buffer tokenization);
   `CodeLanguages.cs` picks by extension and
   `CodeLanguages.Register(ext, scope)` adds one. Highlighting runs on a thread-pool thread after a pause; until it
   returns the typed line is coloured with `ReadLine`. Semantic tokens overlay via `SemanticOverlay`.
-  `CodeEditor` uses `PaintVersion` reuse (section 9).
+  `CodeEditor` uses `PaintVersion` reuse (section 9). Also data/navigation controls: `TreeView` (+8 partials incl. `.Columns/.Actions/.Edit/.Wrap/.Reuse` using `UITreeItem.wrapped` proxy rows), `ListBox` (+`.Choices`), `Table`, `TabStrip`, `FormPanel` (`UIFormField`).
 
 ## 8. Skinning, theming, animation
 

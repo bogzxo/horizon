@@ -15,17 +15,25 @@ public class Logger
     /// </summary>
     public static void InitializeLogger(ILogger logger)
     {
-        _logger = logger;
+        Volatile.Write(ref _logger, logger);
     }
 
-    public static ILogger Instance => _logger ?? ConcurrentLogger.Instance;
+    public static ILogger Instance => Volatile.Read(ref _logger) ?? ConcurrentLogger.Instance;
 
     /// <summary>
     /// Flushes and closes the logger, if it is one that can be closed.
     /// </summary>
     public static void Dispose()
     {
-        if (Instance is IDisposable disposable)
-            disposable.Dispose();
+        ILogger? current = Volatile.Read(ref _logger);
+        if (current is not null)
+        {
+            if (current is IDisposable disposable)
+                disposable.Dispose();
+        }
+        else if (ConcurrentLogger.HasInstance)
+        {
+            ConcurrentLogger.Instance.Dispose();
+        }
     }
 }

@@ -117,6 +117,9 @@ public class Camera3D : Camera
     public (Vector3 Origin, Vector3 Direction) Ray(Vector2 screenPosition)
     {
         Vector2 window = Engine.WindowManager.WindowSize;
+        if (window.X <= 0.0f || window.Y <= 0.0f)
+            return (Position, look);
+
         float x = screenPosition.X / window.X * 2.0f - 1.0f;
         float y = 1.0f - screenPosition.Y / window.Y * 2.0f;
 
@@ -126,6 +129,9 @@ public class Camera3D : Camera
         // Two points down the pixel, one at the near plane and one at the far, and the ray is through both
         Vector4 near = Vector4.Transform(new Vector4(x, y, 0.0f, 1.0f), back);
         Vector4 far = Vector4.Transform(new Vector4(x, y, 1.0f, 1.0f), back);
+        if (MathF.Abs(near.W) < 1e-12f || MathF.Abs(far.W) < 1e-12f)
+            return (Position, look);
+
         Vector3 from = new Vector3(near.X, near.Y, near.Z) / near.W;
         Vector3 to = new Vector3(far.X, far.Y, far.Z) / far.W;
         Vector3 direction = to - from;
