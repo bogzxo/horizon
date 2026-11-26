@@ -12,7 +12,7 @@ namespace Horizon.UI.Drawing;
 /// quads are <see cref="SpriteItem"/>s and a <see cref="SpriteBatch"/> draws them. What is left to do here
 /// is the state a UI needs around that (blending on, depth off) and saying which textures the quads show.
 /// </summary>
-internal sealed class UIRenderer
+internal sealed class UIRenderer : IDisposable
 {
     private SpriteBatch? batch;
 
@@ -25,6 +25,7 @@ internal sealed class UIRenderer
     private readonly List<UIDrawList.Run> runs = [];
     private readonly List<TextureAtlas> atlases = [];
     private readonly List<SpriteRun> spriteRuns = [];
+    private bool spriteRunsDirty;
     private readonly List<UIGlassPane> glass = [];
     private UISkin? skin;
 
@@ -78,29 +79,8 @@ internal sealed class UIRenderer
     /// <summary>
     /// Takes a copy of a finished draw list. The list is free to be reused afterwards.
     /// </summary>
-    public void Upload(UIDrawList list)
-    {
-        var source = list.Items;
-        if (items.Length < source.Length)
-            items = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)source.Length)];
-
-        source.CopyTo(items);
-        itemCount = source.Length;
-
-        runs.Clear();
-        runs.AddRange(list.Runs);
-
-        atlases.Clear();
-        atlases.AddRange(list.Atlases);
-
-        glass.Clear();
-        glass.AddRange(list.GlassPanes);
-
-        // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
-        skin = list.Skin;
-        GroupSubpixels();
-        FindBlends();
-    }
+    public void Upload(UIDrawList list) =>
+        Upload(list.Items, list.Runs, list.Skin, list.Atlases, list.GlassPanes);
 
     /// <summary>
     /// Takes a copy of quads and their runs that weren't painted into a <see cref="UIDrawList"/> of their own, a list as
@@ -115,17 +95,26 @@ internal sealed class UIRenderer
         itemCount = source.Length;
 
         runs.Clear();
-        runs.AddRange(sourceRuns);
+        if (!sourceRuns.IsEmpty)
+            runs.AddRange(sourceRuns);
+        spriteRunsDirty = true;
 
-        atlases.Clear();
-        atlases.AddRange(listAtlases);
+        if (atlases.Count > 0)
+            atlases.Clear();
+        if (!listAtlases.IsEmpty)
+            atlases.AddRange(listAtlases);
 
-        glass.Clear();
-        glass.AddRange(listGlass);
+        if (glass.Count > 0)
+            glass.Clear();
+        if (!listGlass.IsEmpty)
+            glass.AddRange(listGlass);
 
+        // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
         skin = listSkin;
-        GroupSubpixels();
-        FindBlends();
+        if (GroupSubpixels())
+            FindBlends();
+        else if (blendChanges.Count > 0)
+            blendChanges.Clear();
     }
 
     /// <summary>
@@ -135,9 +124,22 @@ internal sealed class UIRenderer
     {
         itemCount = 0;
         runs.Clear();
+        spriteRuns.Clear();
+        spriteRunsDirty = false;
+        atlases.Clear();
         glass.Clear();
         blendChanges.Clear();
         skin = null;
+    }
+
+    /// <summary>Frees the underlying sprite batch GPU buffers and clears uploaded state. Render thread.</summary>
+    public void Dispose()
+    {
+        if (begun)
+            End();
+        batch?.Dispose();
+        batch = null;
+        Clear();
     }
 
     /// <summary>
@@ -188,14 +190,20 @@ internal sealed class UIRenderer
             new SpriteTexture(subpixels.Ready ? subpixels.Texture : skin.Font.Texture, fontSampler)
         ];
 
-        spriteRuns.Clear();
-        foreach (var run in runs)
+        if (spriteRunsDirty)
         {
-            spriteRuns.Add(new SpriteRun(
-                run.First,
-                run.Count,
-                run.Image0 is { } image0 ? new SpriteTexture(image0) : default,
-                run.Image1 is { } image1 ? new SpriteTexture(image1) : default));
+            spriteRuns.Clear();
+            ReadOnlySpan<UIDrawList.Run> runSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(runs);
+            for (int i = 0; i < runSpan.Length; i++)
+            {
+                ref readonly UIDrawList.Run run = ref runSpan[i];
+                spriteRuns.Add(new SpriteRun(
+                    run.First,
+                    run.Count,
+                    run.Image0 is { } image0 ? new SpriteTexture(image0) : default,
+                    run.Image1 is { } image1 ? new SpriteTexture(image1) : default));
+            }
+            spriteRunsDirty = false;
         }
 
         begun = true;
@@ -248,13 +256,20 @@ internal sealed class UIRenderer
     /// erasing halves go first and then all their ink, two draws for the lot. It only differs where two letters' ink
     /// overlaps, which text doesn't. Never across a run (the textures it shows) or a pane of glass (drawn between them).
     /// </summary>
-    private void GroupSubpixels()
+    private bool GroupSubpixels()
     {
         const uint SUBPIXEL = SpriteItem.SubpixelEraseFlag | SpriteItem.SubpixelInkFlag;
-        foreach (var run in runs)
+        bool anySubpixel = false;
+        bool hasGlass = glass.Count > 0;
+        int covered = 0;
+        ReadOnlySpan<UIDrawList.Run> runSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(runs);
+        for (int r = 0; r < runSpan.Length; r++)
         {
+            ref readonly UIDrawList.Run run = ref runSpan[r];
             int end = Math.Min(run.First + run.Count, itemCount);
             int at = Math.Max(0, run.First);
+            if (end > at)
+                covered += end - at;
             while (at < end)
             {
                 if ((items[at].Flags & SUBPIXEL) == 0)
@@ -263,20 +278,26 @@ internal sealed class UIRenderer
                     continue;
                 }
 
+                anySubpixel = true;
                 int start = at++;
-                while (at < end && (items[at].Flags & SUBPIXEL) != 0 && !GlassStartsAt(at))
+                while (at < end && (items[at].Flags & SUBPIXEL) != 0 && (!hasGlass || !GlassStartsAt(at)))
                     at++;
                 if (at - start > 2)
                     Partition(start, at);
             }
         }
+
+        // If runs didn't cover every item (e.g. a synthetic Upload call), fall back to scanning in FindBlends.
+        return anySubpixel || covered < itemCount;
     }
 
     // Whether a pane of glass captures or is put down before the item, which a block of letters mustn't be moved across
     private bool GlassStartsAt(int item)
     {
-        foreach (UIGlassPane pane in glass)
+        ReadOnlySpan<UIGlassPane> panes = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(glass);
+        for (int i = 0; i < panes.Length; i++)
         {
+            ref readonly UIGlassPane pane = ref panes[i];
             if (pane.Under == item || pane.Start == item)
                 return true;
         }
@@ -308,19 +329,18 @@ internal sealed class UIRenderer
     private void FindBlends()
     {
         blendChanges.Clear();
-        BlendMode current = BlendMode.Alpha;
-        bool any = false;
+        uint current = 0;
         for (int i = 0; i < itemCount; i++)
         {
-            BlendMode wanted = BlendOf(items[i].Flags);
+            uint flags = items[i].Flags;
+            uint wanted = (flags & SpriteItem.SubpixelEraseFlag) != 0
+                ? SpriteItem.SubpixelEraseFlag
+                : (flags & SpriteItem.SubpixelInkFlag);
             if (wanted == current)
                 continue;
-            blendChanges.Add((i, wanted));
+            blendChanges.Add((i, BlendOf(wanted)));
             current = wanted;
-            any |= wanted != BlendMode.Alpha;
         }
-        if (!any)
-            blendChanges.Clear();
     }
 
     // A stretch of items drawn a run of one blend at a time

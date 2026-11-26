@@ -25,8 +25,9 @@ public partial class WindowPanel
             // Over everything else in what it's in whatever its z, the way a dialog is, or what's raised (the cards of an
             // editor) was drawn over the dim
             int highest = 0;
-            foreach (UIComponent other in parent.Children)
+            for (int i = 0; i < parent.Children.Count; i++)
             {
+                UIComponent other = parent.Children[i];
                 if (other != this)
                     highest = Math.Max(highest, other.ZOffset);
             }

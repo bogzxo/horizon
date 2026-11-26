@@ -180,7 +180,36 @@ public class TitleBar : StackPanel
     public bool PixelSized { get; set; } = true;
 
     // A window's pixel in the UI's units, times the scale of the screen it's on when the window follows that
-    private float Unit => PixelSized && Module?.Compositor.Scale is > 0.0f and var scale ? 1.0f / scale : 1.0f;
+    private float Unit
+    {
+        get
+        {
+            if (!PixelSized || Module is not { } module)
+                return 1.0f;
+
+            UICompositor compositor = module.Compositor;
+            float uiScale = module.UnitScale > 0.0f ? module.UnitScale : compositor.UIScale;
+            float displayScale = compositor.DesignSize is null && module.DesignSize is null
+                ? compositor.DisplayScale
+                : GameEngine.Instance?.WindowManager is { ScalesToDisplay: true } scaled
+                    ? scaled.DisplayScale
+                    : 1.0f;
+            return UnitFor(true, uiScale, displayScale);
+        }
+    }
+
+    /// <summary>
+    /// Helper method to compute how many UI layout units equal one display-scaled window pixel for a title bar.
+    /// Accounts for HiDPI <c>ScaleToDisplay</c>, <see cref="UICompositor.DesignSize"/>, and <see cref="UICompositor.Scale"/>.
+    /// </summary>
+    internal static float UnitFor(bool pixelSized, float uiScale, float displayScale)
+    {
+        if (!pixelSized || uiScale <= 0.0f)
+            return 1.0f;
+
+        float density = displayScale > 0.0f ? displayScale : 1.0f;
+        return density / uiScale;
+    }
 
     /// <summary>
     /// How round the window's top right corner is, in the window's pixels, for the close button in it to be the same shape
@@ -421,7 +450,7 @@ public class TitleBar : StackPanel
                 holes.Add(InWindow(module, ButtonBounds(i)));
         }
 
-        foreach (UIComponent child in Children)
+        foreach (UIComponent child in ChildSpan)
         {
             if (child.Visible)
                 holes.Add(InWindow(module, child.Bounds));

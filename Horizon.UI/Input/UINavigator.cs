@@ -291,7 +291,7 @@ public sealed class UINavigator
         if (component.Navigable)
             candidates.Add(component);
 
-        foreach (UIComponent child in component.Children)
+        foreach (UIComponent child in component.ChildSpan)
         {
             if (component.ShowsChild(child))
                 Collect(child);

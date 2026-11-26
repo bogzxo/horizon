@@ -84,6 +84,12 @@ public abstract partial class UIComponent
     /// <summary>Whether an edge is being dragged right now.</summary>
     public bool IsResizing { get; private set; }
 
+    /// <summary>
+    /// Stamp combining resizable edges, active grip hover/hold state, and active drag state so cached paint records
+    /// repaint resize chrome whenever grip state changes even without geometry changes.
+    /// </summary>
+    internal int ResizePaintStamp => (int)Resizable | ((int)ActiveGrip << 4) | (IsResizing ? 1 << 8 : 0);
+
     private IRuntimeValue? resizedHandler, resizeEndedHandler;
     private Vector2 resizeFrom, resizeSize;
     private UIResize resizeEdges;

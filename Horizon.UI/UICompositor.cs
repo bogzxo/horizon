@@ -628,14 +628,15 @@ public partial class UICompositor : GameComponent, IDisposable
             next[index] = replacement;
             current.Enabled = false;
             modules = next;
-            if (Focus?.Module == current)
-                Focus = null;
-            return true;
         }
+
+        ClearModuleReferences(current);
+        return true;
     }
 
     public bool RemoveModule(UIModule module)
     {
+        bool removed;
         lock (modulesLock)
         {
             int index = Array.IndexOf(modules, module);
@@ -643,8 +644,84 @@ public partial class UICompositor : GameComponent, IDisposable
                 return false;
 
             modules = [.. modules[..index], .. modules[(index + 1)..]];
-            return true;
+            removed = true;
         }
+
+        if (removed)
+            ClearModuleReferences(module);
+
+        return removed;
+    }
+
+    /// <summary>Helper method to drop any focus, hover, press, resize, tooltip or autoscroll state owned by a removed or retired module.</summary>
+    private void ClearModuleReferences(UIModule module)
+    {
+        if (Focus?.Module == module)
+            Focus = null;
+
+        if (lastRoutedFocus?.Module == module)
+            lastRoutedFocus = null;
+
+        if (hovered?.Module == module)
+            SetHovered(null);
+
+        if (pressed?.Module == module)
+        {
+            var cancelled = pressed;
+            pressed = null;
+            touchDeferred = false;
+            cancelled.IsPressed = false;
+            if (cancelled.IsResizing)
+                cancelled.EndResize();
+        }
+
+        if (gripped?.Module == module)
+        {
+            var grip = gripped;
+            gripped = null;
+            if (grip.IsResizing)
+                grip.EndResize();
+            else
+                grip.ActiveGrip = UIResize.None;
+        }
+
+        if (middleScrollTarget?.Module == module)
+        {
+            middleScroll.Cancel();
+            middleScrollTarget = null;
+        }
+
+        if (tooltipModule == module)
+        {
+            tooltipModule.ShowTooltip(null, default);
+            tooltipModule = null;
+            TooltipOf = null;
+            held = null;
+        }
+
+        if (pinned?.Owner.Module == module)
+            pinned = null;
+
+        if (hushed?.Module == module)
+            hushed = null;
+
+        if (touchFocus?.Module == module)
+            touchFocus = null;
+
+        if (touchTooltip?.Module == module)
+            touchTooltip = null;
+
+        if (touchFocused?.Module == module)
+            touchFocused = null;
+
+        if (panFrom?.Module == module)
+            panFrom = null;
+
+        if (FocusShownOn?.Module == module)
+            FocusShownOn = null;
+
+        if (Highlighted?.Module == module)
+            Highlighted = null;
     }
 
     public override void Initialize()
@@ -981,10 +1058,25 @@ public partial class UICompositor : GameComponent, IDisposable
             }
 
             // Through the interface an enumerator is an object, every tick, so only when there is something in it
-            if (Highlights.Count > 0) foreach (var marked in Highlights)
+            if (Highlights.Count > 0)
             {
-                if (marked.Module == module && marked != Highlighted)
-                    UILayoutOverlay.PaintHighlight(back, marked);
+                if (Highlights is IReadOnlyList<UIComponent> highlightList)
+                {
+                    for (int h = 0; h < highlightList.Count; h++)
+                    {
+                        var marked = highlightList[h];
+                        if (marked.Module == module && marked != Highlighted)
+                            UILayoutOverlay.PaintHighlight(back, marked);
+                    }
+                }
+                else
+                {
+                    foreach (var marked in Highlights)
+                    {
+                        if (marked.Module == module && marked != Highlighted)
+                            UILayoutOverlay.PaintHighlight(back, marked);
+                    }
+                }
             }
 
             if (module.Clip is not null)
@@ -1769,11 +1861,40 @@ public partial class UICompositor : GameComponent, IDisposable
         // The keyboard's owner is everybody's, a compositor thrown away while it had it was kept by it with its scene
         if (focusOwner == this)
             focusOwner = null;
+
+        if (compositionInput is not null)
+        {
+            compositionInput.EventReceived -= OnCompositionEvent;
+            compositionInput = null;
+        }
+        compositions.Clear();
+
+        middleScroll.Cancel();
+        focus = null;
+        lastRoutedFocus = null;
+        hovered = null;
+        pressed = null;
+        gripped = null;
+        middleScrollTarget = null;
+        tooltipModule = null;
+        TooltipOf = null;
+        held = null;
+        pinned = null;
+        hushed = null;
+        touchFocus = null;
+        touchTooltip = null;
+        touchFocused = null;
+        panFrom = null;
+        FocusShownOn = null;
+        Highlighted = null;
+
+        cursorBatch?.Dispose();
+        cursorBatch = null;
         layer.Dispose();
         glassPass?.Dispose();
         glassPass = null;
 
-        renderer.Clear();
+        renderer.Dispose();
         Skin = null;
 
         GC.SuppressFinalize(this);

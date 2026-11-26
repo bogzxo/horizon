@@ -272,7 +272,7 @@ internal sealed class UIControlsCheck : Scene, ITestControls, ISelfCheck
         test.Check("colour: the corner of the square is the hue at its fullest", () =>
             _picker.Color is { X: > 0.85f, Y: < 0.15f, Z: < 0.15f, W: 1.0f } && _pickerChanges >= 1);
 
-        test.Click(In(() => _picker.HueBounds, 0.5f, 0.34f));
+        test.Click(In(() => _picker.HueBounds, 0.34f, 0.5f));
         test.Check("colour: the strip next to it picks the hue", () => _picker.Color is { X: < 0.15f, Y: > 0.85f, Z: < 0.3f });
 
         test.Drag(In(() => _picker.ShadeBounds, 0.9f, 0.9f), In(() => _picker.ShadeBounds, 0.02f, 0.98f));

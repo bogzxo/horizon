@@ -164,3 +164,31 @@
 - **`HexStartup`** (3 cold runs, median):
   - `Dawn`: `389 ms` first frame (`-7 ms` vs P1, `0` vs B) | WS `171.2 MiB` | Priv `203.0 MiB` | Idle CPU `2.447%`
   - `Dusk`: `312 ms` first frame (`0` vs P1, `+3` vs B) | WS `120.7 MiB` | Priv `155.0 MiB` | Idle CPU `8.357%`
+
+### Pass 3 — Horizon.UI Core, Compositor, Drawing, Glass, Containers & ColorPicker (`Horizon.Tests`: 2,395 passed / 0 failed)
+> **Strategy Note (Passes 6–8)**: Architectural changes for **SIMD vectorization**, **CPU cache-line locality (SoA / flat value tables)**, and **cache hit rate** are authorized for Passes 6–8, led by **`gemini-4-neon` (`thought_level: "xhigh"`)** architectural discovery scouts in place of `gemini-4-hydrogen`.
+
+- **Changes**: `UICompositor.Dispose()` event unsubscription, `cursorBatch` & `renderer.Dispose()`, & full field cleanup; `ClearModuleReferences`, `KeepKeyboardSomewhere`, `PrunePointerReferences`, & `UIModule.ActivePopup` visibility/enablement focus/hover/hit-test hygiene; fixed `UICompositor.Input` `CS8602` warning & zero-alloc `HasOpenDialog`; `ResizePaintStamp` invalidation; O(1) cached `UIComponent.Module` + `protected internal ChildSpan` across compositor/layout/navigator; reusable `WeakReference` in `WheelTakenBy`; fixed `UIDrawList.Reuse` sibling texture bleed & multi-run slot boundaries; `ScreenShape`/`RoundRect`/`RoundOutline` HiDPI/non-uniform scale clamps; `UIRenderer : IDisposable` + cached `spriteRuns` + `GroupSubpixels` bypass; `UISkin.AtlasGeneration` & `GlyphAtlas` generation hashing + empty-region capture skip & `UIGlassPass` idle RT eviction; `UIFont` 256-entry quick lookup & 128x128 ASCII kerning table; `UIRichText.Code` `[ThreadStatic]` buffer; `UITooltip` 8-entry LRU; `UIInBetween` stationary frame bypass; `UISkin.TryGetRegion` unified negative cache; fixed final 2 `--checks` (`UIControlsCheck:275` horizontal `HueBounds` + `ColorPicker.PaintVersion` + zero-closure cell painting + stack hex parser); O(N²) `Font.Measure` elimination in `TabPanel`, `MenuBar`, & `StatusBar`; `MenuBar.Keys` span slicing + `MenuBar.IndexOfMenu` closure removal; `UIChooser` CTS disposal via `UIDialog.InternalClosed`; `TitleBar.UnitFor` scaling fix.
+- **Binaries**: `Horizon.Testing.exe` = `24.56 MiB` (`-0.01` vs P2, `-0.06` vs Baseline) | `Hex.exe` = `59.88 MiB` (`-0.02` vs P2, `-0.07` vs Baseline)
+- **Horizon.Testing `--checks`**: **`848 / 848` passed (`0 failed`)** (+2 vs P2, +3 vs Baseline; **100% pass**), median wall = `56629.8 ms`
+- **`Horizon.Testing` Scenes (`6.5s`, vs Pass 2 / Baseline)**:
+
+| Scene | Startup (ms) | GPU (ms) | WS / Priv (MiB) | Render FPS / Work (ms) / B/turn | Sim Work (ms) / B/turn | Logic Work (ms) / B/turn | Physics Work (ms) / B/turn |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `dungeon` | 679 (`+10` / `+31`) | 2.530 (`-14.9%` / `-29.7%`) | 169.1 / 367.6 | 391.0 / 2.573 / 0.5 (`+10.2%` vs B) | 0.140 / 87.8 | 0.030 / 75.4 | 0.010 / 1.2 |
+| `fluid` | 581 (`-9` / `-60`) | 0.067 | 131.6 / 215.0 | 5370.3 / 0.190 / 0.0 | 1.017 / 24.0 | 0.023 / 12.9 | 0.917 / 0.0 |
+| `meshes` | 622 (`+39` / `-3`) | 0.090 | 127.1 / 210.3 | 7005.0 / 0.150 / 0.0 | 0.093 / 13.3 (`-37.6%` / `-39.8%`) | 0.020 / 11.2 | 0.000 / 0.0 |
+| `ui-controls` | 590 (`-2` / `-7`) | 0.067 | 122.1 / 205.2 (`-11.6 / -13.0`) | 6386.3 / 0.157 / 0.0 | 0.180 / 4039.7 | 0.037 / 11.2 | 0.000 / 0.0 |
+
+- **`Hex --window --selftest uicost typing garbage --exit`** (`7/7 passed`, `53210.8 ms`):
+  - `uicost idle`: Paint `0.440 ms` (`-12.7%`), `3705 KB` up, Draw `0.270 ms`, GPU `0.133 ms` (**`-81.5%` vs P2, `-85.8%` vs B**)
+  - `uicost typing`: Paint `0.422 ms` (**`-27.4%` vs P2**), `44258 KB` up, Draw `0.308 ms`, GPU `0.390 ms` (**`-64.4%` vs P2, `-64.1%` vs B**)
+  - `uicost wheel`: Paint `0.434 ms` (**`-14.6%` vs P2**), `88124 KB` up, Draw `0.249 ms` (`-13.2%`), GPU `0.303 ms` (**`-70.7%` vs P2, `-70.6%` vs B**)
+  - `uicost drag`: Paint `0.551 ms` (**`-26.9%` vs P2, `-29.1%` vs B**), `21817 KB` up, Draw `0.381 ms`, GPU `1.748 ms` (`-9.7%`)
+  - `uicost notebook`: Paint `0.663 ms` (`-5.7%`), `56047 KB` up, Draw `0.228 ms` (`-6.6%`), GPU `0.977 ms` (`-13.2%`)
+  - `typing csharp` (`119` keys): Avg `4.4 ms` | Med `4.2 ms` | P95 `6.2 ms` (`-38.6%` vs P2) | Worst `37.1 ms`
+  - `typing hor` (`119` keys): Avg `4.2 ms` | Med `4.2 ms` | P95 `4.6 ms` | Worst `19.7 ms`
+  - `garbage`: designer `98 B/tick` | code `73 B/tick` | layoutCode `107 B/tick`
+- **`HexStartup`** (3 cold runs, median):
+  - `Dawn`: `433 ms` first frame | WS `171.3 MiB` | Priv `203.0 MiB` | Idle CPU `2.918%`
+  - `Dusk`: `321 ms` first frame | WS `120.8 MiB` | Priv `154.0 MiB` | Idle CPU `13.707%`

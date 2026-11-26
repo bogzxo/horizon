@@ -280,7 +280,7 @@ public partial class UICompositor
             return;
 
         touchFocus = null;
-        if (tapped.Module is null)
+        if (!tapped.IsShownInHierarchy || !tapped.EnabledInHierarchy)
             return;
 
         Focus = FocusForPress(tapped);
@@ -321,7 +321,7 @@ public partial class UICompositor
             return null;
 
         Vector2 local = module.ToLocal(touchLast) - module.ToLocal(touchLast - delta);
-        return GivePan(from, module.Popup, local);
+        return GivePan(from, module.ActivePopup, local);
     }
 
     /// <summary>

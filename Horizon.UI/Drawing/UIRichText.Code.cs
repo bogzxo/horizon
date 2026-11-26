@@ -256,6 +256,15 @@ public sealed partial class UIRichText
         return Shade.Inherit;
     }
 
+    // Reusable per-thread buffer for normalizing fenced code blocks before highlighting, avoiding a new StringBuilder per block
+    [ThreadStatic]
+    private static System.Text.StringBuilder? codeBuffer;
+    private const int MAX_RETAINED_CODE_BUFFER = 64 * 1024;
+
+    private static bool IsPlainCodeTag(ReadOnlySpan<char> tag) =>
+        tag.SequenceEqual("text") || tag.SequenceEqual("txt") || tag.SequenceEqual("plain")
+        || tag.SequenceEqual("plaintext") || tag.SequenceEqual("console") || tag.SequenceEqual("output");
+
     /// <summary>
     /// Helper method to read a block of code, the lines from where it starts to its closing fence (or the end of the text)
     /// coloured in one go by the highlighter of the language its fence says.
@@ -266,9 +275,9 @@ public sealed partial class UIRichText
         info = info.Trim();
         int space = info.IndexOfAny(' ', '\t');
         if (space >= 0) info = info[..space];
-        string? tag = info.IsEmpty ? CodeLanguage : info.ToString();
+        ReadOnlySpan<char> tag = info.IsEmpty ? CodeLanguage.AsSpan() : info;
 
-        if (string.IsNullOrWhiteSpace(tag) || tag is "text" or "txt" or "plain" or "plaintext" or "console" or "output")
+        if (tag.IsWhiteSpace() || IsPlainCodeTag(tag))
             return new CodeBlock();
         if (tag.Equals("diff", StringComparison.OrdinalIgnoreCase) || tag.Equals("patch", StringComparison.OrdinalIgnoreCase))
             return new CodeBlock { Mode = CodeMode.Diff };
@@ -276,7 +285,8 @@ public sealed partial class UIRichText
             return new CodeBlock();
 
         // The lines of the block with \n alone at their ends, which is what a highlighter wants
-        var code = new System.Text.StringBuilder();
+        System.Text.StringBuilder code = codeBuffer ??= new System.Text.StringBuilder();
+        code.Clear();
         int count = 0;
         for (int at = body; at < source.Length;)
         {
@@ -297,9 +307,14 @@ public sealed partial class UIRichText
         if (count == 0)
             return new CodeBlock();
 
+        string normalized = code.ToString();
+        code.Clear();
+        if (code.Capacity > MAX_RETAINED_CODE_BUFFER)
+            codeBuffer = null;
+
         try
         {
-            return new CodeBlock { Mode = CodeMode.Syntax, Highlighter = highlighter, Lines = highlighter.Read(code.ToString(), count) };
+            return new CodeBlock { Mode = CodeMode.Syntax, Highlighter = highlighter, Lines = highlighter.Read(normalized, count) };
         }
         catch (Exception)
         {
@@ -312,14 +327,15 @@ public sealed partial class UIRichText
     /// The highlighter a fence's word means, null for a word nothing knows. HIDL by its own names, then a language by its
     /// id or its name (csharp, python, C#), then the word as an extension (cs, ts, py, json, sh).
     /// </summary>
-    private static ICodeHighlighter? HighlighterFor(string tag)
+    private static ICodeHighlighter? HighlighterFor(ReadOnlySpan<char> tagSpan)
     {
         lock (languageGate)
         {
-            if (languageOf.TryGetValue(tag, out ICodeHighlighter? known))
+            if (languageOf.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(tagSpan, out ICodeHighlighter? known))
                 return known;
         }
 
+        string tag = tagSpan.ToString();
         ICodeHighlighter? found = null;
         if (tag.Equals("hidl", StringComparison.OrdinalIgnoreCase) || tag.Equals("hor", StringComparison.OrdinalIgnoreCase))
         {

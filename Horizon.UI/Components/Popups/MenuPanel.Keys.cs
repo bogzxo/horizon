@@ -137,7 +137,10 @@ internal sealed partial class MenuPanel
                 for (int step = 1; step <= menu.Items.Count && found < 0; step++)
                 {
                     int at = ((from < 0 ? -1 : from) + step + menu.Items.Count) % menu.Items.Count;
-                    if (Stops(at) && menu.Items[at].Label.TrimStart('&').StartsWith(letter.ToString(), StringComparison.OrdinalIgnoreCase))
+                    if (!Stops(at))
+                        continue;
+                    ReadOnlySpan<char> label = menu.Items[at].Label.AsSpan().TrimStart('&');
+                    if (label.Length > 0 && char.ToUpperInvariant(label[0]) == char.ToUpperInvariant(letter))
                         found = at;
                 }
 

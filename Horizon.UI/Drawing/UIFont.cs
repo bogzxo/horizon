@@ -43,14 +43,18 @@ public sealed class UIFont
     private readonly bool hasFallback;
     private readonly float fallbackAdvance;
 
-    // The first couple of hundred characters, which is nearly everything anybody ever writes, by their number.
-    // Every character of every label is looked up three times a tick (measured, lined up, drawn) and through
-    // the dictionary that was three hashes a letter to find the letter A where it has always been.
-    // quickAdvance stores the already-resolved advance so Measure/Wrap/Advance avoid copying the full CharDefinition.
+    // The first couple of hundred characters (ASCII + Latin-1), which is nearly everything anybody ever writes, by
+    // their number. Every character of every label is looked up three times a tick (measured, lined up, drawn) and
+    // through the dictionary that was three hashes a letter to find the letter A where it has always been.
+    // quickGlyphs/quickDrawable are pre-resolved including fallback/whitespace so Resolve for < QUICK is a single
+    // direct array lookup; quickAdvance stores the already-resolved advance; asciiKerning caches ASCII < 128 pairs.
+    private const int ASCII_COUNT = 128;
     private const int QUICK = 256;
     private readonly CharDefinition[] quickGlyphs = new CharDefinition[QUICK];
     private readonly bool[] quickKnown = new bool[QUICK];
+    private readonly bool[] quickDrawable = new bool[QUICK];
     private readonly float[] quickAdvance = new float[QUICK];
+    private readonly float[]? asciiKerning;
 
     /// <summary>The font itself, the field and its numbers.</summary>
     public DistanceFieldFont Field { get; }
@@ -194,17 +198,52 @@ public sealed class UIFont
 
         for (int c = 0; c < QUICK; c++)
         {
-            quickAdvance[c] = quickKnown[c]
-                ? quickGlyphs[c].XAdvance
-                : !char.IsWhiteSpace((char)c) ? fallbackAdvance : spaceAdvance;
+            if (quickKnown[c])
+            {
+                quickAdvance[c] = quickGlyphs[c].XAdvance;
+                quickDrawable[c] = quickGlyphs[c].Size.X > 0 && quickGlyphs[c].Size.Y > 0;
+            }
+            else if (hasFallback && !char.IsWhiteSpace((char)c))
+            {
+                quickGlyphs[c] = fallbackGlyph;
+                quickAdvance[c] = fallbackAdvance;
+                quickDrawable[c] = true;
+            }
+            else
+            {
+                quickGlyphs[c] = new CharDefinition { Id = (char)c, XAdvance = spaceAdvance };
+                quickAdvance[c] = spaceAdvance;
+                quickDrawable[c] = false;
+            }
+        }
+
+        if (hasKerning)
+        {
+            float[] table = new float[ASCII_COUNT * ASCII_COUNT];
+            foreach (var (pair, amount) in kerning)
+            {
+                int first = (pair >> 16) & 0xFFFF;
+                int second = pair & 0xFFFF;
+                if ((uint)first < ASCII_COUNT && (uint)second < ASCII_COUNT)
+                    table[(first << 7) | second] = amount;
+            }
+            asciiKerning = table;
         }
     }
 
     /// <summary>How much nearer (or further) the second of two characters sits to the first than its advance says, at scale 1.</summary>
-    internal float Kerning(char first, char second) =>
-        hasKerning && kerning.TryGetValue(DistanceFieldFont.KerningKey(first, second), out float kern) ? kern : 0.0f;
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    internal float Kerning(char first, char second)
+    {
+        if (!hasKerning)
+            return 0.0f;
+        if ((first | second) < ASCII_COUNT && asciiKerning is { } table)
+            return table[(first << 7) | second];
+        return kerning.TryGetValue(DistanceFieldFont.KerningKey(first, second), out float kern) ? kern : 0.0f;
+    }
 
     // Helper method to get a character's advance at scale 1 without copying the full CharDefinition struct
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private float AdvanceOf(char character)
     {
         if (character < QUICK)
@@ -224,16 +263,18 @@ public sealed class UIFont
     {
         if (character < QUICK)
         {
-            if (quickKnown[character])
-            {
-                glyph = quickGlyphs[character];
-                return glyph.Size.X > 0 && glyph.Size.Y > 0;
-            }
+            glyph = quickGlyphs[character];
+            return quickDrawable[character];
         }
-        else if (glyphs.TryGetValue(character, out glyph))
-        {
+
+        return ResolveDictionary(character, out glyph);
+    }
+
+    /// <summary>Dictionary-backed glyph resolution, used for characters outside the fast table and parity tests.</summary>
+    internal bool ResolveDictionary(char character, out CharDefinition glyph)
+    {
+        if (glyphs.TryGetValue(character, out glyph))
             return glyph.Size.X > 0 && glyph.Size.Y > 0;
-        }
 
         if (hasFallback && !char.IsWhiteSpace(character))
         {
@@ -319,8 +360,8 @@ public sealed class UIFont
         if (text.IsEmpty)
             return Vector2.Zero;
 
-        // Fast path for plain text without kerning (code editors, terminals, unkerned UI fonts)
-        if (!markup && !hasKerning)
+        // Fast path for plain text (or markup text containing no '$'/'[' tags) without kerning
+        if ((!markup || text.IndexOfAny('$', '[') < 0) && !hasKerning)
         {
             float plainWidest = 0.0f;
             float plainWidth = 0.0f;

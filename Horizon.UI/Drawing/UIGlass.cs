@@ -43,6 +43,22 @@ public readonly record struct UIGlass(float Blur = 18.0f, float Clarity = 0.35f,
 
     /// <summary>Returns <paramref name="background"/> with its alpha scaled by <see cref="Dye"/> for shader tinting.</summary>
     public Vector4 DyeColor(Vector4 background) => background with { W = background.W * Dye };
+
+    /// <summary>
+    /// Folds skin and glyph atlas generations into a glass backdrop cache hash so atlas growth or reset invalidates
+    /// cached blur and sharp backdrop slots. Returns 0 when <paramref name="madeOf"/> is 0 (uncached).
+    /// </summary>
+    internal static ulong MixBackdropGenerations(ulong madeOf, long skinAtlasGeneration, int sharedGlyphGeneration, int subpixelGlyphGeneration)
+    {
+        if (madeOf == 0)
+            return 0;
+
+        ulong hash = madeOf;
+        hash = (hash ^ (ulong)skinAtlasGeneration) * 0x100000001B3UL + (hash >> 29);
+        ulong glyphGens = ((ulong)(uint)sharedGlyphGeneration << 32) | (uint)subpixelGlyphGeneration;
+        hash = (hash ^ glyphGens) * 0x100000001B3UL + (hash >> 29);
+        return hash | 1;
+    }
 }
 
 /// <summary>
