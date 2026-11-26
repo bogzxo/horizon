@@ -178,8 +178,12 @@ public partial class CodeEditor
                     if (overGutter && OnGutterPressed is not null)
                         hash.Add((int)MathF.Floor((area.Max.Y + scrollY - pointer.Y) / MathF.Max(1.0f, lineHeight)));
 
-                    bool overMinimap = MinimapShown && rows.Count > 0
-                        && new UIRect(OnPixel(MinimapArea(hoveredSkin, paintedScale).Min), OnPixel(MinimapArea(hoveredSkin, paintedScale).Max)).Contains(pointer);
+                    bool overMinimap = false;
+                    if (MinimapShown && rows.Count > 0)
+                    {
+                        UIRect minimap = MinimapArea(hoveredSkin, paintedScale);
+                        overMinimap = new UIRect(OnPixel(minimap.Min), OnPixel(minimap.Max)).Contains(pointer);
+                    }
                     hash.Add(overMinimap);
 
                     float trackMinX = area.Max.X + MinimapWidth;

@@ -91,6 +91,28 @@ public class Slider : ProgressBar
     // A slider of a skin with no art, a thin groove and a round knob, how big each is
     private const float GROOVE = 4.0f, KNOB = 18.0f;
 
+    protected override long PaintVersion
+    {
+        get
+        {
+            var hash = new HashCode();
+            hash.Add(Progress);
+            hash.Add(Ghost);
+            hash.Add(GhostColor);
+            hash.Add(FillColor);
+            hash.Add(Reverse);
+            hash.Add(Segments);
+            hash.Add(SegmentGap);
+            hash.Add(ShowText);
+            hash.Add(TextScale);
+            hash.Add(Style);
+            hash.Add(HandleStyle);
+            hash.Add(IsPressed);
+            hash.Add(IsSelected);
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;

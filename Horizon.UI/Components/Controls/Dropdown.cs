@@ -29,7 +29,11 @@ public class Dropdown : UIComponent
         get => style;
         set
         {
-            style = StyleStem(value, "_hover");
+            string stem = StyleStem(value, "_hover");
+            if (stem == style)
+                return;
+
+            style = stem;
             hoverStyle = style + "_hover";
         }
     }
@@ -41,10 +45,13 @@ public class Dropdown : UIComponent
     private int index;
 
     // The first option that is shown while the list is open, for a list with more options than MaxRows.
-    private int firstRow;
+    private float firstRow;
 
     // The first row as it's drawn, gliding to firstRow, the way a list's do (see ListBox)
     private float shownRow;
+
+    // Rubber-band give at the ends of a scrollable dropdown list.
+    private UIOverscroll over;
 
     /// <summary>What there is to choose from, in the order it is listed.</summary>
     public string[] Options
@@ -82,7 +89,10 @@ public class Dropdown : UIComponent
 
         if (!ReferenceEquals(shownFor, options))
         {
-            shownOptions = [.. options.Select(shown)];
+            var mapped = new string[options.Length];
+            for (int i = 0; i < options.Length; i++)
+                mapped[i] = shown(options[i]);
+            shownOptions = mapped;
             shownFor = options;
         }
 
@@ -118,7 +128,7 @@ public class Dropdown : UIComponent
     public int MaxRows { get; set; } = 8;
 
     /// <summary>The option the top row of the open list shows, which the mouse wheel moves on a list longer than <see cref="MaxRows"/>.</summary>
-    public int FirstVisible => firstRow;
+    public int FirstVisible => (int)MathF.Round(firstRow);
 
     /// <summary>Whether the list is open.</summary>
     public bool IsOpen => IsPopupOpen;
@@ -222,6 +232,8 @@ public class Dropdown : UIComponent
             return;
 
         // The chosen option is in sight when the list opens.
+        wheelRemainder = 0.0f;
+        over.Stop();
         firstRow = Math.Clamp(index - VisibleRows / 2, 0, options.Length - VisibleRows);
         shownRow = firstRow;
         OpenPopup();
@@ -235,6 +247,24 @@ public class Dropdown : UIComponent
         float height = skin.Font.LineHeight * scale + skin.ButtonPadding.Total.Y;
 
         return new Vector2(DEFAULT_WIDTH, skin.TryGetRegion(style, out var region) ? MathF.Max(height, region.Size.Y * 0.6f) : height);
+    }
+
+    protected override long PaintVersion
+    {
+        get
+        {
+            if (IsOpen || listOpenedAt >= 0.0f || listClosing || shownRow != firstRow || over.Active)
+                return -1;
+
+            var hash = new HashCode();
+            hash.Add(style);
+            hash.Add(TextScale);
+            hash.Add(IsSelected);
+            hash.Add(index);
+            hash.Add(options.Length);
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(options.Length > 0 ? Said(index) : string.Empty)));
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
     }
 
     protected override void Paint(UIDrawList list)
@@ -296,17 +326,21 @@ public class Dropdown : UIComponent
         Vector2 pointer = Module is { } owner ? owner.ToLocal(owner.Compositor.Pointer.Position) : default;
 
         // From where the glide has got to, the row half out at the top cut off at the list's edge and one more at the
-        // bottom
+        // bottom (plus any rows revealed while rubber-banding past either end).
+        int beyond = over.Stretch == 0.0f || Bounds.Height <= 0.0f ? 0 : (int)(MathF.Abs(over.Stretch) / Bounds.Height) + 1;
         int from = (int)MathF.Floor(shownRow);
         float slide = (shownRow - from) * Bounds.Height;
-        list.PushClip(bounds.Shrink(new UIEdges(LIST_BORDER)));
+        int startOption = Math.Max(0, from - beyond);
+        int endOption = Math.Min(options.Length, from + VisibleRows + 1 + beyond);
+        UIRect inner = bounds.Shrink(new UIEdges(LIST_BORDER));
+        list.PushClip(inner);
+        bool stretched = over.Begin(list, inner);
         // The rows move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
         list.PushFrame(new Vector2(0.0f, shownRow * Bounds.Height));
-        for (int row = 0; row <= VisibleRows && from + row < options.Length; row++)
+        for (int option = startOption; option < endOption; option++)
         {
-            int option = from + row;
             list.BeginPart(option);
-            UIRect area = RowBounds(row);
+            UIRect area = RowBounds(option - from);
             area = new UIRect(area.Min + new Vector2(0.0f, slide), area.Max + new Vector2(0.0f, slide));
 
             if (area.Contains(pointer))
@@ -322,6 +356,8 @@ public class Dropdown : UIComponent
         }
 
         list.PopFrame();
+        if (stretched)
+            UIOverscroll.End(list);
         list.PopClip();
         list.EndParts();
 
@@ -345,7 +381,12 @@ public class Dropdown : UIComponent
     // Whether the list is being painted going, after it was shut
     private bool listClosing;
 
-    protected internal override void PopupClosed() => listClosing = true;
+    protected internal override void PopupClosed()
+    {
+        listClosing = true;
+        wheelRemainder = 0.0f;
+        over.Stop();
+    }
 
     protected internal override bool PaintClosing(UIDrawList list, ref float closedAt)
     {
@@ -367,17 +408,47 @@ public class Dropdown : UIComponent
 
     protected internal override bool PopupContains(Vector2 point) => IsOpen && ListBounds.Contains(point);
 
+    protected internal override bool HasOverscroll => over.Active;
+
+    protected internal override bool? ScrollEnd(float delta) =>
+        !IsOpen || options.Length <= VisibleRows ? null
+        : over.Active ? false
+        : delta > 0.0f ? shownRow <= 0.001f : shownRow >= options.Length - VisibleRows - 0.001f;
+
     protected internal override bool OnScroll(float delta)
     {
         if (!IsOpen || options.Length <= VisibleRows)
-            return IsOpen;
+            return IsOpen && !UIWheel.Gliding;
 
-        // A row per notch, and never less than one for a wheel that turns in smaller steps than that.
-        BeginScrollMotion(shownRow != firstRow);
+        if (PreciseWheel && Bounds.Height > 0.0f)
+        {
+            wheelRemainder = 0.0f;
+            float rowHeight = Bounds.Height;
+            float max = (options.Length - VisibleRows) * rowHeight;
+            float at = shownRow * rowHeight;
+            float before = at;
+            over.Scroll(ref at, -delta * UIWheel.NotchUnits, max, VisibleRows * rowHeight, MotionSpeed);
+            firstRow = shownRow = at / rowHeight;
+            if (UIWheel.Gliding && at == before && !over.Active)
+                return false;
+            return true;
+        }
+
+        // A row per notch, resetting accumulated remainder if direction flips or hits an end.
+        if (wheelRemainder * delta < 0.0f)
+            wheelRemainder = 0.0f;
+        BeginScrollMotion(shownRow != firstRow || over.Active);
         wheelRemainder += delta;
         int rows = (int)wheelRemainder;
         wheelRemainder -= rows;
-        firstRow = Math.Clamp(firstRow - rows, 0, options.Length - VisibleRows);
+        float wanted = MathF.Round(firstRow) - rows;
+        firstRow = Math.Clamp(wanted, 0, options.Length - VisibleRows);
+        if (wanted != firstRow)
+        {
+            wheelRemainder = 0.0f;
+            if (Bounds.Height > 0.0f)
+                over.Push((wanted - firstRow) * Bounds.Height, MotionSpeed);
+        }
         return true;
     }
 
@@ -387,10 +458,11 @@ public class Dropdown : UIComponent
     protected override void Update(float dt)
     {
         base.Update(dt);
+        float scrollDt = ScrollMotionDelta(dt);
+        over.Step(scrollDt, MotionSpeed);
         if (shownRow == firstRow)
             return;
 
-        float scrollDt = ScrollMotionDelta(dt);
         shownRow += (firstRow - shownRow) * (1.0f - MathF.Exp(-UIScrollEase.RATE * scrollDt));
         if (MathF.Abs(firstRow - shownRow) < 0.01f)
             shownRow = firstRow;

@@ -56,8 +56,16 @@ public sealed partial class UITextDocument
                 for (int line = 0; line < Math.Min(updated.Length, step.Lines.Length); line++)
                     if (updated[line] == step.Lines[line])
                         updated[line] = step.Lines[line];
+                UITextSelection[]? movedExtras = null;
+                if (step.ExtraCarets is { Length: > 0 } savedExtras)
+                {
+                    movedExtras = new UITextSelection[savedExtras.Length];
+                    for (int j = 0; j < savedExtras.Length; j++)
+                        movedExtras[j] = new(positions.Move(savedExtras[j].Caret), positions.Move(savedExtras[j].Anchor));
+                }
                 history[i] = new(updated, positions.Move(step.Caret), positions.Move(step.Anchor),
-                    [.. step.Movements.Select(m => m with { At = positions.Move(m.At), ReverseAt = positions.Move(m.ReverseAt) })]);
+                    [.. step.Movements.Select(m => m with { At = positions.Move(m.At), ReverseAt = positions.Move(m.ReverseAt) })],
+                    movedExtras);
                 newer = older;
                 revised = next;
             }

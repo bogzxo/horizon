@@ -54,9 +54,11 @@ public sealed class StripTab
     /// <summary>Whatever the program wants to know the tab by.</summary>
     public object? Tag { get; set; }
 
-    // The title cut short to the room it had last, kept until the title or the room changes
+    // The title cut short to the room it had last, kept until the title, room, font or scale changes
     internal string? fittedOf;
     internal float fittedRoom;
+    internal UIFont? fittedFont;
+    internal float fittedScale;
     internal string fitted = string.Empty;
 }
 
@@ -174,10 +176,11 @@ public class TabStrip : UIComponent
     // The dots a title cut short has in its middle
     private const string CUT = "...";
 
-    /// <summary>Helper method for a tab's title in so much room, cut in the middle with dots, kept on the tab until either changes.</summary>
+    /// <summary>Helper method for a tab's title in so much room, cut in the middle with dots, kept on the tab until title, room, font or scale changes.</summary>
     private static string Fitted(StripTab tab, UISkin skin, float scale, float room)
     {
-        if (ReferenceEquals(tab.fittedOf, tab.Title) && tab.fittedRoom == room)
+        if (ReferenceEquals(tab.fittedOf, tab.Title) && tab.fittedRoom == room
+            && ReferenceEquals(tab.fittedFont, skin.Font) && tab.fittedScale == scale)
             return tab.fitted;
 
         string title = tab.Title, shown = title;
@@ -201,7 +204,7 @@ public class TabStrip : UIComponent
             shown = title[..start] + CUT + title[(title.Length - end)..];
         }
 
-        (tab.fittedOf, tab.fittedRoom, tab.fitted) = (title, room, shown);
+        (tab.fittedOf, tab.fittedRoom, tab.fittedFont, tab.fittedScale, tab.fitted) = (title, room, skin.Font, scale, shown);
         return shown;
     }
 
@@ -347,9 +350,18 @@ public class TabStrip : UIComponent
                     hash.Add(presence[j]);
             }
 
-            // Tab and close-button hover highlights depend on pointer position only while the strip is hovered.
+            // Tab and close-button hover highlights depend on which tab (and close icon) the pointer is over,
+            // not the raw pixel coordinate.
+            int hoveredTab = -1;
+            bool hoveredClose = false;
             if (IsHovered && Module is not null)
-                hash.Add(Pointer);
+            {
+                Vector2 pointer = Pointer;
+                hoveredTab = TabAt(pointer);
+                hoveredClose = hoveredTab >= 0 && CloseBounds(hoveredTab).Contains(pointer);
+            }
+            hash.Add(hoveredTab);
+            hash.Add(hoveredClose);
 
             return hash.ToHashCode() & 0x7FFFFFFF;
         }

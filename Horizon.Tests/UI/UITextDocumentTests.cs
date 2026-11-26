@@ -299,7 +299,7 @@ public class UITextDocumentTests
         doc.Undo();
         doc.Undo();
         Assert.Equal("jab: 5,\nkick: 7,\nsweep: 9,", doc.Text);
-        Assert.False(doc.HasExtraCarets);
+        Assert.Equal(3, doc.CaretCount);
     }
 
     [Fact]

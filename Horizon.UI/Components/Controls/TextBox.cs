@@ -36,7 +36,11 @@ public class TextBox : UIComponent
         get => style;
         set
         {
-            style = StyleStem(value, "_focused");
+            string stem = StyleStem(value, "_focused");
+            if (stem == style)
+                return;
+
+            style = stem;
             focusedStyle = style + "_focused";
         }
     }
@@ -512,27 +516,38 @@ public class TextBox : UIComponent
 
     /// <summary>
     /// Helper to find which gap between two characters is nearest to a point, going by where the text was last drawn.
+    /// Single-pass O(N) advance + kerning accumulation matching <see cref="UIFont.Measure(ReadOnlySpan{char}, float, bool)"/>.
     /// </summary>
     private int CaretAt(Vector2 point)
     {
         if (paintedSkin is not { } skin || text.Length == 0)
             return 0;
 
+        UIFont font = skin.Font;
+        ReadOnlySpan<char> shown = Shown;
         float wanted = point.X - textLeft;
         float before = 0.0f;
+        char previous = '\0';
 
-        for (int i = 1; i <= text.Length; i++)
+        for (int i = 0; i < shown.Length; i++)
         {
-            float after = skin.Font.Measure(Shown.AsSpan(0, i), textScale, markup: false).X;
+            char current = shown[i];
+            font.Resolve(current, out var glyph);
+            float step = glyph.XAdvance;
+            if (i > 0)
+                step += font.Kerning(previous, current);
+
+            float after = before + step * textScale;
 
             // Nearer to the gap in front of this character than to the one behind it
             if (wanted < (before + after) * 0.5f)
-                return i - 1;
+                return i;
 
             before = after;
+            previous = current;
         }
 
-        return text.Length;
+        return shown.Length;
     }
 
     protected internal override void OnPointerDown(Vector2 point)
@@ -623,6 +638,34 @@ public class TextBox : UIComponent
         return new Vector2(DEFAULT_WIDTH, skin.Font.LineHeight * scale) + Padding.Total;
     }
 
+    protected override long PaintVersion
+    {
+        get
+        {
+            // Focused textboxes blink, report IME rects, and call ShowingFocus(); keep painting while focused or before first paint.
+            if (paintedSkin is null || (EnabledInHierarchy && IsFocused))
+                return -1;
+
+            var hash = new HashCode();
+            hash.Add(style);
+            hash.Add(Bare);
+            hash.Add(TextWhileTyped);
+            hash.Add(LeadIcon);
+            hash.Add(ButtonLabel);
+            hash.Add(ButtonOnRight);
+            hash.Add(ButtonWidth);
+            hash.Add(Secret);
+            hash.Add(TextScale);
+            hash.Add(Padding);
+            hash.Add(IsSelected);
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Shown));
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(Placeholder)));
+            if (HasButton && IsHovered && Module is { } module)
+                hash.Add(ButtonBounds.Contains(module.ToLocal(module.Compositor.Pointer.Position)));
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
@@ -696,7 +739,7 @@ public class TextBox : UIComponent
 
         // Text somebody typed is shown as typed, tags and all.
         float width = empty ? 0.0f : skin.Font.Measure(Shown, scale, markup: false).X;
-        float caretX = Offset(caret);
+        float caretX = Offset(skin, scale, caret);
 
         // Text that has outgrown the box is scrolled just far enough to keep the caret, where the typing happens,
         // in view. One that isn't being typed in shows its end, which is where it will be typed in next
@@ -718,7 +761,7 @@ public class TextBox : UIComponent
 
         if (focused && HasSelection)
         {
-            float from = line.Min.X + Offset(SelectionStart), to = line.Min.X + Offset(SelectionEnd);
+            float from = line.Min.X + Offset(skin, scale, SelectionStart), to = line.Min.X + Offset(skin, scale, SelectionEnd);
             list.Rect(new UIRect(new Vector2(from, content.Min.Y), new Vector2(to, content.Max.Y)), skin.Palette.Selection);
         }
 
@@ -755,10 +798,11 @@ public class TextBox : UIComponent
 
         if (!focused)
             PaintSelection(list);
-
-        // How far into the text a gap between two characters is drawn
-        float Offset(int index) => index <= 0 ? 0.0f : skin.Font.Measure(Shown.AsSpan(0, Math.Min(index, text.Length)), scale, markup: false).X;
     }
+
+    // How far into the text a gap between two characters is drawn
+    private float Offset(UISkin skin, float scale, int index) =>
+        index <= 0 ? 0.0f : skin.Font.Measure(Shown.AsSpan(0, Math.Min(index, text.Length)), scale, markup: false).X;
 
     protected override void DefineScript()
     {
@@ -777,15 +821,18 @@ public class TextBox : UIComponent
         Expose("on_button", () => buttonHandler ?? new NullValue(), value => buttonHandler = value);
     }
 
-    // The end of the text with dots in front, as much of it as fits, kept until the text or the room changes
+    // The end of the text with dots in front, as much of it as fits, kept until the text, room, font or scale changes
     private const string CUT = "...";
     private string? tailOf;
     private float tailRoom;
+    private UIFont? tailFont;
+    private float tailScale;
     private string tail = string.Empty;
 
     private string Tail(UISkin skin, float scale, float room)
     {
-        if (ReferenceEquals(tailOf, Shown) && tailRoom == room)
+        if (ReferenceEquals(tailOf, Shown) && tailRoom == room
+            && ReferenceEquals(tailFont, skin.Font) && tailScale == scale)
             return tail;
 
         // The fewest letters cut off the front for the rest to fit after the dots
@@ -800,7 +847,7 @@ public class TextBox : UIComponent
                 low = middle + 1;
         }
 
-        (tailOf, tailRoom, tail) = (Shown, room, CUT + Shown[low..]);
+        (tailOf, tailRoom, tailFont, tailScale, tail) = (Shown, room, skin.Font, scale, CUT + Shown[low..]);
         return tail;
     }
 

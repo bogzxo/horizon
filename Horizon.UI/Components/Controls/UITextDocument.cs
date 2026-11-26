@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -49,8 +50,10 @@ public sealed partial class UITextDocument
     // What one step of the undo history comes back to. The lines and not the text joined up, a line is a string nobody
     // changes, so a step shares every line it has with the text and the steps either side of it and costs a reference a
     // line. The joined text was 120 KB a step in a 2000 line file, three hundred of them kept
-    private readonly record struct Snapshot(string[] Lines, UITextPosition Caret, UITextPosition Anchor, List<LineMovement> Movements);
+    private readonly record struct Snapshot(string[] Lines, UITextPosition Caret, UITextPosition Anchor, List<LineMovement> Movements, UITextSelection[]? ExtraCarets = null);
     private sealed record LineMovement(UITextPosition At, int By, bool MoveAt, UITextPosition ReverseAt, bool ReverseMoveAt, int Last = -1);
+
+    private static readonly SearchValues<char> LineBreaks = SearchValues.Create("\r\n");
 
     // How a step was made, a run of the same kind of edit going in as one step
     private enum EditKind
@@ -154,6 +157,7 @@ public sealed partial class UITextDocument
         set
         {
             SetLines(value ?? string.Empty);
+            extras.Clear();
             Caret = Anchor = default;
             preferredColumn = 0;
             undo.Clear();
@@ -208,8 +212,42 @@ public sealed partial class UITextDocument
     {
         joined = null;
         lines.Clear();
-        foreach (var line in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
-            lines.Add(line);
+        ReadOnlySpan<char> span = text.AsSpan();
+        while (true)
+        {
+            int breakAt = span.IndexOfAny(LineBreaks);
+            if (breakAt < 0)
+            {
+                lines.Add(span.Length == text.Length ? text : span.ToString());
+                return;
+            }
+
+            lines.Add(span[..breakAt].ToString());
+            int advance = span[breakAt] == '\r' && breakAt + 1 < span.Length && span[breakAt + 1] == '\n' ? 2 : 1;
+            span = span[(breakAt + advance)..];
+        }
+    }
+
+    private static string NormalizeLineEndings(string text)
+    {
+        if (text.AsSpan().IndexOf('\r') < 0)
+            return text;
+
+        return text.Replace("\r\n", "\n").Replace('\r', '\n');
+    }
+
+    private static int LeadingWhitespaceLength(string line)
+    {
+        int i = 0;
+        while (i < line.Length && char.IsWhiteSpace(line[i]))
+            i++;
+        return i;
+    }
+
+    private static bool IsOnlyCharAfterWhitespace(string line, char character)
+    {
+        int first = LeadingWhitespaceLength(line);
+        return first == line.Length - 1 && line[first] == character;
     }
 
     /// <summary>What is selected, its lines ended with '\n'.</summary>
@@ -288,8 +326,11 @@ public sealed partial class UITextDocument
     /// <summary>A character to the left or the right, over the end of a line onto the next. Without shift a selection is left at the end the arrow points at.</summary>
     public void MoveHorizontally(int direction, bool selecting)
     {
-        if (AtEveryCaret(() => MoveHorizontally(direction, selecting), null))
+        if (extras.Count > 0 && !batching)
+        {
+            MoveHorizontallyAtEvery(direction, selecting);
             return;
+        }
 
         if (!selecting && HasSelection)
         {
@@ -300,11 +341,16 @@ public sealed partial class UITextDocument
         MoveTo(Step(Caret, direction), selecting);
     }
 
+    private void MoveHorizontallyAtEvery(int direction, bool selecting) => MoveAtEvery(() => MoveHorizontally(direction, selecting));
+
     /// <summary>Lines up or down, keeping to the column the caret was last put at. Past the first or last line it goes to that end of it.</summary>
     public void MoveVertically(int by, bool selecting)
     {
-        if (AtEveryCaret(() => MoveVertically(by, selecting), null))
+        if (extras.Count > 0 && !batching)
+        {
+            MoveVerticallyAtEvery(by, selecting);
             return;
+        }
         if (!batching)
             extras.Clear();
 
@@ -324,29 +370,49 @@ public sealed partial class UITextDocument
         lastKind = EditKind.Other;
     }
 
+    private void MoveVerticallyAtEvery(int by, bool selecting) => MoveAtEvery(() => MoveVertically(by, selecting));
+
     /// <summary>A word to the left or the right, across the spaces next to it and then across the word.</summary>
     public void MoveWord(int direction, bool selecting)
     {
-        if (!AtEveryCaret(() => MoveWord(direction, selecting), null))
-            MoveTo(WordFrom(Caret, direction), selecting);
+        if (extras.Count > 0 && !batching)
+        {
+            MoveWordAtEvery(direction, selecting);
+            return;
+        }
+
+        MoveTo(WordFrom(Caret, direction), selecting);
     }
+
+    private void MoveWordAtEvery(int direction, bool selecting) => MoveAtEvery(() => MoveWord(direction, selecting));
 
     /// <summary>The first thing on the line that isn't a space, or the start of the line if the caret is there already.</summary>
     public void MoveHome(bool selecting)
     {
-        if (AtEveryCaret(() => MoveHome(selecting), null))
+        if (extras.Count > 0 && !batching)
+        {
+            MoveHomeAtEvery(selecting);
             return;
+        }
 
-        string line = lines[Caret.Line];
-        int first = line.Length - line.TrimStart().Length;
+        int first = LeadingWhitespaceLength(lines[Caret.Line]);
         MoveTo(new UITextPosition(Caret.Line, Caret.Column == first ? 0 : first), selecting);
     }
 
+    private void MoveHomeAtEvery(bool selecting) => MoveAtEvery(() => MoveHome(selecting));
+
     public void MoveEnd(bool selecting)
     {
-        if (!AtEveryCaret(() => MoveEnd(selecting), null))
-            MoveTo(new UITextPosition(Caret.Line, lines[Caret.Line].Length), selecting);
+        if (extras.Count > 0 && !batching)
+        {
+            MoveEndAtEvery(selecting);
+            return;
+        }
+
+        MoveTo(new UITextPosition(Caret.Line, lines[Caret.Line].Length), selecting);
     }
+
+    private void MoveEndAtEvery(bool selecting) => MoveAtEvery(() => MoveEnd(selecting));
 
     public void MoveToStart(bool selecting) => MoveTo(default, selecting);
 
@@ -466,8 +532,11 @@ public sealed partial class UITextDocument
     /// <summary>Types a character where the caret is, over what is selected.</summary>
     public void Type(char character)
     {
-        if (AtEveryCaret(() => Type(character), EditKind.Typing))
+        if (extras.Count > 0 && !batching)
+        {
+            TypeAtEvery(character);
             return;
+        }
 
         if (character == '\n')
         {
@@ -495,8 +564,8 @@ public sealed partial class UITextDocument
             if (HasSelection && SelectionStart.Line == SelectionEnd.Line)
             {
                 UITextPosition start = SelectionStart, end = SelectionEnd;
-                InsertRaw(end, closing.ToString());
-                InsertRaw(start, character.ToString());
+                InsertCharRaw(end, closing);
+                InsertCharRaw(start, character);
                 Select(start with { Column = start.Column + 1 }, end with { Column = end.Column + 1 });
             }
             else
@@ -513,16 +582,18 @@ public sealed partial class UITextDocument
 
         Record(EditKind.Typing);
         DeleteSelectionRaw();
-        UITextPosition after = InsertRaw(Caret, character.ToString());
+        UITextPosition after = InsertCharRaw(Caret, character);
         MoveTo(after);
         lastKind = EditKind.Typing;
 
         // A closing bracket typed on a line of nothing but indentation goes back out a level
-        if (character is '}' or ']' or ')' && lines[Caret.Line].TrimStart() == character.ToString())
+        if (character is '}' or ']' or ')' && IsOnlyCharAfterWhitespace(lines[Caret.Line], character))
             Outdent();
 
         Touched();
     }
+
+    private void TypeAtEvery(char character) => EditAtEvery(EditKind.Typing, () => Type(character));
 
     // Whether the character before the caret is part of a word, where a quote is far more likely to be the end of something
     private bool InsideWordBefore() => Caret.Column > 0 && IsWordChar(lines[Caret.Line][Caret.Column - 1]);
@@ -535,7 +606,7 @@ public sealed partial class UITextDocument
 
         Record(EditKind.Other);
         DeleteSelectionRaw();
-        MoveTo(InsertRaw(Caret, text.Replace("\r\n", "\n").Replace('\r', '\n')));
+        MoveTo(InsertRaw(Caret, NormalizeLineEndings(text)));
         Touched();
     }
 
@@ -545,15 +616,18 @@ public sealed partial class UITextDocument
     /// </summary>
     public void NewLine()
     {
-        if (AtEveryCaret(NewLine, EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            NewLineAtEvery();
             return;
+        }
 
         Record(EditKind.Other);
         DeleteSelectionRaw();
 
         string line = lines[Caret.Line];
-        string indent = line[..(line.Length - line.TrimStart().Length)];
-        if (indent.Length > Caret.Column) indent = indent[..Caret.Column];
+        int indentLength = Math.Min(LeadingWhitespaceLength(line), Caret.Column);
+        string indent = indentLength == 0 ? string.Empty : line[..indentLength];
 
         char before = PreviousNonSpace(line, Caret.Column);
         char after = Caret.Column < line.Length ? line[Caret.Column] : '\0';
@@ -568,18 +642,20 @@ public sealed partial class UITextDocument
         else
         {
             // The spaces the caret leaves behind it at the end of the line go, they would only be trailing
-            string rest = line[Caret.Column..];
+            int trailingSpaces = 0;
+            while (Caret.Column + trailingSpaces < line.Length && char.IsWhiteSpace(line[Caret.Column + trailingSpaces]))
+                trailingSpaces++;
+
             MoveTo(InsertRaw(Caret, "\n" + indent + (opens ? Indent : string.Empty)));
-            if (rest.Length > 0 && rest.TrimStart().Length != rest.Length)
-            {
-                int spaces = rest.Length - rest.TrimStart().Length;
-                lines[Caret.Line] = lines[Caret.Line].Remove(Caret.Column, spaces);
-            }
+            if (trailingSpaces > 0)
+                lines[Caret.Line] = lines[Caret.Line].Remove(Caret.Column, trailingSpaces);
         }
 
         lastKind = EditKind.Other;
         Touched();
     }
+
+    private void NewLineAtEvery() => EditAtEvery(EditKind.Other, NewLine);
 
     private static char PreviousNonSpace(string line, int column)
     {
@@ -595,8 +671,11 @@ public sealed partial class UITextDocument
     /// <summary>What is selected goes, or failing that the character before the caret (the pair round it if it is an empty one, a level of indentation in the indentation).</summary>
     public void Backspace()
     {
-        if (AtEveryCaret(Backspace, EditKind.Deleting))
+        if (extras.Count > 0 && !batching)
+        {
+            BackspaceAtEvery();
             return;
+        }
 
         Record(EditKind.Deleting);
 
@@ -610,7 +689,7 @@ public sealed partial class UITextDocument
                 DeleteRaw(Caret with { Column = column - 1 }, Caret with { Column = column + 1 });
                 MoveTo(Caret with { Column = column - 1 });
             }
-            else if (column > 0 && line[..column].Trim().Length == 0)
+            else if (column > 0 && line.AsSpan(0, column).IsWhiteSpace())
             {
                 // In the indentation a whole level goes at once
                 int to = Math.Max(0, (column - 1) / Indent.Length * Indent.Length);
@@ -629,11 +708,16 @@ public sealed partial class UITextDocument
         Touched();
     }
 
+    private void BackspaceAtEvery() => EditAtEvery(EditKind.Deleting, Backspace);
+
     /// <summary>What is selected goes, or failing that the character after the caret.</summary>
     public void Delete()
     {
-        if (AtEveryCaret(Delete, EditKind.Deleting))
+        if (extras.Count > 0 && !batching)
+        {
+            DeleteAtEvery();
             return;
+        }
 
         Record(EditKind.Deleting);
         if (!DeleteSelectionRaw())
@@ -643,11 +727,16 @@ public sealed partial class UITextDocument
         Touched();
     }
 
+    private void DeleteAtEvery() => EditAtEvery(EditKind.Deleting, Delete);
+
     /// <summary>What is selected goes, or failing that the word before (or after) the caret.</summary>
     public void DeleteWord(int direction)
     {
-        if (AtEveryCaret(() => DeleteWord(direction), EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            DeleteWordAtEvery(direction);
             return;
+        }
 
         Record(EditKind.Other);
         if (!DeleteSelectionRaw())
@@ -660,6 +749,8 @@ public sealed partial class UITextDocument
 
         Touched();
     }
+
+    private void DeleteWordAtEvery(int direction) => EditAtEvery(EditKind.Other, () => DeleteWord(direction));
 
     /// <summary>
     /// A Mac's control with K: the rest of the caret's line goes (its new line, when there is no more of it), and what went
@@ -712,8 +803,11 @@ public sealed partial class UITextDocument
     /// </summary>
     public void IndentLines()
     {
-        if (AtEveryCaret(IndentLines, EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            IndentLinesAtEvery();
             return;
+        }
 
         if (HasSelection && SelectionStart.Line != SelectionEnd.Line)
         {
@@ -735,11 +829,16 @@ public sealed partial class UITextDocument
         Insert(new string(' ', spaces));
     }
 
+    private void IndentLinesAtEvery() => EditAtEvery(EditKind.Other, IndentLines);
+
     /// <summary>Shift with tab, every line of the selection (or the caret's) a level back out, as far as it can go.</summary>
     public void Outdent()
     {
-        if (AtEveryCaret(Outdent, EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            OutdentAtEvery();
             return;
+        }
 
         Record(EditKind.Other);
         var (first, last) = SelectedLines();
@@ -763,11 +862,16 @@ public sealed partial class UITextDocument
         Touched();
     }
 
+    private void OutdentAtEvery() => EditAtEvery(EditKind.Other, Outdent);
+
     /// <summary>The selection once more after itself, or the caret's line once more under itself.</summary>
     public void Duplicate()
     {
-        if (AtEveryCaret(Duplicate, EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            DuplicateAtEvery();
             return;
+        }
 
         Record(EditKind.Other);
 
@@ -788,6 +892,8 @@ public sealed partial class UITextDocument
 
         Touched();
     }
+
+    private void DuplicateAtEvery() => EditAtEvery(EditKind.Other, Duplicate);
 
     /// <summary>The lines of the selection (or the caret's) swapped with the line above or below them.</summary>
     public void MoveLines(int direction)
@@ -1130,7 +1236,6 @@ public sealed partial class UITextDocument
             shared(false);
             return;
         }
-        extras.Clear();
         if (undo.Count == 0)
             return;
 
@@ -1147,7 +1252,6 @@ public sealed partial class UITextDocument
             shared(true);
             return;
         }
-        extras.Clear();
         if (redo.Count == 0)
             return;
 
@@ -1157,7 +1261,7 @@ public sealed partial class UITextDocument
         redo.RemoveAt(redo.Count - 1);
     }
 
-    private Snapshot Current() => new([.. lines], Caret, Anchor, []);
+    private Snapshot Current() => new([.. lines], Caret, Anchor, [], extras.Count > 0 ? [.. extras] : null);
 
     private void Restore(Snapshot snapshot, bool reverse)
     {
@@ -1166,6 +1270,12 @@ public sealed partial class UITextDocument
         lines.AddRange(snapshot.Lines);
         Caret = Clamp(snapshot.Caret);
         Anchor = Clamp(snapshot.Anchor);
+        extras.Clear();
+        if (snapshot.ExtraCarets is { Length: > 0 } savedExtras)
+        {
+            for (int i = 0; i < savedExtras.Length; i++)
+                extras.Add(new UITextSelection(Clamp(savedExtras[i].Caret), Clamp(savedExtras[i].Anchor)));
+        }
         preferredColumn = Caret.Column;
         lastKind = EditKind.Other;
         if (reverse)
@@ -1239,28 +1349,47 @@ public sealed partial class UITextDocument
 
     /* The raw edits, no history and no caret, the caret is whoever called's */
 
+    private UITextPosition InsertCharRaw(UITextPosition at, char character)
+    {
+        at = Clamp(at);
+        string line = lines[at.Line];
+        lines[at.Line] = string.Concat(line.AsSpan(0, at.Column), new ReadOnlySpan<char>(in character), line.AsSpan(at.Column));
+        return at with { Column = at.Column + 1 };
+    }
+
     private UITextPosition InsertRaw(UITextPosition at, string text)
     {
         at = Clamp(at);
         string line = lines[at.Line];
-        string before = line[..at.Column], after = line[at.Column..];
+        ReadOnlySpan<char> textSpan = text.AsSpan();
 
-        int newline = text.IndexOf('\n');
+        int newline = textSpan.IndexOf('\n');
         if (newline < 0)
         {
-            lines[at.Line] = before + text + after;
+            lines[at.Line] = string.Concat(line.AsSpan(0, at.Column), textSpan, line.AsSpan(at.Column));
             return at with { Column = at.Column + text.Length };
         }
 
-        string[] pieces = text.Split('\n');
-        lines[at.Line] = before + pieces[0];
-        for (int i = 1; i < pieces.Length; i++)
-            lines.Insert(at.Line + i, pieces[i]);
+        int breakCount = textSpan.Count('\n');
+        bool beforeIsWhiteSpace = line.AsSpan(0, at.Column).IsWhiteSpace();
+        ReadOnlySpan<char> afterSpan = line.AsSpan(at.Column);
+        lines[at.Line] = string.Concat(line.AsSpan(0, at.Column), textSpan[..newline]);
 
-        int last = at.Line + pieces.Length - 1;
-        int column = lines[last].Length;
-        lines[last] += after;
-        NoteLineMovement(at, pieces.Length - 1, string.IsNullOrWhiteSpace(before), new(last, column), false);
+        var added = new string[breakCount];
+        ReadOnlySpan<char> rest = textSpan[(newline + 1)..];
+        for (int i = 0; i < breakCount - 1; i++)
+        {
+            int nextBreak = rest.IndexOf('\n');
+            added[i] = rest[..nextBreak].ToString();
+            rest = rest[(nextBreak + 1)..];
+        }
+
+        int column = rest.Length;
+        added[breakCount - 1] = string.Concat(rest, afterSpan);
+        lines.InsertRange(at.Line + 1, added);
+
+        int last = at.Line + breakCount;
+        NoteLineMovement(at, breakCount, beforeIsWhiteSpace, new(last, column), false);
         return new UITextPosition(last, column);
     }
 
@@ -1276,9 +1405,11 @@ public sealed partial class UITextDocument
             return;
         }
 
-        lines[from.Line] = lines[from.Line][..from.Column] + lines[to.Line][to.Column..];
+        string startLine = lines[from.Line];
+        bool beforeIsWhiteSpace = startLine.AsSpan(0, from.Column).IsWhiteSpace();
+        lines[from.Line] = string.Concat(startLine.AsSpan(0, from.Column), lines[to.Line].AsSpan(to.Column));
         lines.RemoveRange(from.Line + 1, to.Line - from.Line);
-        NoteLineMovement(to, from.Line - to.Line, false, from, string.IsNullOrWhiteSpace(lines[from.Line][..from.Column]));
+        NoteLineMovement(to, from.Line - to.Line, false, from, beforeIsWhiteSpace);
     }
 
     private bool DeleteSelectionRaw()
@@ -1357,17 +1488,22 @@ public sealed partial class UITextDocument
     }
 
     // An edit at every caret, from the last in the text to the first, so an edit never moves the carets still to come.
-    // Where the ones already done end up is kept as offsets into the text and moved along by however much each edit after
-    // made the text longer or shorter, every edit happening at or before the carets it comes after
+    // Cumulative deltas keep each caret update O(1) instead of O(C^2), and prefix/final line-start arrays resolve
+    // offsets in O(L + C log L).
     private void EditAtEvery(EditKind kind, Action single)
     {
         Record(kind);
 
         var all = AllCarets();
-        all.Sort((a, b) => b.Selection.Start.CompareTo(a.Selection.Start));
+        all.Sort(static (a, b) => b.Selection.Start.CompareTo(a.Selection.Start));
+
+        int[] prefix = new int[lines.Count + 1];
+        for (int i = 0; i < lines.Count; i++)
+            prefix[i + 1] = prefix[i] + lines[i].Length + 1;
+        int validPrefixLines = lines.Count;
 
         var done = new List<(int Caret, int Anchor, bool Primary)>(all.Count);
-        int length = TotalLength();
+        int cumulativeDelta = 0;
         batching = true;
         try
         {
@@ -1376,13 +1512,29 @@ public sealed partial class UITextDocument
                 Caret = Clamp(selection.Caret);
                 Anchor = Clamp(selection.Anchor);
                 preferredColumn = Caret.Column;
+
+                int prevLineCount = lines.Count;
+                int lo = Math.Max(0, Math.Min(Caret.Line, Anchor.Line) - 1);
+                int baseLine = Math.Min(lo, validPrefixLines);
+                int hiBefore = Math.Min(prevLineCount - 1, Math.Max(Caret.Line, Anchor.Line) + 1);
+
+                int sumBefore = 0;
+                for (int i = baseLine; i <= hiBefore; i++)
+                    sumBefore += lines[i].Length + 1;
+
                 single();
 
-                int now = TotalLength(), delta = now - length;
-                length = now;
-                for (int i = 0; i < done.Count; i++)
-                    done[i] = (done[i].Caret + delta, done[i].Anchor + delta, done[i].Primary);
-                done.Add((OffsetOf(Caret), OffsetOf(Anchor), primary));
+                int hiAfter = hiBefore + (lines.Count - prevLineCount);
+                int sumAfter = 0;
+                for (int i = baseLine; i <= hiAfter; i++)
+                    sumAfter += lines[i].Length + 1;
+
+                cumulativeDelta += sumAfter - sumBefore;
+                validPrefixLines = baseLine;
+
+                int caretOffset = OffsetFromPrefix(Caret, prefix, validPrefixLines);
+                int anchorOffset = OffsetFromPrefix(Anchor, prefix, validPrefixLines);
+                done.Add((caretOffset - cumulativeDelta, anchorOffset - cumulativeDelta, primary));
             }
         }
         finally
@@ -1390,14 +1542,51 @@ public sealed partial class UITextDocument
             batching = false;
         }
 
+        int[] finalStarts = new int[lines.Count];
+        int running = 0;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            finalStarts[i] = running;
+            running += lines[i].Length + 1;
+        }
+
         var placed = new List<(UITextSelection, bool)>(done.Count);
         foreach (var (caret, anchor, primary) in done)
-            placed.Add((new UITextSelection(PositionOf(caret), PositionOf(anchor)), primary));
+        {
+            placed.Add((new UITextSelection(
+                PositionFromStarts(caret + cumulativeDelta, finalStarts),
+                PositionFromStarts(anchor + cumulativeDelta, finalStarts)), primary));
+        }
 
         SetCarets(placed);
         preferredColumn = Caret.Column;
         lastKind = kind;
         Touched();
+    }
+
+    private int OffsetFromPrefix(UITextPosition at, int[] prefix, int validPrefixLines)
+    {
+        at = Clamp(at);
+        if (at.Line <= validPrefixLines)
+            return prefix[at.Line] + at.Column;
+
+        int offset = prefix[validPrefixLines];
+        for (int line = validPrefixLines; line < at.Line; line++)
+            offset += lines[line].Length + 1;
+        return offset + at.Column;
+    }
+
+    private UITextPosition PositionFromStarts(int offset, int[] starts)
+    {
+        if (offset <= 0)
+            return default;
+
+        int line = Array.BinarySearch(starts, offset);
+        if (line < 0)
+            line = ~line - 1;
+        line = Math.Clamp(line, 0, lines.Count - 1);
+        int column = Math.Clamp(offset - starts[line], 0, lines[line].Length);
+        return new UITextPosition(line, column);
     }
 
     // What's pasted at every caret, a line each when there are as many lines as carets (copied from that many), the
@@ -1407,23 +1596,52 @@ public sealed partial class UITextDocument
         if (extras.Count == 0 || batching)
             return false;
 
-        string[] pieces = text.Replace("\r\n", "\n").TrimEnd('\n').Split('\n');
-        if (pieces.Length != extras.Count + 1)
+        string normalized = NormalizeLineEndings(text);
+        ReadOnlySpan<char> span = normalized.AsSpan();
+
+        // A single trailing newline from copying whole lines is a line terminator, not an extra empty line;
+        // multiple trailing newlines are intentional and must not be stripped.
+        bool stripSingleTrailingNewline = span.Length > 1 && span[^1] == '\n' && span[^2] != '\n';
+        ReadOnlySpan<char> candidate = stripSingleTrailingNewline ? span[..^1] : span;
+
+        int pieceCount = candidate.Count('\n') + 1;
+        if (pieceCount != extras.Count + 1)
         {
-            EditAtEvery(EditKind.Other, () => Insert(text));
+            InsertAtEverySingle(normalized);
             return true;
         }
 
+        string[] pieces = new string[pieceCount];
+        int index = 0;
+        while (true)
+        {
+            int nl = candidate.IndexOf('\n');
+            if (nl < 0)
+            {
+                pieces[index] = candidate.ToString();
+                break;
+            }
+            pieces[index++] = candidate[..nl].ToString();
+            candidate = candidate[(nl + 1)..];
+        }
+
+        InsertPiecesAtEvery(pieces);
+        return true;
+    }
+
+    private void InsertAtEverySingle(string normalized) => EditAtEvery(EditKind.Other, () => Insert(normalized));
+
+    private void InsertPiecesAtEvery(string[] pieces)
+    {
         // The carets are gone through from the last in the text, so the pieces are handed out from the last too
         int next = pieces.Length - 1;
         EditAtEvery(EditKind.Other, () => Insert(pieces[Math.Max(0, next--)]));
-        return true;
     }
 
     // The carets put down again, the one marked as put down last the first, and any that run into each other made one
     private void SetCarets(List<(UITextSelection Selection, bool Primary)> carets)
     {
-        carets.Sort((a, b) => a.Selection.Start.CompareTo(b.Selection.Start));
+        carets.Sort(static (a, b) => a.Selection.Start.CompareTo(b.Selection.Start));
         var merged = new List<(UITextSelection Selection, bool Primary)>(carets.Count);
         foreach (var (selection, primary) in carets)
         {

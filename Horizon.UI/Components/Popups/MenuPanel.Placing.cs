@@ -221,8 +221,9 @@ internal sealed partial class MenuPanel
         if (!bounds.Contains(pointer))
             return false;
 
-        ScrollBy(skin, -delta * WHEEL_ROWS * RowHeight(skin, textScale));
-        return true;
+        float was = scroll;
+        ScrollBy(skin, -UIWheel.Units(delta, WHEEL_ROWS * RowHeight(skin, textScale)));
+        return !UIWheel.Gliding || scroll != was;
     }
 
     private void ScrollBy(UISkin skin, float by)

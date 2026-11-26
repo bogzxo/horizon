@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 using Horizon.HIDL;
 using Horizon.HIDL.Lexing;
@@ -72,6 +73,9 @@ public sealed class HidlHighlighter : ICodeHighlighter
     private static readonly HashSet<string>.AlternateLookup<ReadOnlySpan<char>> BuiltinsBySpan =
         Builtins.GetAlternateLookup<ReadOnlySpan<char>>();
 
+    private sealed record CachedExtras(HidlSwatch[]? Swatches, HidlArt[]? Art);
+
+    private readonly ConditionalWeakTable<List<SyntaxSpan>[], CachedExtras> cachedExtras = new();
     private TextMateHighlighter? grammar;
 
     public string Name => "HIDL";
@@ -112,13 +116,15 @@ public sealed class HidlHighlighter : ICodeHighlighter
         }
 
         Overlay(spans, code, lineOffsets, swatches, art);
+        if (swatches is not null || art is not null)
+            cachedExtras.AddOrUpdate(spans, new CachedExtras(swatches is not null ? [.. swatches] : null, art is not null ? [.. art] : null));
         return spans;
     }
 
     /// <summary>
-    /// Reads again from the first line that changed, keeping unchanged prefix/suffix spans copied (since
-    /// <see cref="Overlay"/> patches identifier kinds in place) and stopping once a line after the edit
-    /// starts in the same state and bracket depth as last time.
+    /// Reads again from the first line that changed, sharing untouched prefix/suffix span lists (with copy-on-write
+    /// if the overlay ever patches one) and incrementally lexing only the enclosing top-level window around the
+    /// dirty range until lexer state converges.
     /// </summary>
     public List<SyntaxSpan>[] ReadAgain(string code, string[] lines, CodeLineStart[] starts, CodeColouring last, List<HidlSwatch>? swatches = null, List<HidlArt>? art = null)
     {
@@ -128,27 +134,129 @@ public sealed class HidlHighlighter : ICodeHighlighter
         if (lines.Length == 0 || was == 0 || last.Spans.Length != was || last.Starts.Length != was)
         {
             ScanLinesFrom(lines, starts, spans, 0, CodeLineStart.First, last, int.MaxValue);
+            Overlay(spans, code, BuildLineOffsets(code, count), swatches, art);
+            if (swatches is not null || art is not null)
+                cachedExtras.AddOrUpdate(spans, new CachedExtras(swatches is not null ? [.. swatches] : null, art is not null ? [.. art] : null));
+            return spans;
         }
-        else
-        {
-            int limit = Math.Min(lines.Length, was), first = 0;
-            while (first < limit && string.Equals(lines[first], last.Lines[first], StringComparison.Ordinal))
-                first++;
-            int same = 0;
-            while (same < limit - first && string.Equals(lines[lines.Length - 1 - same], last.Lines[was - 1 - same], StringComparison.Ordinal))
-                same++;
 
-            int from = Math.Min(first, was - 1);
-            for (int line = 0; line < from; line++)
+        int limit = Math.Min(lines.Length, was), first = 0;
+        while (first < limit && string.Equals(lines[first], last.Lines[first], StringComparison.Ordinal))
+            first++;
+        int same = 0;
+        while (same < limit - first && string.Equals(lines[lines.Length - 1 - same], last.Lines[was - 1 - same], StringComparison.Ordinal))
+            same++;
+
+        CachedExtras? prevExtras = null;
+        bool canReuseExtras = (swatches is null && art is null)
+            || (cachedExtras.TryGetValue(last.Spans, out prevExtras)
+                && (swatches is null || prevExtras.Swatches is not null)
+                && (art is null || prevExtras.Art is not null));
+
+        // Pure prefix reuse (no change or tail deletion): share every remaining line directly
+        if (first >= count)
+        {
+            for (int line = 0; line < count; line++)
             {
-                spans[line] = [.. last.Spans[line]];
-                starts[line] = last.Starts[line];
+                spans[line] = last.Spans[line];
+                if (line < starts.Length)
+                    starts[line] = last.Starts[line];
             }
 
-            ScanLinesFrom(lines, starts, spans, from, last.Starts[from], last, lines.Length - same);
+            if (canReuseExtras)
+            {
+                if (swatches is not null)
+                {
+                    swatches.Clear();
+                    foreach (HidlSwatch s in prevExtras!.Swatches!)
+                    {
+                        if (s.Line < count)
+                            swatches.Add(s);
+                    }
+                }
+                if (art is not null)
+                {
+                    art.Clear();
+                    foreach (HidlArt a in prevExtras!.Art!)
+                    {
+                        if (a.Line < count)
+                            art.Add(a);
+                    }
+                }
+                if (swatches is not null || art is not null)
+                    cachedExtras.AddOrUpdate(spans, new CachedExtras(swatches is not null ? [.. swatches] : null, art is not null ? [.. art] : null));
+                return spans;
+            }
+
+            Overlay(spans, code, BuildLineOffsets(code, count), swatches, art, sharedBefore: count, sharedFrom: count);
+            if (swatches is not null || art is not null)
+                cachedExtras.AddOrUpdate(spans, new CachedExtras(swatches is not null ? [.. swatches] : null, art is not null ? [.. art] : null));
+            return spans;
         }
 
-        Overlay(spans, code, BuildLineOffsets(code, count), swatches, art);
+        int from = Math.Clamp(first, 0, Math.Min(was - 1, count - 1));
+        for (int line = 0; line < from; line++)
+        {
+            spans[line] = last.Spans[line];
+            if (line < starts.Length)
+                starts[line] = last.Starts[line];
+        }
+
+        int dirtyEnd = ScanLinesFrom(lines, starts, spans, from, last.Starts[from], last, lines.Length - same);
+        int windowStart = FindWindowStart(lines, starts, from);
+        int windowEnd = FindWindowEnd(lines, starts, dirtyEnd, count);
+
+        if ((windowStart > 0 || windowEnd < count) && canReuseExtras)
+        {
+            int shift = lines.Length - was;
+            int oldWindowEnd = windowEnd - shift;
+            List<HidlSwatch>? windowSwatches = swatches is not null ? [] : null;
+            List<HidlArt>? windowArt = art is not null ? [] : null;
+
+            OverlayWindow(spans, lines, windowStart, windowEnd, from, dirtyEnd, windowSwatches, windowArt);
+
+            if (swatches is not null)
+            {
+                swatches.Clear();
+                foreach (HidlSwatch s in prevExtras!.Swatches!)
+                {
+                    if (s.Line < windowStart)
+                        swatches.Add(s);
+                }
+                foreach (HidlSwatch s in windowSwatches!)
+                    swatches.Add(s with { Line = s.Line + windowStart });
+                foreach (HidlSwatch s in prevExtras.Swatches!)
+                {
+                    if (s.Line >= oldWindowEnd)
+                        swatches.Add(s with { Line = s.Line + shift });
+                }
+            }
+
+            if (art is not null)
+            {
+                art.Clear();
+                foreach (HidlArt a in prevExtras!.Art!)
+                {
+                    if (a.Line < windowStart)
+                        art.Add(a);
+                }
+                foreach (HidlArt a in windowArt!)
+                    art.Add(a with { Line = a.Line + windowStart });
+                foreach (HidlArt a in prevExtras.Art!)
+                {
+                    if (a.Line >= oldWindowEnd)
+                        art.Add(a with { Line = a.Line + shift });
+                }
+            }
+
+            if (swatches is not null || art is not null)
+                cachedExtras.AddOrUpdate(spans, new CachedExtras(swatches is not null ? [.. swatches] : null, art is not null ? [.. art] : null));
+            return spans;
+        }
+
+        Overlay(spans, code, BuildLineOffsets(code, count), swatches, art, sharedBefore: from, sharedFrom: dirtyEnd);
+        if (swatches is not null || art is not null)
+            cachedExtras.AddOrUpdate(spans, new CachedExtras(swatches is not null ? [.. swatches] : null, art is not null ? [.. art] : null));
         return spans;
     }
 
@@ -171,7 +279,7 @@ public sealed class HidlHighlighter : ICodeHighlighter
         return lines[0];
     }
 
-    private static void ScanLinesFrom(string[] lines, CodeLineStart[] starts, List<SyntaxSpan>[] spans, int from, CodeLineStart start, CodeColouring last, int sameFrom)
+    private static int ScanLinesFrom(string[] lines, CodeLineStart[] starts, List<SyntaxSpan>[] spans, int from, CodeLineStart start, CodeColouring last, int sameFrom)
     {
         ScanState? state = start.State as ScanState;
         int depth = start.Depth, shift = lines.Length - last.Lines.Length;
@@ -179,24 +287,90 @@ public sealed class HidlHighlighter : ICodeHighlighter
         for (int line = from; line < spans.Length; line++)
         {
             int old = line - shift;
-            if (line >= sameFrom && old >= 0 && old < last.Starts.Length && depth == last.Starts[old].Depth && Equals(state, last.Starts[old].State))
+            int remaining = spans.Length - line;
+            if (line >= sameFrom && old >= 0 && old < last.Starts.Length
+                && old + remaining <= last.Spans.Length && old + remaining <= last.Starts.Length
+                && depth == last.Starts[old].Depth && Equals(state, last.Starts[old].State))
             {
+                int convergedAt = line;
                 for (; line < spans.Length; line++)
                 {
-                    spans[line] = [.. last.Spans[line - shift]];
-                    starts[line] = last.Starts[line - shift];
+                    int oldLine = line - shift;
+                    spans[line] = last.Spans[oldLine];
+                    if (line < starts.Length)
+                        starts[line] = last.Starts[oldLine];
                 }
 
-                return;
+                return convergedAt;
             }
 
-            starts[line] = new CodeLineStart(depth, state);
+            if (line < starts.Length)
+                starts[line] = new CodeLineStart(depth, state);
             var row = new List<SyntaxSpan>();
             string text = line < lines.Length ? lines[line] : string.Empty;
             if (text.Length > 0)
                 ScanLine(text.AsSpan(), row, ref state, ref depth);
             spans[line] = row;
         }
+
+        return spans.Length;
+    }
+
+    private static bool IsSafeBoundary(string[] lines, CodeLineStart[] starts, int line) =>
+        line <= 0 || (line < starts.Length && line - 1 < lines.Length
+            && starts[line].Depth == 0 && starts[line].State is null && EndsStatement(lines[line - 1]));
+
+    private static bool EndsStatement(string line)
+    {
+        ReadOnlySpan<char> trimmed = line.AsSpan().Trim();
+        return trimmed.Length > 0 && (trimmed[^1] is ';' or '}' || trimmed[0] == '#');
+    }
+
+    private static int FindWindowStart(string[] lines, CodeLineStart[] starts, int from)
+    {
+        int line = Math.Clamp(from, 0, lines.Length);
+        while (line > 0 && !IsSafeBoundary(lines, starts, line))
+            line--;
+        return line;
+    }
+
+    private static int FindWindowEnd(string[] lines, CodeLineStart[] starts, int dirtyEnd, int count)
+    {
+        int line = Math.Clamp(dirtyEnd, 0, count);
+        while (line < count && !IsSafeBoundary(lines, starts, line))
+            line++;
+        return line;
+    }
+
+    private static void OverlayWindow(List<SyntaxSpan>[] spans, string[] lines, int windowStart, int windowEnd,
+        int sharedBefore, int sharedFrom, List<HidlSwatch>? swatches, List<HidlArt>? art)
+    {
+        int windowLines = windowEnd - windowStart;
+        if (windowLines <= 0)
+            return;
+
+        int totalChars = windowLines - 1;
+        var offsets = new int[windowLines];
+        for (int i = 0; i < windowLines; i++)
+        {
+            offsets[i] = i == 0 ? 0 : offsets[i - 1] + lines[windowStart + i - 1].Length + 1;
+            totalChars += lines[windowStart + i].Length;
+        }
+
+        string windowCode = string.Create(totalChars, (lines, windowStart, windowLines), static (dest, state) =>
+        {
+            int pos = 0;
+            for (int i = 0; i < state.windowLines; i++)
+            {
+                if (i > 0)
+                    dest[pos++] = '\n';
+                string l = state.lines[state.windowStart + i];
+                l.AsSpan().CopyTo(dest[pos..]);
+                pos += l.Length;
+            }
+        });
+
+        Overlay(spans, windowCode, offsets, swatches, art, lineOffset: windowStart, sharedBefore: sharedBefore, sharedFrom: sharedFrom);
     }
 
     private static int[] BuildLineOffsets(string code, int lineCount)
@@ -793,7 +967,8 @@ public sealed class HidlHighlighter : ICodeHighlighter
     /// Helper method to lay what the lexer knows over what the line scanner said. Multi-line declarations
     /// (function/arrow parameters, destructuring let/const, for-loop names), swatches, and art.
     /// </summary>
-    private static void Overlay(List<SyntaxSpan>[] spans, string code, int[] starts, List<HidlSwatch>? swatches, List<HidlArt>? art)
+    private static void Overlay(List<SyntaxSpan>[] spans, string code, int[] starts, List<HidlSwatch>? swatches, List<HidlArt>? art,
+        int lineOffset = 0, int sharedBefore = 0, int sharedFrom = int.MaxValue)
     {
         swatches?.Clear();
         art?.Clear();
@@ -835,7 +1010,7 @@ public sealed class HidlHighlighter : ICodeHighlighter
 
                 case TokenType.Identifier:
                     bool made = HIDLDeclarations.IsArrowParameter(tokens, i) || declared?.Contains(token.Index) == true;
-                    Place(spans, starts, ref lineCursor, token.Index, token.Length, KindOf(tokens, i, made));
+                    Place(spans, starts, ref lineCursor, token.Index, token.Length, KindOf(tokens, i, made), lineOffset, sharedBefore, sharedFrom);
                     break;
             }
         }
@@ -873,7 +1048,8 @@ public sealed class HidlHighlighter : ICodeHighlighter
     /// Helper method to write a name's kind over the span the scanner gave it, when that is a name of some sort (a
     /// name inside of a text or a comment is left alone). The span is cut round the name where it is wider.
     /// </summary>
-    private static void Place(List<SyntaxSpan>[] spans, int[] starts, ref int lineCursor, int at, int length, SyntaxKind kind)
+    private static void Place(List<SyntaxSpan>[] spans, int[] starts, ref int lineCursor, int at, int length, SyntaxKind kind,
+        int lineOffset = 0, int sharedBefore = 0, int sharedFrom = int.MaxValue)
     {
         while (lineCursor + 1 < starts.Length && starts[lineCursor + 1] <= at)
             lineCursor++;
@@ -881,11 +1057,12 @@ public sealed class HidlHighlighter : ICodeHighlighter
             lineCursor--;
 
         int line = lineCursor;
-        if (line < 0 || line >= spans.Length)
+        int targetLine = line + lineOffset;
+        if (line < 0 || line >= starts.Length || targetLine < 0 || targetLine >= spans.Length)
             return;
 
         int column = at - starts[line], end = column + length;
-        List<SyntaxSpan> row = spans[line];
+        List<SyntaxSpan> row = spans[targetLine];
 
         for (int i = 0; i < row.Count; i++)
         {
@@ -901,6 +1078,10 @@ public sealed class HidlHighlighter : ICodeHighlighter
 
             if (span.Kind == kind && span.Start <= column && spanEnd >= end)
                 return;
+
+            // Copy-on-write when patching a span list shared with the previous colouring
+            if (targetLine < sharedBefore || targetLine >= sharedFrom)
+                row = spans[targetLine] = [.. row];
 
             // The piece of the span before the name, the name, and the piece after it
             row.RemoveAt(i);

@@ -471,13 +471,71 @@ public partial class ListBox : UIComponent
 
     // how high a row came out the last time it was measured, for a program that fits so many rows to a height
     private float rowHeightSeen;
+    private UISkin? paintedSkin;
 
     /// <summary>How high a row is, as of the last time the list was measured, 0 before it was.</summary>
     public float RowHeightSeen => rowHeightSeen;
 
+    protected override long PaintVersion
+    {
+        get
+        {
+            // Lists driven by external per-item callbacks (Choice/Columns/Icon/Details/Inert) or in active scroll motion
+            // opt out so callback-driven content and scroll glide always stay fresh.
+            if (paintedSkin is not { } skin || shown != top || over.Active || draggingBar
+                || Choice is not null || Columns is not null || Icon is not null || Details is not null || Inert is not null)
+                return -1;
+
+            var hash = new HashCode();
+            hash.Add(Style);
+            hash.Add(Plain);
+            hash.Add(Rows);
+            hash.Add(TextScale);
+            hash.Add(Lead);
+            hash.Add(Note);
+            hash.Add(index);
+            hash.Add(shown);
+            hash.Add(IsSelected);
+            hash.Add(items.Length);
+            hash.Add(Headings.Length);
+            for (int h = 0; h < Headings.Length; h++)
+                hash.Add(Headings[h]);
+
+            float rowHeight = RowHeight(skin);
+            float headingHeight = HeadingHeight(rowHeight);
+            int hoveredRow = -1;
+            bool barLit = false;
+            if (IsHovered && Module is { } module)
+            {
+                Vector2 pointer = module.ToLocal(module.Compositor.Pointer.Position);
+                barLit = items.Length > Rows && ScrollBarGrabZone.Contains(pointer);
+                float down = Bounds.Max.Y - headingHeight - pointer.Y;
+                if (down >= 0.0f && rowHeight > 0.0f)
+                {
+                    int candidate = (int)MathF.Floor(shown + down / rowHeight);
+                    if (candidate >= 0 && candidate < items.Length)
+                        hoveredRow = candidate;
+                }
+            }
+
+            hash.Add(hoveredRow);
+            hash.Add(barLit);
+
+            int from = Math.Clamp((int)MathF.Floor(shown), 0, Math.Max(0, items.Length - 1));
+            int last = Math.Min(items.Length, (int)MathF.Floor(shown) + Rows + 1);
+            hash.Add(from);
+            hash.Add(last);
+            for (int i = from; i < last; i++)
+                hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(items[i])));
+
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
+        paintedSkin = skin;
         bool enabled = EnabledInHierarchy;
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
         float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
@@ -685,7 +743,7 @@ public partial class ListBox : UIComponent
         }
         else
         {
-            string text = row.Text[..tab];
+            ReadOnlySpan<char> text = row.Text.AsSpan(0, tab);
             list.Text(text, new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, ink, markup: false);
             left += skin.Font.Measure(text, scale, markup: false).X + KEY_PAD * 3.0f;
             list.Text(row.Text.AsSpan(tab + 1), new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, quiet, markup: false);

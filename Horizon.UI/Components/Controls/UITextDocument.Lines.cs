@@ -13,8 +13,11 @@ public sealed partial class UITextDocument
     /// </summary>
     public void CopyLines(int direction)
     {
-        if (AtEveryCaret(() => CopyLines(direction), EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            CopyLinesAtEvery(direction);
             return;
+        }
 
         Record(EditKind.Other);
         var (first, last) = SelectedLines();
@@ -32,14 +35,19 @@ public sealed partial class UITextDocument
         Touched();
     }
 
+    private void CopyLinesAtEvery(int direction) => EditAtEvery(EditKind.Other, () => CopyLines(direction));
+
     /// <summary>
     /// Ctrl+L, the caret's whole line selected, the end of the line and all, then the next line as well each time it's
     /// pressed again. A selection is widened to the whole lines it touches. At every caret.
     /// </summary>
     public void ExpandLineSelection()
     {
-        if (AtEveryCaret(ExpandLineSelection, null))
+        if (extras.Count > 0 && !batching)
+        {
+            ExpandLineSelectionAtEvery();
             return;
+        }
 
         UITextPosition start = SelectionStart, end = SelectionEnd;
 
@@ -51,6 +59,8 @@ public sealed partial class UITextDocument
         UITextPosition to = next < lines.Count ? new UITextPosition(next, 0) : new UITextPosition(lines.Count - 1, lines[^1].Length);
         Select(new UITextPosition(start.Line, 0), to);
     }
+
+    private void ExpandLineSelectionAtEvery() => MoveAtEvery(ExpandLineSelection);
 
     /// <summary>
     /// Ctrl+Shift+L, a caret on every place the selection is (on one line), or with nothing selected every place the word

@@ -1,3 +1,4 @@
+using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
 
 namespace Horizon.UI.Components;
@@ -11,10 +12,14 @@ public sealed partial class UITreeItem
     /// </summary>
     public bool Wraps { get; set; }
 
-    // The rows it's broken into and the width it was broken at, the first of them itself
+    // The rows it's broken into and the width, font and scale it was broken at, the first of them itself
     internal List<UITreeItem>? wrapped;
     internal float wrappedAt;
     internal string? wrappedOf;
+    internal UIFont? wrappedFont;
+    internal float wrappedScale;
+    internal string? wrapLine;
+    internal UITreeItem? wrapOwner;
 }
 
 // Notes that go onto more than one row. Every row of a tree is as tall as the next, so a note too long for one is broken
@@ -35,11 +40,14 @@ public partial class TreeView
         hasWraps = true;
         if (Module?.Compositor.Skin is not { } skin || wrapWidth <= 0.0f)
         {
+            item.wrapLine = null;
             rows.Add((item, depth));
             return;
         }
 
-        if (item.wrapped is null || item.wrappedAt != wrapWidth || !ReferenceEquals(item.wrappedOf, item.Text))
+        float scale = ScaleOf(skin);
+        if (item.wrapped is null || item.wrappedAt != wrapWidth || !ReferenceEquals(item.wrappedOf, item.Text)
+            || !ReferenceEquals(item.wrappedFont, skin.Font) || item.wrappedScale != scale)
             BreakNote(item, depth, skin);
 
         // The note keeps its whole text for whoever reads it, the rows it's broken into each say a line of it
@@ -62,8 +70,11 @@ public partial class TreeView
         item.wrapped = [];
         item.wrappedAt = wrapWidth;
         item.wrappedOf = item.Text;
+        item.wrappedFont = skin.Font;
+        item.wrappedScale = scale;
         if (wrapLines.Count <= 1)
         {
+            item.wrapLine = null;
             item.wrapped.Add(item);
             return;
         }
@@ -71,12 +82,21 @@ public partial class TreeView
         for (int i = 0; i < wrapLines.Count; i++)
         {
             string line = item.Text.Substring(wrapLines[i].Start, wrapLines[i].Length).Trim();
-            item.wrapped.Add(new UITreeItem(line, item.Icon.Length > 0 ? (i == 0 ? item.Icon : WRAP_ICON) : string.Empty)
+            if (i == 0)
+            {
+                // Keep the original item as the first row so selection identity and RowBounds(item) survive wrapping.
+                item.wrapLine = line;
+                item.wrapped.Add(item);
+                continue;
+            }
+
+            item.wrapped.Add(new UITreeItem(line, item.Icon.Length > 0 ? WRAP_ICON : string.Empty)
             {
                 Color = item.Color,
                 IconColor = item.IconColor,
                 Tooltip = item.Tooltip,
                 Tag = item.Tag,
+                wrapOwner = item,
             });
         }
     }

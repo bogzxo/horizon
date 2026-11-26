@@ -88,11 +88,8 @@ public partial class CodeEditor
             int length = document.LineAt(hint.Line).Length;
             float x = left + EndX(skin, scale, hint.Line, length) + PredictedShift(hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + 3)
                 + ArtWidthOn(hint.Line) + LensWidthOn(hint.Line, digit);
-            for (int i = 0; i < inlineHints.Count; i++)
-            {
-                if (inlineHints[i].Line == hint.Line)
-                    x += EndHintWidth(skin, scale, inlineHints[i].Text, digit);
-            }
+            for (int i = FirstInlineHintAtOrAfter(hint.Line); i < inlineHintsSorted.Count && inlineHintsSorted[i].Line == hint.Line; i++)
+                x += EndHintWidth(skin, scale, inlineHintsSorted[i].Text, digit);
             list.Text(hint.Text, new Vector2(x, TopOf(area, hint.Line, length, lineHeight)), scale, JumpColour(skin) with { W = 0.85f }, markup: false);
         }
     }

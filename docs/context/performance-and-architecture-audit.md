@@ -166,7 +166,7 @@
   - `Dusk`: `312 ms` first frame (`0` vs P1, `+3` vs B) | WS `120.7 MiB` | Priv `155.0 MiB` | Idle CPU `8.357%`
 
 ### Pass 3 — Horizon.UI Core, Compositor, Drawing, Glass, Containers & ColorPicker (`Horizon.Tests`: 2,395 passed / 0 failed)
-> **Strategy Note (Passes 6–8)**: Architectural changes for **SIMD vectorization**, **CPU cache-line locality (SoA / flat value tables)**, and **cache hit rate** are authorized for Passes 6–8, led by **`gemini-4-neon` (`thought_level: "xhigh"`)** architectural discovery scouts in place of `gemini-4-hydrogen`.
+> **Strategy Note (Passes 6–8)**: Architectural and low-level performance changes (SIMD vectorization, CPU cache-line locality/SoA, `Unsafe`/`MemoryMarshal`/`SkipLocalsInit`, NativeAOT devirtualization, lock/syscall elimination, GPU shader/barrier/bandwidth optimizations) are authorized for Passes 6–8, led by **`gemini-4-neon` (`thought_level: "high"`)** discovery scouts with open-ended scope to find where low-level changes save real performance.
 
 - **Changes**: `UICompositor.Dispose()` event unsubscription, `cursorBatch` & `renderer.Dispose()`, & full field cleanup; `ClearModuleReferences`, `KeepKeyboardSomewhere`, `PrunePointerReferences`, & `UIModule.ActivePopup` visibility/enablement focus/hover/hit-test hygiene; fixed `UICompositor.Input` `CS8602` warning & zero-alloc `HasOpenDialog`; `ResizePaintStamp` invalidation; O(1) cached `UIComponent.Module` + `protected internal ChildSpan` across compositor/layout/navigator; reusable `WeakReference` in `WheelTakenBy`; fixed `UIDrawList.Reuse` sibling texture bleed & multi-run slot boundaries; `ScreenShape`/`RoundRect`/`RoundOutline` HiDPI/non-uniform scale clamps; `UIRenderer : IDisposable` + cached `spriteRuns` + `GroupSubpixels` bypass; `UISkin.AtlasGeneration` & `GlyphAtlas` generation hashing + empty-region capture skip & `UIGlassPass` idle RT eviction; `UIFont` 256-entry quick lookup & 128x128 ASCII kerning table; `UIRichText.Code` `[ThreadStatic]` buffer; `UITooltip` 8-entry LRU; `UIInBetween` stationary frame bypass; `UISkin.TryGetRegion` unified negative cache; fixed final 2 `--checks` (`UIControlsCheck:275` horizontal `HueBounds` + `ColorPicker.PaintVersion` + zero-closure cell painting + stack hex parser); O(N²) `Font.Measure` elimination in `TabPanel`, `MenuBar`, & `StatusBar`; `MenuBar.Keys` span slicing + `MenuBar.IndexOfMenu` closure removal; `UIChooser` CTS disposal via `UIDialog.InternalClosed`; `TitleBar.UnitFor` scaling fix.
 - **Binaries**: `Horizon.Testing.exe` = `24.56 MiB` (`-0.01` vs P2, `-0.06` vs Baseline) | `Hex.exe` = `59.88 MiB` (`-0.02` vs P2, `-0.07` vs Baseline)
@@ -192,3 +192,25 @@
 - **`HexStartup`** (3 cold runs, median):
   - `Dawn`: `433 ms` first frame | WS `171.3 MiB` | Priv `203.0 MiB` | Idle CPU `2.918%`
   - `Dusk`: `321 ms` first frame | WS `120.8 MiB` | Priv `154.0 MiB` | Idle CPU `13.707%`
+
+### Pass 4 — CodeEditor, Controls, UITextDocument, Scripting & Input UX (`Horizon.Tests`: 2,501 passed / 0 failed)
+- **Changes**:
+  - `CodeEditor` & Overlays: fixed `UpdateFolds()` interval shifting/clamping and nested unfolding with reusable scratch lists; added bounds-safe shifted syntax/semantic span clamping; fixed `PaintSticky` horizontal `scrollX` clipping and gutter separation; eliminated outer-scope closure in `FindOccurrences()` (`StartOccurrenceScan`, 0-byte hot-path allocs); tightened compact default gutter width & left margin (`CodeEditor.Gutter.cs`, `CodeEditor.cs`); fixed Windows `Ctrl+Wheel` zoom to snap immediately without a delayed post-zoom jump (`smoothZoomChange`).
+  - Controls, `UITextDocument` & Scripting: fixed multi-cursor `Undo`/`Redo` (`ExtraCarets`), multi-caret paste newline preservation (`InsertAtEveryCaret`), and O(C²) → O(C) `EditAtEvery`; cached `OnScreenKeyboard.Measure` button state across ticks (eliminating 4 KB/turn per-frame UI-controls allocations); converted `Dropdown`, `MenuPanel`, and `CodeEditor` completion popups to smooth 1:1 `PreciseWheel` scrolling with end-of-list momentum/glide cancellation (`StopGlide` in `UICompositor.Input.cs`) and blocked background wheel bleed behind open popups.
+- **`Horizon.Testing --checks`**: `848 / 848` passed (`0` failed), median wall `37,452 ms`; binaries: `Horizon.Testing.exe` `24.73 MiB`, `Hex.exe` `60.14 MiB`
+- **`Horizon.Testing` scenes (Release NativeAOT)**:
+  - `ui-controls`: Startup `619 ms` | GPU `0.073 ms` | WS/Priv `121.1 / 204.1 MiB` | Render `6,411 fps` / `0.170 ms` / `0 B/t` | Sim `0.153 ms` / `21.7 B/t` (**-99.46%** vs P3 `4,039.7 B/t` & Baseline `4,037.9 B/t`) | Logic `0.033 ms` / `11.2 B/t` | Physics `0 / 0`
+  - `dungeon`: Startup `842 ms` | GPU `2.477 ms` (**-2.1%** vs P3 `2.530 ms`, **-31.1%** vs Baseline `3.597 ms`) | WS/Priv `170.9 / 370.2 MiB` | Render `394 fps` / `2.537 ms` / `0.5 B/t` | Sim `0.207 ms` / `73.6 B/t` | Logic `0.053 ms` / `71.7 B/t` | Physics `0.013 ms` / `0.8 B/t`
+  - `fluid`: Startup `675 ms` | GPU `0.067 ms` | WS/Priv `125.8 / 209.9 MiB` | Render `4,775.3 fps` / `0.220 ms` / `0 B/t` | Sim `1.187 ms` / `14.7 B/t` (**-38.8%** vs P3 `24.0 B/t`, **-97.5%** vs Baseline `593.1 B/t`) | Logic `0.060 ms` / `12.9 B/t` | Physics `0.973 ms` / `0 B/t`
+  - `meshes`: Startup `599 ms` | GPU `0.090 ms` | WS/Priv `119.7 / 202.2 MiB` | Render `4,891 fps` / `0.217 ms` / `0 B/t` | Sim `0.123 ms` / `22.2 B/t` | Logic `0.030 ms` / `11.2 B/t` | Physics `0 / 0`
+- **`Hex --selftest`** (`53,998 ms`, 7/7 passed):
+  - `idle`: Paint `0.416 ms` (`Layout 0.124`, `Compare 0.027`) | Quads/t `4,869` | Draw `0.299 ms` | `43,845` up (`2,740 KB`) | GPU `0.188 ms`
+  - `typing`: Paint `0.403 ms` (`Layout 0.051`) | Draw `0.292 ms` | `691,464` up (`43,217 KB`) | GPU `0.603 ms`
+  - `wheel`: Paint `0.439 ms` | Draw `0.279 ms` | `1,404,736` up (`87,796 KB`) | GPU `0.743 ms`
+  - `drag`: Paint `1.064 ms` | Draw `0.408 ms` | GPU `0.324 ms` (**-81.5%** vs P3 `1.748 ms`)
+  - `notebook`: Paint `0.651 ms` | Draw `0.215 ms` (**-5.7%** vs P3) | GPU `0.376 ms` (**-61.5%** vs P3 `0.977 ms`)
+  - `typing csharp`: `Avg 4.3 / Med 4.2 / P95 6.3 / Worst 27.9 ms` | `typing hor`: `Avg 4.2 / Med 4.2 / P95 4.5 / Worst 12.0 ms`
+  - `garbage`: designer `98 B/tick` | code `78 B/tick` | layoutCode `98 B/tick`
+- **`HexStartup`** (3 cold runs, median):
+  - `Dawn`: `396 ms` first frame | WS `171.3 MiB` | Priv `203.2 MiB` | Idle CPU `0.977%` (**-1.941pp** vs P3 `2.918%`, **-33.2%** vs Baseline `1.463%`)
+  - `Dusk`: `313 ms` first frame | WS `120.8 MiB` | Priv `154.1 MiB` | Idle CPU `7.361%`

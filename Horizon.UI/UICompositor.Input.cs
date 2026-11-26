@@ -517,7 +517,24 @@ public partial class UICompositor
             pendingPreciseX = pendingPreciseY = 0.0f;
         }
 
+        bool hasDirectInput = delta != 0.0f || across != 0.0f;
         bool glided = Glide(ref delta, ref across, ref precise);
+
+        UIComponent? currentPopup = null;
+        for (int i = snapshot.Length - 1; i >= 0; i--)
+        {
+            if (!snapshot[i].Enabled || !snapshot[i].Interactive || snapshot[i].HitTest(pointer) is null)
+                continue;
+            currentPopup = snapshot[i].ActivePopup;
+            break;
+        }
+        if (!ReferenceEquals(currentPopup, lastScrollPopup))
+        {
+            lastScrollPopup = currentPopup;
+            StopGlide();
+            if (glided && !hasDirectInput)
+                return;
+        }
 
         if (UIWheel.Tracing && (delta != 0.0f || across != 0.0f || UIWheel.Held || UIWheel.Gliding))
             UIWheel.Trace(FormattableString.Invariant($"tick={tick} dt={UIWheel.Seconds:F4} delta={delta:F4} across={across:F4} precise={precise} held={UIWheel.Held} gliding={UIWheel.Gliding}"));
@@ -537,17 +554,28 @@ public partial class UICompositor
             if (snapshot[i].HitTest(pointer) is not { } over)
                 continue;
 
+            // An open popup (a dropdown list, context menu, menu bar) absorbs scroll behind it instead of letting
+            // trackpad inertia or wheel events move the page underneath when the pointer drifts outside ListBounds.
+            UIComponent? activePopup = snapshot[i].ActivePopup;
+            if (activePopup is not null && !activePopup.PopupContains(snapshot[i].ToLocal(pointer)))
+            {
+                if (glided)
+                    StopGlide();
+                if (wheel != 0.0f) UIKeyboard.UseScroll();
+                if (across != 0.0f && tick >= 0) Volatile.Write(ref scrollXUsedOn, tick);
+                return;
+            }
+
             // Whatever is in front has the wheel over itself, used or not. Nothing behind it gets it, a window of settings
             // with nothing to scroll where the pointer is doesn't scroll the code under it
             UIComponent? taken = null;
-            UIComponent? activePopup = snapshot[i].ActivePopup;
             if (delta != 0.0f) taken = GiveWheel(over, activePopup, delta, ScrollSpeed, precise);
             if (across != 0.0f) taken = GiveWheelX(over, activePopup, across, ScrollSpeed, precise) ?? taken;
             WheelTakenBy = taken;
 
             // The glide is over once it has nowhere to go: nobody took it, or it ran into an end and bounced
             if (glided && (taken is null || taken.HasOverscroll))
-                glideX = glideY = 0.0f;
+                StopGlide();
             if (wheel != 0.0f) UIKeyboard.UseScroll();
             if (across != 0.0f && tick >= 0) Volatile.Write(ref scrollXUsedOn, tick);
             return;
@@ -575,6 +603,13 @@ public partial class UICompositor
     // Whether the fingers were on the trackpad the tick before, and the glide's speed in notches a second
     private bool fingersWereOn;
     private float glideX, glideY;
+    private UIComponent? lastScrollPopup;
+
+    private void StopGlide()
+    {
+        glideX = glideY = 0.0f;
+        Array.Clear(flickAt);
+    }
 
     /// <summary>
     /// Keeps the fingers' moves, starts a glide as they lift, and adds this tick's part of one that's going to the turn.
@@ -884,6 +919,9 @@ public partial class UICompositor
             secondaryWasDown = false;
             return;
         }
+
+        if ((pointer.Down && !pointerWasDown) || (pointer.SecondaryDown && !secondaryWasDown))
+            StopGlide();
 
         UIWheel.Seconds = dt;
         RouteScroll(snapshot, pointer.Position);

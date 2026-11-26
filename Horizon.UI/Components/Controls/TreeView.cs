@@ -79,12 +79,17 @@ public sealed partial class UITreeItem
     /// </summary>
     public bool Button { get; set; }
 
-    // The text cut short with dots to the room it had last, kept until the text or the room changes, and the detail's
+    // The text cut short with dots to the room it had last, kept until the text, room, font or scale changes, and the detail's
     internal string? fittedOf;
     internal float fittedRoom;
+    internal UIFont? fittedFont;
+    internal float fittedScale;
     internal string fitted = string.Empty;
     internal string? detailOf;
     internal float detailRoom;
+    internal UIFont? detailFont;
+    internal float detailScale;
+    internal bool detailMarkup;
     internal string detailFitted = string.Empty;
 
     /// <summary>The rows under it, null for none.</summary>
@@ -348,7 +353,7 @@ public partial class TreeView : UIComponent
             Flatten(item, null, 0);
 
         // The selected row went away, or into a row that closed
-        if (selected is not null && rows.FindIndex(row => row.Item == selected) < 0)
+        if (selected is not null && IndexOf(selected) < 0)
             selected = null;
         ForgetHidden();
     }
@@ -362,6 +367,7 @@ public partial class TreeView : UIComponent
             return;
         }
 
+        item.wrapLine = null;
         rows.Add((item, depth));
         if (!item.Expanded || item.Children is null)
             return;
@@ -867,9 +873,10 @@ public partial class TreeView : UIComponent
             float room = right - x - LEFT_PAD - badge;
             // The text, the detail and the note each measured once a row, the text only when there's one of the others to
             // fit beside it
+            string displayText = item.wrapLine ?? item.Text;
             float detailWidth = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale, item.DetailMarkup).X + DETAIL_GAP : 0.0f;
             Vector2 noteSize = item.Note.Length > 0 ? skin.Font.Measure(item.Note, scale, markup: false) : default;
-            float textWidth = detailWidth > 0.0f || item.Note.Length > 0 ? skin.Font.Measure(item.Text, scale, markup: false).X : 0.0f;
+            float textWidth = detailWidth > 0.0f || item.Note.Length > 0 ? skin.Font.Measure(displayText, scale, markup: false).X : 0.0f;
             if (detailWidth > 0.0f && textWidth + detailWidth > room)
                 detailWidth = MathF.Min(detailWidth, room * DETAIL_MOST);
 
@@ -1021,7 +1028,8 @@ public partial class TreeView : UIComponent
     // A row's detail cut to its room with dots, kept like its text is, nothing when not even the dots fit
     private static string FittedDetail(UITreeItem item, UISkin skin, float scale, float room)
     {
-        if (ReferenceEquals(item.detailOf, item.Detail) && item.detailRoom == room)
+        if (ReferenceEquals(item.detailOf, item.Detail) && item.detailRoom == room
+            && ReferenceEquals(item.detailFont, skin.Font) && item.detailScale == scale && item.detailMarkup == item.DetailMarkup)
             return item.detailFitted;
 
         // Icons in it are drawn whole or not at all, one too long for its room is cut short without them rather than in the
@@ -1030,7 +1038,7 @@ public partial class TreeView : UIComponent
         if (skin.Font.Measure(shown, scale, item.DetailMarkup).X > room)
             shown = skin.Font.Measure(CUT, scale, markup: false).X * 3.0f > room ? string.Empty : Cut(item.DetailMarkup ? WithoutIcons(shown) : shown, skin, scale, room);
 
-        (item.detailOf, item.detailRoom, item.detailFitted) = (item.Detail, room, shown);
+        (item.detailOf, item.detailRoom, item.detailFont, item.detailScale, item.detailMarkup, item.detailFitted) = (item.Detail, room, skin.Font, scale, item.DetailMarkup, shown);
         return shown;
     }
 
@@ -1077,12 +1085,13 @@ public partial class TreeView : UIComponent
 
     /// <summary>
     /// Helper method for a row's text as much as fits in so much room, cut with dots at the end, worked out once for the
-    /// text and the room and kept on the row.
+    /// text, room, font and scale and kept on the row.
     /// </summary>
     private static string Fitted(UITreeItem item, UISkin skin, float scale, float room)
     {
-        string text = item.Text;
-        if (ReferenceEquals(item.fittedOf, text) && item.fittedRoom == room)
+        string text = item.wrapLine ?? item.Text;
+        if (ReferenceEquals(item.fittedOf, text) && item.fittedRoom == room
+            && ReferenceEquals(item.fittedFont, skin.Font) && item.fittedScale == scale)
             return item.fitted;
 
         string shown = text;
@@ -1102,7 +1111,7 @@ public partial class TreeView : UIComponent
             shown = text[..low].TrimEnd() + CUT;
         }
 
-        (item.fittedOf, item.fittedRoom, item.fitted) = (text, room, shown);
+        (item.fittedOf, item.fittedRoom, item.fittedFont, item.fittedScale, item.fitted) = (text, room, skin.Font, scale, shown);
         return shown;
     }
 

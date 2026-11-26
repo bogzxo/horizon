@@ -1,3 +1,5 @@
+using System.Buffers;
+
 namespace Horizon.UI.Scripting;
 
 /// <summary>
@@ -77,6 +79,8 @@ public static class SemanticWrites
     }
 
     private static readonly string[] Compounds = ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "??=", "~=", "^^=", "++", "--"];
+    private static readonly string[] CallStarters = ["return", "new", "await", "throw", "yield"];
+    private static readonly SearchValues<char> CallPunctuation = SearchValues.Create(".=(!");
 
     // Whether a method span is where it's declared rather than called, the first name on its line with nothing before it
     // that a call would have (a dot, an =, a bracket, return, new, await) and a bracket or a < after it
@@ -88,11 +92,14 @@ public static class SemanticWrites
             return false;
 
         ReadOnlySpan<char> ahead = line.AsSpan(0, span.Start);
-        if (ahead.IndexOfAny(".=(!") >= 0 || ahead.Trim().Length == 0)
+        if (ahead.IndexOfAny(CallPunctuation) >= 0)
             return false;
-        foreach (string word in (string[])["return", "new", "await", "throw", "yield"])
+        ReadOnlySpan<char> trimmed = ahead.Trim();
+        if (trimmed.Length == 0)
+            return false;
+        foreach (string word in CallStarters)
         {
-            if (ahead.Trim().StartsWith(word, StringComparison.Ordinal))
+            if (trimmed.StartsWith(word, StringComparison.Ordinal))
                 return false;
         }
 

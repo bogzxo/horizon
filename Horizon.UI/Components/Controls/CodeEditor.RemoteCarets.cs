@@ -120,7 +120,7 @@ public partial class CodeEditor
         {
             UICodeRemoteCaret remote = RemoteCarets[i];
             list.BeginPart(HashCode.Combine(nameof(RemoteCarets), remote.Id));
-            if (RemotePoint(remote.Line, remote.Column) is { } caret && caret.X >= area.Min.X && caret.X <= area.Max.X)
+            if (RemotePoint(skin, scale, area, left, lineHeight, first, last, remote.Line, remote.Column) is { } caret && caret.X >= area.Min.X && caret.X <= area.Max.X)
             {
                 list.Rect(new UIRect(caret - new Vector2(0, lineHeight), caret + new Vector2(2, 0)), remote.Colour);
                 string label = string.IsNullOrEmpty(remote.Label) ? remote.Id : remote.Label;
@@ -144,7 +144,7 @@ public partial class CodeEditor
                 }
             }
 
-            if (remote.PointerLine is { } line && remote.PointerColumn is { } column && RemotePoint(line, column) is { } remotePointer)
+            if (remote.PointerLine is { } line && remote.PointerColumn is { } column && RemotePoint(skin, scale, area, left, lineHeight, first, last, line, column) is { } remotePointer)
             {
                 list.BeginPart(HashCode.Combine(nameof(RemoteCarets), remote.Id, nameof(remote.PointerColumn)));
                 // A triangular pointer tip stays distinguishable when the caret and mouse share a column.
@@ -156,14 +156,14 @@ public partial class CodeEditor
                 }
             }
         }
+    }
 
-        Vector2? RemotePoint(int line, int column)
-        {
-            if ((uint)line >= document.LineCount || IsHidden(line, out _))
-                return null;
-            column = Math.Clamp(column, 0, document.LineAt(line).Length);
-            int row = RowOf(line, column);
-            return row < first || row > last ? null : new Vector2(left + ColumnX(skin, scale, line, column), RowTop(area, row, lineHeight));
-        }
+    private Vector2? RemotePoint(UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, int last, int line, int column)
+    {
+        if ((uint)line >= document.LineCount || IsHidden(line, out _))
+            return null;
+        column = Math.Clamp(column, 0, document.LineAt(line).Length);
+        int row = RowOf(line, column);
+        return row < first || row > last ? null : new Vector2(left + ColumnX(skin, scale, line, column), RowTop(area, row, lineHeight));
     }
 }

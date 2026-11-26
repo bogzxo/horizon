@@ -83,6 +83,9 @@ public class Table : UIComponent
 
     // The rows in the order they are shown, by where they are in Rows
     private readonly List<int> order = [];
+    private List<UITableCell[]> rows = [];
+    private RowComparer? rowComparer;
+    private UISkin? paintedSkin;
     private float scrollX, scrollY, sinceClick = float.MaxValue;
     private UIScrollEase ease, easeX;
     internal float HorizontalScroll => scrollX;
@@ -97,7 +100,15 @@ public class Table : UIComponent
     public List<UITableColumn> Columns { get; set; } = [];
 
     /// <summary>The rows, a cell for every column each.</summary>
-    public List<UITableCell[]> Rows { get; set; } = [];
+    public List<UITableCell[]> Rows
+    {
+        get => rows;
+        set
+        {
+            rows = value ?? [];
+            Refresh();
+        }
+    }
 
     /// <summary>Row indices in their current displayed order, including rows outside the viewport.</summary>
     public IReadOnlyList<int> RowOrder => order;
@@ -165,15 +176,24 @@ public class Table : UIComponent
     /// </summary>
     public UIRect? CellBounds(int row, int column)
     {
-        if (Module?.Compositor.Skin is not { } skin || column < 0 || column >= Columns.Count || order.IndexOf(row) < 0)
+        if (Module?.Compositor.Skin is not { } skin || column < 0 || column >= Columns.Count)
+            return null;
+
+        int shown = order.IndexOf(row);
+        if (shown < 0)
             return null;
 
         float line = LineHeight(skin);
-        float top = Bounds.Max.Y - line - order.IndexOf(row) * line + scrollY;
+        float top = Bounds.Max.Y - line - shown * line + scrollY;
         float left = ColumnLeft(column);
         var cell = new UIRect(new Vector2(left, top - line), new Vector2(left + Columns[column].Width, top));
 
-        return cell.Min.Y < Bounds.Min.Y - 0.5f || cell.Max.Y > Bounds.Max.Y - line + 0.5f || cell.Max.X > Bounds.Max.X + 0.5f ? null : cell;
+        if (cell.Min.Y < Bounds.Min.Y - 0.5f || cell.Max.Y > Bounds.Max.Y - line + 0.5f)
+            return null;
+        if (cell.Max.X <= Bounds.Min.X + 0.5f || cell.Min.X >= Bounds.Max.X - 0.5f)
+            return null;
+
+        return new UIRect(new Vector2(MathF.Max(cell.Min.X, Bounds.Min.X), cell.Min.Y), new Vector2(MathF.Min(cell.Max.X, Bounds.Max.X), cell.Max.Y));
     }
 
     /// <summary>
@@ -199,27 +219,35 @@ public class Table : UIComponent
         }
     }
 
+    private sealed class RowComparer(Table owner) : IComparer<int>
+    {
+        public int Compare(int a, int b)
+        {
+            int column = owner.sortColumn;
+            List<UITableCell[]> source = owner.rows;
+            string x = source[a].Length > column ? source[a][column].Text ?? string.Empty : string.Empty;
+            string y = source[b].Length > column ? source[b][column].Text ?? string.Empty : string.Empty;
+            int compared = double.TryParse(x, out double nx) && double.TryParse(y, out double ny) ? nx.CompareTo(ny) : string.Compare(x, y, StringComparison.OrdinalIgnoreCase);
+            return owner.sortDown ? -compared : compared;
+        }
+    }
+
     /// <summary>Shows the rows as they are now, sorted the way they were.</summary>
     public void Refresh()
     {
         order.Clear();
-        for (int i = 0; i < Rows.Count; i++)
+        for (int i = 0; i < rows.Count; i++)
             order.Add(i);
 
         if (sortColumn >= 0 && sortColumn < Columns.Count)
-        {
-            int column = sortColumn;
-            order.Sort((a, b) =>
-            {
-                string x = Rows[a].Length > column ? Rows[a][column].Text ?? string.Empty : string.Empty;
-                string y = Rows[b].Length > column ? Rows[b][column].Text ?? string.Empty : string.Empty;
-                int compared = double.TryParse(x, out double nx) && double.TryParse(y, out double ny) ? nx.CompareTo(ny) : string.Compare(x, y, StringComparison.OrdinalIgnoreCase);
-                return sortDown ? -compared : compared;
-            });
-        }
+            order.Sort(rowComparer ??= new RowComparer(this));
 
-        if (selected.Row >= Rows.Count)
+        if (selected.Row >= rows.Count)
             selected = (-1, -1);
+        if (hovered.Row >= rows.Count)
+            hovered = (-1, -1);
+        if (lastClicked.Row >= rows.Count)
+            lastClicked = (-1, -1);
     }
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
@@ -466,15 +494,79 @@ public class Table : UIComponent
         ease.Over.Step(scrollDt, MotionSpeed);
 
         hovered = Module is { } module && IsHovered && CellAt(module.ToLocal(module.Compositor.Pointer.Position)) is var (row, column) ? (row, column) : (-1, -1);
-        Tooltip = hovered.Row >= 0 && hovered.Column >= 0 && hovered.Column < Rows[hovered.Row].Length ? Rows[hovered.Row][hovered.Column].Tooltip ?? string.Empty
-            : hovered.Row == -1 && hovered.Column >= 0 ? Columns[hovered.Column].Tooltip : string.Empty;
+        Tooltip = hovered.Row >= 0 && hovered.Row < rows.Count && hovered.Column >= 0 && hovered.Column < rows[hovered.Row].Length ? rows[hovered.Row][hovered.Column].Tooltip ?? string.Empty
+            : hovered.Row == -1 && hovered.Column >= 0 && hovered.Column < Columns.Count ? Columns[hovered.Column].Tooltip : string.Empty;
     }
 
     protected override Vector2 Measure(UISkin skin) => new(600.0f, LineHeight(skin) * 12.0f);
 
+    protected override long PaintVersion
+    {
+        get
+        {
+            if (paintedSkin is not { } skin || ease.Goal is not null || easeX.Goal is not null || ease.Over.Active || resizing >= 0)
+                return -1;
+
+            var hash = new HashCode();
+            hash.Add(Color);
+            hash.Add(RowHeight);
+            hash.Add(TextScale);
+            hash.Add(FreezeFirst);
+            hash.Add(BarInset);
+            hash.Add(scrollX);
+            hash.Add(scrollY);
+            hash.Add(selected);
+            hash.Add(hovered);
+            hash.Add(sortColumn);
+            hash.Add(sortDown);
+            hash.Add(Columns.Count);
+            for (int c = 0; c < Columns.Count; c++)
+            {
+                UITableColumn column = Columns[c];
+                hash.Add(column.Title);
+                hash.Add(column.Width);
+                hash.Add(column.Align);
+            }
+
+            hash.Add(order.Count);
+            hash.Add(rows.Count);
+
+            UIRect bounds = Bounds;
+            float line = LineHeight(skin);
+            int first = Math.Max(0, (int)(scrollY / line));
+            int last = Math.Min(order.Count - 1, (int)(scrollY / line) + (int)(bounds.Height / line) + 1);
+            hash.Add(first);
+            hash.Add(last);
+
+            for (int c = 0; c < Columns.Count; c++)
+            {
+                float left = ColumnLeft(c), right = left + Columns[c].Width;
+                if (right < bounds.Min.X || left > bounds.Max.X)
+                    continue;
+
+                hash.Add(c);
+                for (int i = first; i <= last; i++)
+                {
+                    int row = order[i];
+                    hash.Add(row);
+                    if ((uint)row < (uint)rows.Count && c < rows[row].Length)
+                    {
+                        UITableCell cell = rows[row][c];
+                        hash.Add(cell.Text);
+                        hash.Add(cell.Color);
+                        hash.Add(cell.Fill);
+                    }
+                }
+            }
+
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
+        paintedSkin = skin;
         UIRect bounds = Bounds;
         float line = LineHeight(skin), scale = ScaleOf(skin);
 
@@ -529,7 +621,7 @@ public class Table : UIComponent
                     // By the cell, not by how many were drawn before it, which scrolling changes
                     list.BeginPart(HashCode.Combine(row, c) & 0x3FFFFFFF);
 
-                    UITableCell value = c < Rows[row].Length ? Rows[row][c] : default;
+                    UITableCell value = (uint)row < (uint)rows.Count && c < rows[row].Length ? rows[row][c] : default;
                     if (frozen)
                         list.Rect(cell, header);
                     // Keep paint slots stable as hover, selection, and cell fills change. Inserting a quad here

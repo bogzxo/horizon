@@ -26,7 +26,11 @@ public class ToggleButton : UIComponent
         get => style;
         set
         {
-            style = StyleStem(value, "_on", "_off");
+            string stem = StyleStem(value, "_on", "_off");
+            if (stem == style)
+                return;
+
+            style = stem;
             onStyle = style + "_on";
             offStyle = style + "_off";
         }
@@ -88,7 +92,10 @@ public class ToggleButton : UIComponent
         list.Box(Bounds.Shrink(new UIEdges(-6.0f, -4.0f)), lit ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
         if (skin.TryGetRegion(State ? onStyle : offStyle, out var region))
+        {
+            knob = State ? 1.0f : 0.0f;
             list.Region(region, indicator, tint);
+        }
         else
             indicator = PaintSwitch(list, skin, side, tint);
 
@@ -100,6 +107,24 @@ public class ToggleButton : UIComponent
             skin.TextColor * tint);
 
         PaintSelection(list);
+    }
+
+    protected override long PaintVersion
+    {
+        get
+        {
+            float wanted = State ? 1.0f : 0.0f;
+            if (knob != wanted)
+                return -1;
+
+            var hash = new HashCode();
+            hash.Add(style);
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(Label)));
+            hash.Add(LabelScale);
+            hash.Add(State);
+            hash.Add(IsSelected);
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
     }
 
     // Where the knob of the switch is, 0 off and 1 on, eased to the state as it's painted

@@ -66,6 +66,7 @@ public static partial class CodeLanguages
 
     // The colours a language has of its own over the skin's, by its grammar's scope, for a dark field and a light one
     private static readonly Dictionary<string, (UISyntaxColors Dark, UISyntaxColors Light)> ownColors = new(StringComparer.Ordinal);
+    private static volatile bool hasOwnColors;
 
     /// <summary>
     /// Gives a language colours of its own (source.cs in Visual Studio's, <see cref="UISyntaxColors.VisualStudioDark"/>),
@@ -74,19 +75,28 @@ public static partial class CodeLanguages
     public static void SetColors(string scopeName, UISyntaxColors dark, UISyntaxColors light)
     {
         lock (gate)
+        {
             ownColors[scopeName] = (dark, light);
+            hasOwnColors = true;
+        }
     }
 
     /// <summary>Takes the colours a language was given of its own away, it's the skin's again.</summary>
     public static void ForgetColors(string scopeName)
     {
         lock (gate)
+        {
             ownColors.Remove(scopeName);
+            hasOwnColors = ownColors.Count > 0;
+        }
     }
 
     /// <summary>The colours code of a language is painted in on a skin's palette, its own when it was given some, the palette's otherwise.</summary>
     public static UISyntaxColors ColorsFor(ICodeHighlighter? highlighter, UIPalette palette)
     {
+        if (!hasOwnColors)
+            return palette.Syntax;
+
         string? scope = highlighter switch
         {
             TextMateHighlighter textMate => textMate.ScopeName,
@@ -94,9 +104,12 @@ public static partial class CodeLanguages
             _ => null
         };
 
+        if (scope is null)
+            return palette.Syntax;
+
         lock (gate)
         {
-            if (scope is null || ownColors.Count == 0 || !ownColors.TryGetValue(scope, out var own))
+            if (ownColors.Count == 0 || !ownColors.TryGetValue(scope, out var own))
                 return palette.Syntax;
             return palette.LightField ? own.Light : own.Dark;
         }

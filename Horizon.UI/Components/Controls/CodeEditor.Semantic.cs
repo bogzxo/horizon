@@ -66,11 +66,11 @@ public partial class CodeEditor
         if (semanticLines.Length == 0)
             return null;
 
-        if (line < semanticTexts.Length && semanticLines[line] is { } here && string.Equals(semanticTexts[line], text, StringComparison.Ordinal))
+        if ((uint)line < (uint)semanticTexts.Length && (uint)line < (uint)semanticLines.Length && semanticLines[line] is { } here && string.Equals(semanticTexts[line], text, StringComparison.Ordinal))
             return here;
 
         int was = line - (document.LineCount - semanticLines.Length);
-        return was >= 0 && was < semanticLines.Length && semanticLines[was] is { } moved && string.Equals(semanticTexts[was], text, StringComparison.Ordinal) ? moved : null;
+        return (uint)was < (uint)semanticLines.Length && (uint)was < (uint)semanticTexts.Length && semanticLines[was] is { } moved && string.Equals(semanticTexts[was], text, StringComparison.Ordinal) ? moved : null;
     }
 
     /// <summary>

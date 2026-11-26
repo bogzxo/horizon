@@ -25,10 +25,34 @@ public partial class CodeEditor
         {
             lenses = value ?? [];
             lensBoxes.Clear();
+            lensesSorted.Clear();
+            if (lenses.Count > 0)
+            {
+                if (lensesSorted.Capacity < lenses.Count)
+                    lensesSorted.Capacity = lenses.Count;
+                for (int i = 0; i < lenses.Count; i++)
+                    lensesSorted.Add((i, lenses[i]));
+                lensesSorted.Sort(static (a, b) => a.Lens.Line != b.Lens.Line ? a.Lens.Line.CompareTo(b.Lens.Line) : a.Index.CompareTo(b.Index));
+            }
         }
     }
 
     private IReadOnlyList<UICodeLens> lenses = [];
+    private readonly List<(int Index, UICodeLens Lens)> lensesSorted = [];
+
+    private int FirstLensAtOrAfter(int line)
+    {
+        int low = 0, high = lensesSorted.Count;
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+            if (lensesSorted[mid].Lens.Line < line)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+        return low;
+    }
 
     /// <summary>Called with the lens and which of its actions was pressed. Null and the lenses are only words.</summary>
     public Action<UICodeLens, int>? OnLensPressed { get; set; }
@@ -114,19 +138,18 @@ public partial class CodeEditor
         Vector2 pointer = IsHovered && Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : new Vector2(float.MinValue);
         float gap = font.Measure(LENS_GAP, scale, markup: false).X;
 
-        for (int i = 0; i < lenses.Count; i++)
+        for (int s = FirstLensAtOrAfter(firstLine); s < lensesSorted.Count; s++)
         {
-            UICodeLens lens = lenses[i];
-            if (lens.Actions is not { Length: > 0 } || lens.Line < firstLine || lens.Line > lastLine || lens.Line >= document.LineCount || IsHidden(lens.Line, out _))
+            var (i, lens) = lensesSorted[s];
+            if (lens.Line > lastLine)
+                break;
+            if (lens.Actions is not { Length: > 0 } || lens.Line < 0 || lens.Line >= document.LineCount || IsHidden(lens.Line, out _))
                 continue;
 
             int length = document.LineAt(lens.Line).Length;
             float x = left + EndX(skin, scale, lens.Line, length) + digit * (SwatchesOn(lens.Line) * 2 + 2) + ArtWidthOn(lens.Line);
-            for (int h = 0; h < inlineHints.Count; h++)
-            {
-                if (inlineHints[h].Line == lens.Line)
-                    x += font.Measure(inlineHints[h].Text, scale, markup: false).X + digit * 2;
-            }
+            for (int h = FirstInlineHintAtOrAfter(lens.Line); h < inlineHintsSorted.Count && inlineHintsSorted[h].Line == lens.Line; h++)
+                x += font.Measure(inlineHintsSorted[h].Text, scale, markup: false).X + digit * 2;
 
             float top = TopOf(area, lens.Line, length, lineHeight);
             for (int a = 0; a < lens.Actions.Length; a++)

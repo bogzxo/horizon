@@ -36,9 +36,9 @@ public partial class CodeEditor
             if (Covers(moreErrors[i], at))
                 return true;
         }
-        for (int i = 0; i < diagnostics.Count; i++)
+        for (int i = FirstDiagnosticAtOrAfter(at.Line); i < diagnosticsSorted.Length && diagnosticsSorted[i].Line == at.Line; i++)
         {
-            if (Covers(diagnostics[i], at))
+            if (Covers(diagnosticsSorted[i], at))
                 return true;
         }
         return false;

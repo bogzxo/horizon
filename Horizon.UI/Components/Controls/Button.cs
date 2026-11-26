@@ -66,6 +66,9 @@ public class Button : UIComponent
         get => style;
         set
         {
+            if (style == value)
+                return;
+
             style = value;
             pressedStyle = value + "_pressed";
             hoverStyle = value + "_hover";

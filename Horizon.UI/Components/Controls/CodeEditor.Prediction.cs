@@ -118,7 +118,7 @@ public partial class CodeEditor
     public void ApplySharedText(string text, Func<string, string, string, string?> rebase,
         Func<UITextPosition, UITextPosition>? move, IReadOnlyList<UITextEdit>? changes = null)
     {
-        if (document.Text == text)
+        if (document.TextEquals(text))
             return;
         if (move is null || prediction is not { } existing)
         {

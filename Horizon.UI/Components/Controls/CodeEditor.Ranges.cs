@@ -20,33 +20,65 @@ public partial class CodeEditor
     public IReadOnlyList<UICodeRangeHighlight> RangeHighlights
     {
         get => rangeHighlights;
-        set => rangeHighlights = value ?? [];
+        set
+        {
+            rangeHighlights = value ?? [];
+            rangeHighlightsSorted.Clear();
+            if (rangeHighlights.Count > 0)
+            {
+                if (rangeHighlightsSorted.Capacity < rangeHighlights.Count)
+                    rangeHighlightsSorted.Capacity = rangeHighlights.Count;
+                for (int i = 0; i < rangeHighlights.Count; i++)
+                    rangeHighlightsSorted.Add(rangeHighlights[i]);
+                rangeHighlightsSorted.Sort(static (a, b) => a.Line.CompareTo(b.Line));
+            }
+        }
     }
 
     private IReadOnlyList<UICodeRangeHighlight> rangeHighlights = [];
+    private readonly List<UICodeRangeHighlight> rangeHighlightsSorted = [];
+
+    private int FirstRangeHighlightAtOrAfter(int line)
+    {
+        int low = 0, high = rangeHighlightsSorted.Count;
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+            if (rangeHighlightsSorted[mid].Line < line)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+        return low;
+    }
 
     /// <summary>Helper method to paint the pieces lit on the lines in sight, a box for each row a piece is on.</summary>
     private void PaintRanges(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int firstLine, int lastLine)
     {
-        for (int i = 0; i < rangeHighlights.Count; i++)
+        if (rangeHighlightsSorted.Count == 0)
+            return;
+
+        for (int i = FirstRangeHighlightAtOrAfter(firstLine); i < rangeHighlightsSorted.Count; i++)
         {
-            UICodeRangeHighlight range = rangeHighlights[i];
-            if (range.Length <= 0 || range.Line < firstLine || range.Line > lastLine || range.Line >= document.LineCount || IsHidden(range.Line, out _))
+            UICodeRangeHighlight range = rangeHighlightsSorted[i];
+            if (range.Line > lastLine)
+                break;
+            if (range.Length <= 0 || range.Line < 0 || range.Line >= document.LineCount || IsHidden(range.Line, out _))
                 continue;
 
             string text = document.LineAt(range.Line);
             int from = Math.Clamp(range.Column, 0, text.Length), to = Math.Clamp(range.Column + range.Length, 0, text.Length);
             while (from < to)
             {
-                // To the end of the row the piece starts on, the next row's start when the line is wrapped there
+                // To the end of the row the piece starts on, bounded by that row's own End rather than the next row's Start
+                // so virtual rows (predicted/block rows) after a line never truncate the highlight.
                 int row = RowOf(range.Line, from);
-                int rowEnd = row + 1 < rows.Count && rows[row + 1].Line == range.Line ? rows[row + 1].Start : int.MaxValue;
+                int rowEnd = row < rows.Count && rows[row].Line == range.Line ? Math.Min(rows[row].End, text.Length) : text.Length;
                 int end = Math.Min(to, rowEnd);
+                if (end <= from)
+                    break;
 
-                float top = TopOf(area, range.Line, from, lineHeight);
-                float x0 = ColumnX(skin, scale, range.Line, from);
-                float x1 = ColumnX(skin, scale, range.Line, end - 1) + Width(skin, scale, text.AsSpan(end - 1, 1));
-                list.Rect(new UIRect(new Vector2(left + x0, top - lineHeight), new Vector2(left + x1, top)), range.Colour);
+                list.Rect(Piece(skin, scale, area, left, lineHeight, range.Line, from, end), range.Colour);
                 from = end;
             }
         }

@@ -34,8 +34,11 @@ public sealed partial class UITextDocument
             return;
         }
 
-        if (AtEveryCaret(() => CommentLines(wanted), EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            CommentLinesAtEvery(wanted);
             return;
+        }
 
         Record(EditKind.Other);
         var (first, last) = SelectedLines();
@@ -102,8 +105,11 @@ public sealed partial class UITextDocument
             return;
         }
 
-        if (AtEveryCaret(ToggleBlockComment, EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            ToggleBlockCommentAtEvery();
             return;
+        }
 
         Record(EditKind.Other);
 
@@ -155,8 +161,11 @@ public sealed partial class UITextDocument
     // thing on the last) wrapped in one, or unwrapped when that's what they are already
     private void ToggleLinesAsBlock()
     {
-        if (AtEveryCaret(ToggleLinesAsBlock, EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            ToggleLinesAsBlockAtEvery();
             return;
+        }
 
         var (first, last) = SelectedLines();
         while (first < last && lines[first].Trim().Length == 0) first++;
@@ -243,4 +252,8 @@ public sealed partial class UITextDocument
         Caret = Pulled(Caret);
         Anchor = Pulled(Anchor);
     }
+
+    private void CommentLinesAtEvery(bool? wanted) => EditAtEvery(EditKind.Other, () => CommentLines(wanted));
+    private void ToggleBlockCommentAtEvery() => EditAtEvery(EditKind.Other, ToggleBlockComment);
+    private void ToggleLinesAsBlockAtEvery() => EditAtEvery(EditKind.Other, ToggleLinesAsBlock);
 }

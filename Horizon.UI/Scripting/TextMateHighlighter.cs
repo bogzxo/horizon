@@ -125,12 +125,27 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         while (same < limit - first && string.Equals(lines[lines.Length - 1 - same], last.Lines[was - 1 - same], StringComparison.Ordinal))
             same++;
 
+        // If every remaining line matches the prefix of the previous colouring (e.g. rapid tail deletions or no change),
+        // reuse them directly without indexing past the shrunk line array.
+        if (first >= count)
+        {
+            for (int line = 0; line < count; line++)
+            {
+                spans[line] = Kept(last.Spans[line], copyKept);
+                if (line < starts.Length)
+                    starts[line] = last.Starts[line];
+            }
+
+            return spans;
+        }
+
         // From where the first changed line started last time, or the last line again for lines added after the end
-        int from = Math.Min(first, was - 1);
+        int from = Math.Clamp(first, 0, Math.Min(was - 1, count - 1));
         for (int line = 0; line < from; line++)
         {
             spans[line] = Kept(last.Spans[line], copyKept);
-            starts[line] = last.Starts[line];
+            if (line < starts.Length)
+                starts[line] = last.Starts[line];
         }
 
         ReadFrom(lines, starts, spans, from, last.Starts[from], last, lines.Length - same, copyKept);
@@ -146,22 +161,28 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         for (int line = from; line < spans.Length; line++)
         {
             int old = line - shift;
-            if (line >= sameFrom && old >= 0 && old < last.Starts.Length && depth == last.Starts[old].Depth && Equals(state, last.Starts[old].State))
+            int remaining = spans.Length - line;
+            if (line >= sameFrom && old >= 0 && old < last.Starts.Length
+                && old + remaining <= last.Spans.Length && old + remaining <= last.Starts.Length
+                && depth == last.Starts[old].Depth && Equals(state, last.Starts[old].State))
             {
                 for (; line < spans.Length; line++)
                 {
-                    spans[line] = Kept(last.Spans[line - shift], copyKept);
-                    starts[line] = last.Starts[line - shift];
+                    int oldLine = line - shift;
+                    spans[line] = Kept(last.Spans[oldLine], copyKept);
+                    if (line < starts.Length)
+                        starts[line] = last.Starts[oldLine];
                 }
 
                 return;
             }
 
-            starts[line] = new CodeLineStart(depth, state);
+            if (line < starts.Length)
+                starts[line] = new CodeLineStart(depth, state);
 
             // The line as it was last time, a long one is read again from just before what changed in it
-            int was = old >= 0 && old < last.Lines.Length ? old : Math.Min(line, last.Lines.Length - 1);
-            bool known = was >= 0 && was < last.Spans.Length;
+            int was = old >= 0 && old < last.Lines.Length ? old : last.Lines.Length > 0 ? Math.Clamp(line, 0, last.Lines.Length - 1) : -1;
+            bool known = was >= 0 && was < last.Spans.Length && was < last.Lines.Length;
             spans[line] = ReadWhole((line < lines.Length ? lines[line] : string.Empty).AsMemory(), ref state, ref depth,
                 known ? last.Spans[was] : null, known ? last.Lines[was] : null);
         }

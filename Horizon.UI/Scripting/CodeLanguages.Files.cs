@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 
 using TextMateSharp.Grammars;
@@ -87,6 +88,14 @@ public static partial class CodeLanguages
         { "python", "python" }, { "node", "javascript" }, { "nodejs", "javascript" }, { "deno", "typescript" }, { "bun", "javascript" },
         { "ruby", "ruby" }, { "perl", "perl" }, { "php", "php" }, { "lua", "lua" }, { "pwsh", "powershell" }, { "Rscript", "r" }
     };
+
+    private static readonly Dictionary<string, string>.AlternateLookup<ReadOnlySpan<char>> byInterpreterBySpan =
+        byInterpreter.GetAlternateLookup<ReadOnlySpan<char>>();
+
+    private static readonly SearchValues<char> GlobSpecials = SearchValues.Create("*?[{");
+    private static readonly SearchValues<char> GlobExtensionSpecials = SearchValues.Create("*?[{/");
+    private static readonly SearchValues<char> ShebangSeparators = SearchValues.Create(" \t");
+    private static readonly SearchValues<char> VersionSuffixChars = SearchValues.Create("0123456789.");
 
     /// <summary>How many times what decides a file's language changed, an override, the associations or a registered extension, for whoever colours open files to know to look again.</summary>
     public static int Version { get; private set; }
@@ -351,24 +360,56 @@ public static partial class CodeLanguages
         if (!firstLine.StartsWith("#!", StringComparison.Ordinal))
             return null;
 
-        string[] words = firstLine[2..].Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length == 0)
+        ReadOnlySpan<char> rest = TrimStartAny(firstLine.AsSpan(2), ShebangSeparators);
+        if (rest.IsEmpty)
             return null;
 
-        string program = words[0][(words[0].LastIndexOf('/') + 1)..];
-        if (program == "env")
-            program = words.Skip(1).FirstOrDefault(word => !word.StartsWith('-') && !word.Contains('=')) ?? string.Empty;
+        int sep = rest.IndexOfAny(ShebangSeparators);
+        ReadOnlySpan<char> first = sep < 0 ? rest : rest[..sep];
+        ReadOnlySpan<char> program = first[(first.LastIndexOf('/') + 1)..];
 
-        program = program.TrimEnd("0123456789.".ToCharArray());
-        return byInterpreter.TryGetValue(program, out string? id) ? ForLanguageId(id) : null;
+        if (program.SequenceEqual("env"))
+        {
+            program = ReadOnlySpan<char>.Empty;
+            ReadOnlySpan<char> tail = sep < 0 ? ReadOnlySpan<char>.Empty : rest[(sep + 1)..];
+            while (!tail.IsEmpty)
+            {
+                tail = TrimStartAny(tail, ShebangSeparators);
+                if (tail.IsEmpty)
+                    break;
+                int nextSep = tail.IndexOfAny(ShebangSeparators);
+                ReadOnlySpan<char> word = nextSep < 0 ? tail : tail[..nextSep];
+                if (!word.StartsWith('-') && !word.Contains('='))
+                {
+                    program = word;
+                    break;
+                }
+                tail = nextSep < 0 ? ReadOnlySpan<char>.Empty : tail[(nextSep + 1)..];
+            }
+        }
+
+        program = TrimEndAny(program, VersionSuffixChars);
+        return !program.IsEmpty && byInterpreterBySpan.TryGetValue(program, out string? id) ? ForLanguageId(id) : null;
+    }
+
+    private static ReadOnlySpan<char> TrimStartAny(ReadOnlySpan<char> span, SearchValues<char> chars)
+    {
+        int i = span.IndexOfAnyExcept(chars);
+        return i < 0 ? ReadOnlySpan<char>.Empty : span[i..];
+    }
+
+    private static ReadOnlySpan<char> TrimEndAny(ReadOnlySpan<char> span, SearchValues<char> chars)
+    {
+        int i = span.LastIndexOfAnyExcept(chars);
+        return i < 0 ? ReadOnlySpan<char>.Empty : span[..(i + 1)];
     }
 
     // Helper method to find the association a file falls under, the first of them in their order, the most specific. A
     // backup is tried again with its suffix off, a.weird.bak is what a.weird is
     private static string? AssociationOf((string Glob, string LanguageId, string[] Patterns, bool OnPath)[] currentAssociations, string path)
     {
-        string forward = path.Replace('\\', '/');
-        string name = Path.GetFileName(forward);
+        string forward = path.IndexOf('\\') >= 0 ? path.Replace('\\', '/') : path;
+        ReadOnlySpan<char> name = Path.GetFileName(forward.AsSpan());
         foreach (var (_, languageId, patterns, onPath) in currentAssociations)
         {
             foreach (string pattern in patterns)
@@ -398,9 +439,9 @@ public static partial class CodeLanguages
     // How specific a glob is, a whole name over *.ext over anything else
     private static int Specificity(string glob)
     {
-        if (glob.IndexOfAny(['*', '?', '[', '{']) < 0)
+        if (glob.AsSpan().IndexOfAny(GlobSpecials) < 0)
             return 3;
-        if (glob.StartsWith("*.", StringComparison.Ordinal) && glob.AsSpan(2).IndexOfAny(['*', '?', '[', '{', '/']) < 0)
+        if (glob.StartsWith("*.", StringComparison.Ordinal) && glob.AsSpan(2).IndexOfAny(GlobExtensionSpecials) < 0)
             return 2;
         return 1;
     }
@@ -414,70 +455,148 @@ public static partial class CodeLanguages
             return [glob];
 
         string before = glob[..open], after = glob[(close + 1)..];
-        return [.. glob[(open + 1)..close].Split(',').SelectMany(part => ExpandBraces(before + part + after))];
+        var expanded = new List<string>();
+        foreach (string part in glob[(open + 1)..close].Split(','))
+            expanded.AddRange(ExpandBraces(before + part + after));
+        return [.. expanded];
     }
 
     // Whether a glob matches a text, any case. * is anything but a slash, ** anything at all, ? one character, [ab] one of them
     private static bool Glob(ReadOnlySpan<char> pattern, ReadOnlySpan<char> text)
     {
-        while (pattern.Length > 0)
+        int n = text.Length;
+        int stride = n + 1;
+        bool[]? rented = stride * 2 > 1026 ? System.Buffers.ArrayPool<bool>.Shared.Rent(stride * 2) : null;
+        Span<bool> buffer = rented is not null ? rented.AsSpan(0, stride * 2) : stackalloc bool[stride * 2];
+        Span<bool> cur = buffer[..stride];
+        Span<bool> next = buffer[stride..];
+
+        try
         {
-            char next = pattern[0];
-            if (next == '*')
+            cur.Clear();
+            cur[0] = true;
+
+            int p = 0;
+            while (p < pattern.Length)
             {
-                bool any = pattern.Length > 1 && pattern[1] == '*';
-                ReadOnlySpan<char> rest = pattern[(any ? 2 : 1)..];
-
-                // **/ matches no folder at all too
-                if (any && rest.Length > 0 && rest[0] == '/' && Glob(rest[1..], text))
-                    return true;
-
-                for (int take = 0; take <= text.Length; take++)
+                char ch = pattern[p];
+                if (ch == '*')
                 {
-                    if (Glob(rest, text[take..]))
-                        return true;
-                    if (take < text.Length && !any && text[take] == '/')
-                        return false;
-                }
-
-                return false;
-            }
-
-            if (text.Length == 0)
-                return false;
-
-            if (next == '[' && pattern.IndexOf(']') is var end and > 1)
-            {
-                ReadOnlySpan<char> set = pattern[1..end];
-                bool negate = set[0] is '!' or '^';
-                bool inside = false;
-                for (int i = negate ? 1 : 0; i < set.Length; i++)
-                {
-                    if (i + 2 < set.Length && set[i + 1] == '-')
+                    bool doubleStar = p + 1 < pattern.Length && pattern[p + 1] == '*';
+                    if (doubleStar)
                     {
-                        inside |= char.ToLowerInvariant(text[0]) >= char.ToLowerInvariant(set[i]) && char.ToLowerInvariant(text[0]) <= char.ToLowerInvariant(set[i + 2]);
-                        i += 2;
+                        p += 2;
+                        while (p < pattern.Length && pattern[p] == '*')
+                            p++;
+
+                        if (p < pattern.Length && pattern[p] == '/')
+                        {
+                            p++;
+                            bool anyBefore = false;
+                            for (int t = 0; t <= n; t++)
+                            {
+                                anyBefore |= cur[t];
+                                next[t] = t == 0 ? cur[0] : (anyBefore && text[t - 1] == '/');
+                            }
+                        }
+                        else
+                        {
+                            bool any = false;
+                            for (int t = 0; t <= n; t++)
+                            {
+                                any |= cur[t];
+                                next[t] = any;
+                            }
+                        }
                     }
                     else
                     {
-                        inside |= char.ToLowerInvariant(text[0]) == char.ToLowerInvariant(set[i]);
+                        p++;
+                        bool run = false;
+                        for (int t = 0; t <= n; t++)
+                        {
+                            if (t > 0 && text[t - 1] == '/')
+                                run = false;
+                            run |= cur[t];
+                            next[t] = run;
+                        }
                     }
                 }
+                else if (ch == '[' && pattern[p..].IndexOf(']') is var closeOffset and > 1)
+                {
+                    ReadOnlySpan<char> set = pattern.Slice(p + 1, closeOffset - 1);
+                    p += closeOffset + 1;
+                    next[0] = false;
+                    bool anyMatch = false;
+                    for (int t = 1; t <= n; t++)
+                    {
+                        bool ok = cur[t - 1] && MatchesCharacterSet(set, text[t - 1]);
+                        next[t] = ok;
+                        anyMatch |= ok;
+                    }
+                    if (!anyMatch)
+                        return false;
+                }
+                else
+                {
+                    p++;
+                    next[0] = false;
+                    bool anyMatch = false;
+                    if (ch == '?')
+                    {
+                        for (int t = 1; t <= n; t++)
+                        {
+                            bool ok = cur[t - 1] && text[t - 1] != '/';
+                            next[t] = ok;
+                            anyMatch |= ok;
+                        }
+                    }
+                    else
+                    {
+                        char lower = char.ToLowerInvariant(ch);
+                        for (int t = 1; t <= n; t++)
+                        {
+                            bool ok = cur[t - 1] && char.ToLowerInvariant(text[t - 1]) == lower;
+                            next[t] = ok;
+                            anyMatch |= ok;
+                        }
+                    }
+                    if (!anyMatch)
+                        return false;
+                }
 
-                if (inside == negate)
-                    return false;
-                pattern = pattern[(end + 1)..];
-                text = text[1..];
-                continue;
+                Span<bool> swap = cur;
+                cur = next;
+                next = swap;
             }
 
-            if (next == '?' ? text[0] == '/' : char.ToLowerInvariant(next) != char.ToLowerInvariant(text[0]))
-                return false;
-            pattern = pattern[1..];
-            text = text[1..];
+            return cur[n];
         }
+        finally
+        {
+            if (rented is not null)
+                System.Buffers.ArrayPool<bool>.Shared.Return(rented);
+        }
+    }
 
-        return text.Length == 0;
+    private static bool MatchesCharacterSet(ReadOnlySpan<char> set, char candidate)
+    {
+        bool negate = set[0] is '!' or '^';
+        char lowerCandidate = char.ToLowerInvariant(candidate);
+        bool inside = false;
+        for (int i = negate ? 1 : 0; i < set.Length; i++)
+        {
+            if (i + 2 < set.Length && set[i + 1] == '-')
+            {
+                inside |= lowerCandidate >= char.ToLowerInvariant(set[i]) && lowerCandidate <= char.ToLowerInvariant(set[i + 2]);
+                i += 2;
+            }
+            else
+            {
+                inside |= lowerCandidate == char.ToLowerInvariant(set[i]);
+            }
+        }
+        return inside != negate;
     }
 
     // Helper method to find a language by its id or an alias
@@ -488,8 +607,17 @@ public static partial class CodeLanguages
         {
             if (language.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
                 return language;
-            if (byAlias is null && language.Aliases is { } aliases && aliases.Any(alias => alias.Equals(id, StringComparison.OrdinalIgnoreCase)))
-                byAlias = language;
+            if (byAlias is null && language.Aliases is { } aliases)
+            {
+                for (int i = 0; i < aliases.Count; i++)
+                {
+                    if (aliases[i].Equals(id, StringComparison.OrdinalIgnoreCase))
+                    {
+                        byAlias = language;
+                        break;
+                    }
+                }
+            }
         }
 
         return byAlias;

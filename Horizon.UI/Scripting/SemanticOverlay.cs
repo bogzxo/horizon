@@ -45,8 +45,27 @@ public static class SemanticOverlay
     // Whether any of the grammar's spans under a name is one it doesn't get to write over
     private static bool Kept(List<SyntaxSpan> under, int from, SyntaxSpan name)
     {
+        int count = under.Count;
+        if (from >= count)
+            return false;
+
+        // Binary-search forward when from is far behind name.Start so skipped overlays stay O(log U)
+        if (under[from].Start + under[from].Length <= name.Start)
+        {
+            int lo = from + 1, hi = count;
+            while (lo < hi)
+            {
+                int mid = lo + ((hi - lo) >> 1);
+                if (under[mid].Start + under[mid].Length <= name.Start)
+                    lo = mid + 1;
+                else
+                    hi = mid;
+            }
+            from = lo;
+        }
+
         int end = name.Start + name.Length;
-        for (int i = from; i < under.Count && under[i].Start < end; i++)
+        for (int i = from; i < count && under[i].Start < end; i++)
         {
             if (under[i].Start + under[i].Length > name.Start && Keeps(under[i].Kind))
                 return true;

@@ -106,8 +106,8 @@ public partial class CodeEditor : UIComponent
 {
     // How many characters wide the room between the line numbers and the code is (the chevron and the change's bar go in
     // it), and the room either side of the code
-    private const float GUTTER_GAP = 2.5f;
-    private const float TEXT_PAD = 6.0f;
+    private const float GUTTER_GAP = 1.85f;
+    private const float TEXT_PAD = 4.0f;
 
     // How far up from the bottom edge a row cut off by it fades out over, a share of a line
     private const float BOTTOM_FADE = 0.5f;
@@ -127,7 +127,8 @@ public partial class CodeEditor : UIComponent
 
     // What is offered at the caret, which of it is picked, which is the first in sight, and where what is picked goes in
     private readonly List<UICompletion> completions = [];
-    private int completionIndex, completionTop, completionStart;
+    private int completionIndex, completionStart;
+    private float completionTop;
 
     // The first row of the completions as it's drawn, gliding to completionTop, the way a list's rows do (see ListBox)
     private float completionShown;
@@ -246,6 +247,9 @@ public partial class CodeEditor : UIComponent
     private int occurrencesVersionSeen = -1;
     private float occurrencesWait;
     private const int MAX_OCCURRENCES = 500;
+    private const int OCCURRENCE_SYNC_RADIUS = 400;
+    private sealed record OccurrenceScan(int Version, UITextPosition Caret, int Length, List<UITextPosition> Matches);
+    private Task<OccurrenceScan>? occurrenceScan;
 
     // What the hover hint was last asked about, plus a small per-version cache so sweeping the pointer back and forth
     // over already-inspected words doesn't re-invoke HoverSource on every transition.
@@ -267,7 +271,6 @@ public partial class CodeEditor : UIComponent
     private float checkIn;
 
     private float scrollY, scrollX;
-    private float completionWheel;
 
     // Where the wheel wants the view to be, which it eases to (null while it is where it's wanted). The wheel used to move
     // it three lines in one tick, and the frames between two ticks blend the rows that were in sight both times, so the
@@ -317,6 +320,8 @@ public partial class CodeEditor : UIComponent
         set
         {
             document.Text = value ?? string.Empty;
+            linesWere = document.LineCount;
+            caretLineWas = 0;
             recolourNow = true;
         }
     }
@@ -336,15 +341,24 @@ public partial class CodeEditor : UIComponent
 
             KeepPlaceThroughZoom();
             textScale = value;
-            scaleSetAt = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (smoothZoomChange)
+            {
+                scaleSetAt = System.Diagnostics.Stopwatch.GetTimestamp();
 
-            // Keep full frame rate while zooming, and schedule a tick once it rests to snap back to whole pixels
-            GameEngine.Instance?.WindowManager?.RequestSmooth();
-            GameEngine.Instance?.WindowManager?.RequestTickIn(ZOOM_RESTS_AFTER + 0.02);
+                // Keep full frame rate while continuously zooming, and schedule a tick once it rests to snap back to whole pixels
+                GameEngine.Instance?.WindowManager?.RequestSmooth();
+                GameEngine.Instance?.WindowManager?.RequestTickIn(ZOOM_RESTS_AFTER + 0.02);
+            }
+            else
+            {
+                scaleSetAt = 0;
+                GameEngine.Instance?.WindowManager?.RequestFrames();
+            }
         }
     }
 
     private float textScale;
+    private bool smoothZoomChange;
 
     // When the scale was last changed, and how long after it a zoom counts as still going on, seconds
     private long scaleSetAt;
@@ -469,7 +483,42 @@ public partial class CodeEditor : UIComponent
     public IReadOnlyList<UICodeDiagnostic> Diagnostics
     {
         get => diagnostics;
-        set => diagnostics = value ?? [];
+        set
+        {
+            diagnostics = value ?? [];
+            RebuildDiagnosticsSorted();
+        }
+    }
+
+    private UICodeDiagnostic[] diagnosticsSorted = [];
+
+    private void RebuildDiagnosticsSorted()
+    {
+        if (diagnostics.Count == 0)
+        {
+            diagnosticsSorted = [];
+            return;
+        }
+
+        var sorted = new UICodeDiagnostic[diagnostics.Count];
+        for (int i = 0; i < sorted.Length; i++)
+            sorted[i] = diagnostics[i];
+        Array.Sort(sorted, static (a, b) => a.Line != b.Line ? a.Line.CompareTo(b.Line) : a.Column.CompareTo(b.Column));
+        diagnosticsSorted = sorted;
+    }
+
+    private int FirstDiagnosticAtOrAfter(int line)
+    {
+        int low = 0, high = diagnosticsSorted.Length;
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+            if (diagnosticsSorted[mid].Line < line)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+        return low;
     }
 
     /// <summary>
@@ -593,10 +642,37 @@ public partial class CodeEditor : UIComponent
     public IReadOnlyList<UICodeHint> InlineHints
     {
         get => inlineHints;
-        set => inlineHints = value ?? [];
+        set
+        {
+            inlineHints = value ?? [];
+            inlineHintsSorted.Clear();
+            if (inlineHints.Count > 0)
+            {
+                if (inlineHintsSorted.Capacity < inlineHints.Count)
+                    inlineHintsSorted.Capacity = inlineHints.Count;
+                for (int i = 0; i < inlineHints.Count; i++)
+                    inlineHintsSorted.Add(inlineHints[i]);
+                inlineHintsSorted.Sort(static (a, b) => a.Line.CompareTo(b.Line));
+            }
+        }
     }
 
     private IReadOnlyList<UICodeHint> inlineHints = [];
+    private readonly List<UICodeHint> inlineHintsSorted = [];
+
+    private int FirstInlineHintAtOrAfter(int line)
+    {
+        int low = 0, high = inlineHintsSorted.Count;
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+            if (inlineHintsSorted[mid].Line < line)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+        return low;
+    }
 
     /// <summary>
     /// A note about the line the caret is on, fainter than a hint and after it, shown only while the caret is on that
@@ -631,7 +707,7 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public SyntaxKind? KindAt(int line, int column)
     {
-        if (line < 0 || line >= spans.Length || line >= colouredLines.Length || colouredLines[line] != document.LineAt(line))
+        if ((uint)line >= (uint)spans.Length || (uint)line >= (uint)colouredLines.Length || (uint)line >= (uint)document.LineCount || colouredLines[line] != document.LineAt(line))
             return null;
 
         foreach (SyntaxSpan span in spans[line])
@@ -901,7 +977,16 @@ public partial class CodeEditor : UIComponent
         if (OnPinch is not { } pinch)
             return false;
 
-        pinch(Horizon.Input.PreciseScroll.PinchFactor(amount));
+        bool wasSmooth = smoothZoomChange;
+        smoothZoomChange = true;
+        try
+        {
+            pinch(Horizon.Input.PreciseScroll.PinchFactor(amount));
+        }
+        finally
+        {
+            smoothZoomChange = wasSmooth;
+        }
         return true;
     }
 
@@ -1204,6 +1289,60 @@ public partial class CodeEditor : UIComponent
         return x;
     }
 
+    /// <summary>Helper method to snapshot the document's line references without joining them on the UI thread.</summary>
+    private string[] SnapshotLines()
+    {
+        int count = document.LineCount;
+        var lines = new string[count];
+        for (int i = 0; i < count; i++)
+            lines[i] = document.LineAt(i);
+        return lines;
+    }
+
+    /// <summary>Helper method to join only the first <paramref name="count"/> lines for bounded synchronous work.</summary>
+    private string JoinFirstLines(int count)
+    {
+        count = Math.Min(count, document.LineCount);
+        if (count <= 0)
+            return string.Empty;
+        if (count == 1)
+            return document.LineAt(0);
+
+        int total = count - 1;
+        for (int i = 0; i < count; i++)
+            total += document.LineAt(i).Length;
+
+        var builder = new System.Text.StringBuilder(total);
+        builder.Append(document.LineAt(0));
+        for (int i = 1; i < count; i++)
+            builder.Append('\n').Append(document.LineAt(i));
+        return builder.ToString();
+    }
+
+    private static void EnsureSwatchesSorted(List<HidlSwatch> list)
+    {
+        for (int i = 1; i < list.Count; i++)
+        {
+            if (list[i].Line < list[i - 1].Line)
+            {
+                list.Sort(static (a, b) => a.Line.CompareTo(b.Line));
+                return;
+            }
+        }
+    }
+
+    private static void EnsureArtSorted(List<HidlArt> list)
+    {
+        for (int i = 1; i < list.Count; i++)
+        {
+            if (list[i].Line < list[i - 1].Line)
+            {
+                list.Sort(static (a, b) => a.Line.CompareTo(b.Line));
+                return;
+            }
+        }
+    }
+
     /// <summary>The colours of every line worked out again on the editor's thread, and the lines kept to tell later which still fit them.</summary>
     private void Recolour()
     {
@@ -1228,14 +1367,14 @@ public partial class CodeEditor : UIComponent
             spans = PlainSpans(longLines: true);
             if (now > 0)
             {
-                List<SyntaxSpan>[] top = highlighter.Read(document.Text, now, lineStarts, swatches, art);
+                List<SyntaxSpan>[] top = highlighter.Read(JoinFirstLines(now), now, lineStarts, swatches, art);
                 Array.Copy(top, spans, Math.Min(Math.Min(top.Length, now), spans.Length));
             }
 
             colouredWith = null;
             coloured = document.Version - 1;
         }
-        else if (Highlight && document.Text.Length == 0)
+        else if (Highlight && (count == 0 || (count == 1 && document.LineAt(0).Length == 0)))
         {
             // Nothing to colour, and nothing asked of the grammar. An empty box made the grammar get going on the spot, the
             // agents' box was Markdown's (and every language it can hold) at 70 ms and 24 MB of an editor's start for one empty line
@@ -1244,7 +1383,7 @@ public partial class CodeEditor : UIComponent
         else if (Highlight)
         {
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
-            spans = highlighter.Read(document.Text, count, lineStarts, swatches, art);
+            spans = highlighter.Read(JoinFirstLines(count), count, lineStarts, swatches, art);
             if (Horizon.Core.Diagnostics.StartupTrace.On && !Horizon.Core.Diagnostics.StartupTrace.SceneReady)
                 Horizon.Logging.Log.Info($"[Startup] {highlighter.Name} coloured {count} lines in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.0} ms");
         }
@@ -1255,11 +1394,11 @@ public partial class CodeEditor : UIComponent
             art.Clear();
         }
 
+        EnsureSwatchesSorted(swatches);
+        EnsureArtSorted(art);
         TookArt();
 
-        colouredLines = new string[count];
-        for (int i = 0; i < colouredLines.Length; i++)
-            colouredLines[i] = document.LineAt(i);
+        colouredLines = SnapshotLines();
         FindFoldable();
     }
 
@@ -1267,10 +1406,7 @@ public partial class CodeEditor : UIComponent
     private void StartColouring()
     {
         int version = document.Version, count = document.LineCount;
-        string text = document.Text;
-        var lines = new string[count];
-        for (int i = 0; i < count; i++)
-            lines[i] = document.LineAt(i);
+        string[] lines = SnapshotLines();
 
         changeSeen = version;
         ICodeHighlighter reader = highlighter;
@@ -1279,11 +1415,17 @@ public partial class CodeEditor : UIComponent
         CodeColouring? last = ReferenceEquals(colouredWith, reader) ? new CodeColouring(colouredLines, spans, lineStarts) : null;
         colouring = Task.Run(() =>
         {
+            // Join off the UI thread so typing in large files never allocates multi-megabyte strings on the sim thread.
+            string text = string.Join('\n', lines);
             var found = new List<HidlSwatch>();
             var named = new List<HidlArt>();
             var starts = new CodeLineStart[count];
             List<SyntaxSpan>[] read = last is null ? reader.Read(text, count, starts, found, named) : reader.ReadAgain(text, lines, starts, last, found, named);
-            return new Colouring(version, read, lines, found, starts, named, reader);
+            EnsureSwatchesSorted(found);
+            EnsureArtSorted(named);
+            var result = new Colouring(version, read, lines, found, starts, named, reader);
+            GameEngine.Instance?.WindowManager?.Wake();
+            return result;
         });
     }
 
@@ -1310,7 +1452,7 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     private List<SyntaxSpan>? FreshColours(int line, string text)
     {
-        if (!Highlight || text.Length == 0)
+        if (!Highlight || text.Length == 0 || lineStarts.Length == 0)
             return null;
         if (text.Length > TextMateHighlighter.LONG_LINE)
             return LongColours(line, text);
@@ -1327,8 +1469,11 @@ public partial class CodeEditor : UIComponent
         }
 
         // Where the line was in the last colouring, or where the lines added or taken out above it moved it from
-        int was = line < colouredLines.Length ? line : line - (document.LineCount - colouredLines.Length);
-        if (was < 0 || was >= lineStarts.Length)
+        int shifted = line - (document.LineCount - colouredLines.Length);
+        int was = document.LineCount != colouredLines.Length && (uint)shifted < (uint)lineStarts.Length
+            ? shifted
+            : (uint)line < (uint)lineStarts.Length ? line : shifted;
+        if ((uint)was >= (uint)lineStarts.Length)
             return null;
 
         if (fresh.Count >= MAX_FRESH)
@@ -1351,14 +1496,14 @@ public partial class CodeEditor : UIComponent
     private List<SyntaxSpan>? ColoursOf(int line, string text)
     {
         List<SyntaxSpan>? found = null;
-        if (line < colouredLines.Length && colouredLines[line] == text)
+        if ((uint)line < (uint)colouredLines.Length && (uint)line < (uint)spans.Length && colouredLines[line] == text)
         {
             found = spans[line];
         }
         else
         {
             int was = line - (document.LineCount - colouredLines.Length);
-            if (was >= 0 && was < colouredLines.Length && colouredLines[was] == text)
+            if ((uint)was < (uint)colouredLines.Length && (uint)was < (uint)spans.Length && colouredLines[was] == text)
                 found = spans[was];
         }
 
@@ -1387,14 +1532,17 @@ public partial class CodeEditor : UIComponent
         }
 
         // Where the line was in the last colouring, or where the lines added or taken out above it moved it from
-        int was = line < colouredLines.Length ? line : line - (document.LineCount - colouredLines.Length);
-        if (was < 0 || was >= lineStarts.Length)
+        int shifted = line - (document.LineCount - colouredLines.Length);
+        int was = document.LineCount != colouredLines.Length && (uint)shifted < (uint)lineStarts.Length
+            ? shifted
+            : (uint)line < (uint)lineStarts.Length ? line : shifted;
+        if ((uint)was >= (uint)lineStarts.Length)
             return have;
 
         // Gone on from the read of this text so far, else (it was typed into) whichever got further of the line's last read
         // here and the colouring's, which has all of it once the pool is done
         var (from, fromText) = have is not null ? (have, text)
-            : was < colouredLines.Length && was < spans.Length ? (spans[was], colouredLines[was]) : ((List<SyntaxSpan>?)null, (string?)null);
+            : (uint)was < (uint)colouredLines.Length && (uint)was < (uint)spans.Length ? (spans[was], colouredLines[was]) : ((List<SyntaxSpan>?)null, (string?)null);
         if (have is null && longLast is { } last && last.Line == line && ReadSoFar(last.Spans) > ReadSoFar(from))
             (from, fromText) = (last.Spans, last.Text);
 
@@ -1424,9 +1572,6 @@ public partial class CodeEditor : UIComponent
     // Helper method for the first of so many lines too long to read on the spot, -1 for none
     private int FirstLongLine(int count)
     {
-        if (document.Text.Length <= TextMateHighlighter.LONG_LINE)
-            return -1;
-
         for (int i = 0; i < count; i++)
         {
             if (document.LineAt(i).Length > TextMateHighlighter.LONG_LINE)
@@ -1481,16 +1626,56 @@ public partial class CodeEditor : UIComponent
             return new UITextPosition(line, text.Length);
 
         float wanted = point.X - (area.Min.X + TEXT_PAD - scrollX) - row.Indent;
-        float before = 0.0f;
+        if (wanted <= 0.0f || row.Start >= rowEnd)
+            return new UITextPosition(line, row.Start);
 
-        // Each character from where it's drawn, after a hint just before it, a click on the hint is before the character
-        for (int i = row.Start + 1; i <= rowEnd; i++)
+        UIFont font = FontOf(skin);
+        float tabWidth = TabWidth(skin, scale);
+        List<UICodeInlay>? lineInlays = InlaysOn(line);
+        int inlayIdx = 0;
+        if (lineInlays is not null)
         {
-            float hints = InlaysWidth(skin, scale, line, row.Start, i);
-            float after = Width(skin, scale, text.AsSpan(row.Start, i - row.Start)) + hints;
-            if (wanted < (before + hints + after) * 0.5f)
-                return new UITextPosition(line, i - 1);
-            before = after - hints;
+            while (inlayIdx < lineInlays.Count && lineInlays[inlayIdx].Column < row.Start)
+                inlayIdx++;
+        }
+
+        // Single-pass O(N) advance accumulation matching Width + InlaysWidth; a click on an inlay lands before its character.
+        float textWidth = 0.0f;
+        float inlaySum = 0.0f;
+        char prevChar = '\0';
+        bool hasPrev = false;
+        for (int col = row.Start; col < rowEnd; col++)
+        {
+            if (lineInlays is not null)
+            {
+                while (inlayIdx < lineInlays.Count && lineInlays[inlayIdx].Column == col)
+                {
+                    inlaySum += InlayWidth(skin, scale, lineInlays[inlayIdx]);
+                    inlayIdx++;
+                }
+            }
+
+            float charLeft = textWidth + inlaySum;
+            char current = text[col];
+            float step;
+            if (current == '\t')
+            {
+                step = tabWidth;
+                hasPrev = false;
+            }
+            else
+            {
+                float kern = hasPrev ? font.Kerning(prevChar, current) * scale : 0.0f;
+                step = kern + font.Measure(text.AsSpan(col, 1), scale, markup: false).X;
+                prevChar = current;
+                hasPrev = true;
+            }
+
+            float charRight = charLeft + step;
+            if (wanted < (charLeft + charRight) * 0.5f)
+                return new UITextPosition(line, col);
+
+            textWidth += step;
         }
 
         // Past the end of a row that isn't the last of its line is the start of the next, which is the same place
@@ -1626,6 +1811,24 @@ public partial class CodeEditor : UIComponent
         if (bracketFor != (document.Version, document.Caret))
             FindBracket();
 
+        if (occurrenceScan is { IsCompleted: true } scanned)
+        {
+            occurrenceScan = null;
+            if (scanned.IsCompletedSuccessfully && scanned.Result.Version == document.Version && scanned.Result.Caret == document.Caret)
+            {
+                occurrences.Clear();
+                if (scanned.Result.Matches.Count >= 2)
+                {
+                    occurrences.AddRange(scanned.Result.Matches);
+                    occurrenceLength = scanned.Result.Length;
+                }
+                else
+                {
+                    occurrenceLength = 0;
+                }
+            }
+        }
+
         if (occurrencesFor != (document.Version, document.Caret))
             UpdateOccurrences(dt);
 
@@ -1653,9 +1856,14 @@ public partial class CodeEditor : UIComponent
     private void StartCheck()
     {
         int version = document.Version;
-        string text = document.Text;
+        string[] lines = SnapshotLines();
         checkedVersion = version;
-        checking = Task.Run(() => Parse(version, text));
+        checking = Task.Run(() =>
+        {
+            var result = Parse(version, string.Join('\n', lines));
+            GameEngine.Instance?.WindowManager?.Wake();
+            return result;
+        });
     }
 
     private static Checked Parse(int version, string text)
@@ -2024,6 +2232,7 @@ public partial class CodeEditor : UIComponent
     private void FindOccurrences()
     {
         nativeOccurrences = [];
+        occurrenceScan = null;
         occurrencesFor = (document.Version, document.Caret);
         occurrences.Clear();
         occurrenceLength = 0;
@@ -2047,26 +2256,91 @@ public partial class CodeEditor : UIComponent
         if (char.IsDigit(word[0]))
             return;
 
-        for (int at = 0; at < document.LineCount && occurrences.Count < MAX_OCCURRENCES; at++)
+        int lineCount = document.LineCount;
+        int syncFrom = 0, syncTo = lineCount - 1;
+        bool bounded = lineCount > OCCURRENCE_SYNC_RADIUS * 2 + 1;
+        if (bounded)
         {
-            string text = document.LineAt(at);
-            for (int from = text.AsSpan().IndexOf(word, StringComparison.Ordinal); from >= 0;)
-            {
-                int after = from + word.Length;
-                bool whole = (from == 0 || !IsWordChar(text[from - 1])) && (after >= text.Length || !IsWordChar(text[after]));
-                if (whole)
-                    occurrences.Add(new UITextPosition(at, from));
-
-                int next = text.AsSpan(after).IndexOf(word, StringComparison.Ordinal);
-                from = next < 0 ? -1 : after + next;
-            }
+            syncFrom = Math.Max(0, caret.Line - OCCURRENCE_SYNC_RADIUS);
+            syncTo = Math.Min(lineCount - 1, caret.Line + OCCURRENCE_SYNC_RADIUS);
         }
+
+        ScanOccurrencesInRange(document, null, syncFrom, syncTo, word, occurrences);
 
         // The one place it is, the one under the caret, is no help lit
         if (occurrences.Count < 2)
             occurrences.Clear();
         else
             occurrenceLength = word.Length;
+
+        // For large documents, complete the full-file scan asynchronously off the UI thread so cursor moves never stall.
+        if (bounded && occurrences.Count < MAX_OCCURRENCES)
+            StartOccurrenceScan(document.Version, caret, word);
+    }
+
+    private void StartOccurrenceScan(int version, UITextPosition caret, ReadOnlySpan<char> word)
+    {
+        string[] snapshot = SnapshotLines();
+        string wordText = word.ToString();
+        occurrenceScan = Task.Run(() =>
+        {
+            var all = new List<UITextPosition>();
+            ScanOccurrencesInRange(null, snapshot, 0, snapshot.Length - 1, wordText.AsSpan(), all);
+            var result = new OccurrenceScan(version, caret, wordText.Length, all);
+            GameEngine.Instance?.WindowManager?.Wake();
+            return result;
+        });
+    }
+
+    private static void ScanOccurrencesInRange(UITextDocument? doc, string[]? snapshot, int startLine, int endLine, ReadOnlySpan<char> word, List<UITextPosition> results)
+    {
+        int wordLen = word.Length;
+        for (int at = startLine; at <= endLine && results.Count < MAX_OCCURRENCES; at++)
+        {
+            string text = snapshot is not null ? snapshot[at] : doc!.LineAt(at);
+            if (text.Length < wordLen)
+                continue;
+
+            ReadOnlySpan<char> span = text.AsSpan();
+            for (int from = span.IndexOf(word, StringComparison.Ordinal); from >= 0 && results.Count < MAX_OCCURRENCES;)
+            {
+                int after = from + wordLen;
+                bool whole = (from == 0 || !IsWordChar(span[from - 1])) && (after >= span.Length || !IsWordChar(span[after]));
+                if (whole)
+                    results.Add(new UITextPosition(at, from));
+
+                int next = span[after..].IndexOf(word, StringComparison.Ordinal);
+                from = next < 0 ? -1 : after + next;
+            }
+        }
+    }
+
+    private int FirstFoundAtOrAfter(int line)
+    {
+        int low = 0, high = found.Count;
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+            if (found[mid].Line < line)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+        return low;
+    }
+
+    private int FirstOccurrenceAtOrAfter(int line)
+    {
+        int low = 0, high = occurrences.Count;
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+            if (occurrences[mid].Line < line)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+        return low;
     }
 
     private static bool IsWordChar(char character) => char.IsLetterOrDigit(character) || character == '_';
@@ -2343,7 +2617,8 @@ public partial class CodeEditor : UIComponent
                 waitedFor = 0.0f;
             waiting = request.Waiting;
             completionStart = request.Start;
-            completionIndex = completionTop = 0;
+            completionIndex = 0;
+            completionTop = 0.0f;
             completionShown = 0.0f;
             OpenPopup();
             return;
@@ -2494,27 +2769,81 @@ public partial class CodeEditor : UIComponent
 
     // The language's own words and every name in the code, for an editor nobody told what else there is
     private static readonly string[] Keywords = ["let", "const", "func", "if", "else", "while", "do", "for", "in", "return", "break", "continue", "delete", "true", "false", "null", "vec", "include"];
+    private const int MAX_DEFAULT_COMPLETION_LINES = 2000;
+    private const int MAX_DEFAULT_COMPLETION_LINE_CHARS = 4096;
+    private (int Version, int From, int To) defaultCompletionsFor = (-1, -1, -1);
+    private readonly List<UICompletion> defaultCompletionCache = [];
 
     private static UICompletionRequest? DefaultCompletions(CodeEditor editor)
     {
         UITextDocument doc = editor.Document;
         int start = doc.Caret.Column - doc.WordBeforeCaret().Length;
-        var items = new List<UICompletion>();
-        var seen = new HashSet<string>();
 
-        foreach (string keyword in Keywords)
+        int lineCount = doc.LineCount;
+        int fromLine = 0, toLine = lineCount - 1;
+        if (lineCount > MAX_DEFAULT_COMPLETION_LINES)
         {
-            if (seen.Add(keyword))
-                items.Add(new UICompletion(keyword, "keyword", Kind: "keyword"));
+            int half = MAX_DEFAULT_COMPLETION_LINES / 2;
+            fromLine = Math.Max(0, doc.Caret.Line - half);
+            toLine = Math.Min(lineCount - 1, fromLine + MAX_DEFAULT_COMPLETION_LINES - 1);
         }
 
-        foreach (Token token in Lexer.Tokenize(editor.Text, lenient: true))
+        var key = (doc.Version, fromLine, toLine);
+        if (editor.defaultCompletionsFor != key)
         {
-            if (token.Type == TokenType.Identifier && token.Value.Length > 1 && seen.Add(token.Value))
-                items.Add(new UICompletion(token.Value, "in this file", Kind: "variable"));
+            editor.defaultCompletionsFor = key;
+            List<UICompletion> items = editor.defaultCompletionCache;
+            items.Clear();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (string keyword in Keywords)
+            {
+                if (seen.Add(keyword))
+                    items.Add(new UICompletion(keyword, "keyword", Kind: "keyword"));
+            }
+
+            // Scan identifiers directly per line without joining the whole document on the UI thread.
+            for (int line = fromLine; line <= toLine; line++)
+            {
+                string text = doc.LineAt(line);
+                int limit = Math.Min(text.Length, MAX_DEFAULT_COMPLETION_LINE_CHARS);
+                int i = 0;
+                while (i < limit)
+                {
+                    char c = text[i];
+                    if (c == '/' && i + 1 < limit && text[i + 1] == '/')
+                        break;
+                    if (c is '"' or '\'')
+                    {
+                        char quote = c;
+                        i++;
+                        while (i < limit && text[i] != quote)
+                        {
+                            if (text[i] == '\\') i++;
+                            i++;
+                        }
+                        i++;
+                        continue;
+                    }
+                    if (char.IsLetter(c) || c == '_')
+                    {
+                        int idStart = i++;
+                        while (i < limit && IsWordChar(text[i]))
+                            i++;
+                        if (i - idStart > 1)
+                        {
+                            string id = text[idStart..i];
+                            if (seen.Add(id))
+                                items.Add(new UICompletion(id, "in this file", Kind: "variable"));
+                        }
+                        continue;
+                    }
+                    i++;
+                }
+            }
         }
 
-        return new UICompletionRequest(start, items);
+        return new UICompletionRequest(start, editor.defaultCompletionCache);
     }
 
     // Where the list is, under the start of the word being completed, or over it when there is no room under it
@@ -2528,8 +2857,9 @@ public partial class CodeEditor : UIComponent
     private const float COMPLETION_ICON_GAP = 6.0f;
     private float CompletionIconRoom(float lineHeight)
     {
-        int last = Math.Min(completions.Count, completionTop + COMPLETION_ROWS + 1);
-        for (int i = Math.Max(0, completionTop - 1); i < last; i++)
+        int start = Math.Max(0, (int)MathF.Floor(completionTop) - 1);
+        int last = Math.Min(completions.Count, (int)MathF.Ceiling(completionTop) + COMPLETION_ROWS + 1);
+        for (int i = start; i < last; i++)
         {
             if (completions[i].Kind.Length > 0)
                 return MathF.Round(lineHeight * 0.9f) + COMPLETION_ICON_GAP;
@@ -2553,8 +2883,9 @@ public partial class CodeEditor : UIComponent
         float below = TopOf(area, caret.Line, caret.Column, lineHeight) - lineHeight;
 
         float widest = completions.Count == 0 ? FontOf(skin).Measure(waiting, scale * 0.9f, markup: false).X : 0.0f;
-        int last = Math.Min(completions.Count, completionTop + COMPLETION_ROWS);
-        for (int i = completionTop; i < last; i++)
+        int start = Math.Clamp((int)MathF.Floor(completionTop), 0, Math.Max(0, completions.Count - 1));
+        int last = Math.Min(completions.Count, (int)MathF.Ceiling(completionTop) + COMPLETION_ROWS);
+        for (int i = start; i < last; i++)
         {
             var item = completions[i];
             float text = FontOf(skin).Measure(item.Text, scale, markup: false).X;
@@ -2624,6 +2955,7 @@ public partial class CodeEditor : UIComponent
         int last = Math.Min(completions.Count, first + COMPLETION_ROWS + 1);
         list.PushClip(new UIRect(new Vector2(bounds.Min.X, bounds.Min.Y + COMPLETION_PAD), new Vector2(bounds.Max.X, bounds.Max.Y - COMPLETION_PAD)));
 
+        float iconRoom = CompletionIconRoom(lineHeight);
         for (int i = first; i < last; i++)
         {
             list.BeginPart(i);
@@ -2637,7 +2969,6 @@ public partial class CodeEditor : UIComponent
             float top = MathF.Round(rowTop - (rowHeight - lineHeight) * 0.5f);
             var item = completions[i];
             Vector4 ink = colors.Of(UICompletionKinds.SyntaxOf(item.Kind));
-            float iconRoom = CompletionIconRoom(lineHeight);
             if (iconRoom > 0.0f && UICompletionKinds.IconOf(item.Kind) is { Length: > 0 } icon)
             {
                 float side = iconRoom - COMPLETION_ICON_GAP;
@@ -2974,7 +3305,23 @@ public partial class CodeEditor : UIComponent
         middleScroll.Cancel();
         if (OnZoom is { } zoom && GameEngine.Instance?.Input.Keyboard.Primary == true)
         {
-            zoom(Horizon.Input.PreciseScroll.ZoomSteps(delta, PreciseWheel));
+            if (PreciseWheel)
+            {
+                bool wasSmooth = smoothZoomChange;
+                smoothZoomChange = true;
+                try
+                {
+                    zoom(Horizon.Input.PreciseScroll.ZoomSteps(delta, true));
+                }
+                finally
+                {
+                    smoothZoomChange = wasSmooth;
+                }
+            }
+            else
+            {
+                zoom(Horizon.Input.PreciseScroll.ZoomSteps(delta, false));
+            }
             return true;
         }
 
@@ -2985,19 +3332,23 @@ public partial class CodeEditor : UIComponent
         // does. It scrolled the code under the list
         if (CompletionOpen && Module is { } module && CompletionBounds().Contains(module.ToLocal(module.Compositor.Pointer.Position)))
         {
-            int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_LINES));
-            int sign = Math.Sign(delta);
+            float maxTop = Math.Max(0, completions.Count - COMPLETION_ROWS);
+            if (maxTop <= 0.0f)
+                return !UIWheel.Gliding;
+
             if (PreciseWheel)
             {
-                // A row for every row's worth of finger, the rest waits for the next turn
-                completionWheel += delta * WHEEL_LINES;
-                rows = (int)MathF.Abs(completionWheel);
-                sign = Math.Sign(completionWheel);
-                completionWheel -= rows * sign;
+                float rowHeight = CompletionRow(skin);
+                float before = completionShown;
+                float next = Math.Clamp(before - delta * UIWheel.NotchUnits / MathF.Max(1.0f, rowHeight), 0.0f, maxTop);
+                completionTop = completionShown = next;
+                return !UIWheel.Gliding || next != before;
             }
 
+            int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_LINES));
+            int sign = Math.Sign(delta);
             BeginScrollMotion(completionShown != completionTop);
-            completionTop = Math.Clamp(completionTop - rows * sign, 0, Math.Max(0, completions.Count - COMPLETION_ROWS));
+            completionTop = Math.Clamp(MathF.Round(completionTop) - rows * sign, 0, maxTop);
             return true;
         }
 
@@ -3206,17 +3557,17 @@ public partial class CodeEditor : UIComponent
             PaintPredictionStruck(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
         PaintTodos(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
 
-        if (findQuery.Length > 0)
+        if (findQuery.Length > 0 && found.Count > 0)
         {
             // The one selected stronger, it's the one enter goes on from. The rest were a fifth of the highlight and could
             // hardly be told from the code round them on the plum, so each has a faint edge of it as well
             Vector4 lit = skin.HighlightColor with { W = 0.26f };
             Vector4 edge = skin.HighlightColor with { W = 0.55f };
             Vector4 current = skin.HighlightColor with { W = 0.5f };
-            for (int i = 0; i < found.Count; i++)
+            for (int i = FirstFoundAtOrAfter(firstLine); i < found.Count; i++)
             {
                 UITextMatch at = found[i];
-                if (at.Line < firstLine || at.Line > lastLine) continue;
+                if (at.Line > lastLine) break;
 
                 bool selected = start.Line == at.Line && start.Column == at.Column && end.Line == at.Line && end.Column == at.Column + at.Length;
                 UIRect box = Piece(skin, scale, area, left, lineHeight, at.Line, at.Column, at.Column + at.Length);
@@ -3233,14 +3584,14 @@ public partial class CodeEditor : UIComponent
                 : occurrence.Kind == 2 ? skin.HighlightColor with { W = 0.12f } : skin.TextColor with { W = 0.1f };
             list.Rect(Piece(skin, scale, area, left, lineHeight, occurrence.Line, occurrence.Column, occurrence.Column + occurrence.Length), colour);
         }
-        if (occurrenceLength > 0)
+        if (occurrenceLength > 0 && occurrences.Count > 0)
         {
             Vector4 same = skin.TextColor with { W = 0.1f };
-            for (int i = 0; i < occurrences.Count; i++)
+            for (int i = FirstOccurrenceAtOrAfter(firstLine); i < occurrences.Count; i++)
             {
                 UITextPosition at = occurrences[i];
-                if (at.Line >= firstLine && at.Line <= lastLine)
-                    list.Rect(Piece(skin, scale, area, left, lineHeight, at.Line, at.Column, at.Column + occurrenceLength), same);
+                if (at.Line > lastLine) break;
+                list.Rect(Piece(skin, scale, area, left, lineHeight, at.Line, at.Column, at.Column + occurrenceLength), same);
             }
         }
 
@@ -3321,11 +3672,14 @@ public partial class CodeEditor : UIComponent
                 int at = row.Start;
                 foreach (SyntaxSpan span in colours)
                 {
-                    if (span.Start + span.Length > written.Length || x > drawnTo)
+                    if (x > drawnTo || span.Start >= rowEnd)
                         break;
+                    if (span.Start < 0 || span.Length <= 0)
+                        continue;
 
-                    // Only what of the span is on this row
-                    int from = Math.Max(span.Start, row.Start), to = Math.Min(span.Start + span.Length, rowEnd);
+                    // Only what of the span is on this row, clamped to [at..rowEnd] so stale or overlapping spans never index out of bounds
+                    int from = Math.Max(Math.Max(span.Start, row.Start), at);
+                    int to = Math.Min(span.Start + span.Length, rowEnd);
                     if (to <= from)
                         continue;
 
@@ -3377,14 +3731,18 @@ public partial class CodeEditor : UIComponent
 
         // The colours written in the code, a swatch at the end of their line
         list.BeginPart(PART_SWATCHES);
-        for (int i = 0; i < swatches.Count; i++)
+        if (swatches.Count > 0)
         {
-            HidlSwatch swatch = swatches[i];
-            if (swatch.Line < firstLine || swatch.Line > lastLine || swatch.Line >= document.LineCount || IsHidden(swatch.Line, out _)) continue;
+            for (int i = FirstSwatchAtOrAfter(firstLine); i < swatches.Count; i++)
+            {
+                HidlSwatch swatch = swatches[i];
+                if (swatch.Line > lastLine) break;
+                if (swatch.Line < 0 || swatch.Line >= document.LineCount || IsHidden(swatch.Line, out _)) continue;
 
-            UIRect box = SwatchBounds(skin, scale, area, left, lineHeight, i);
-            list.Rect(box.Shrink(new UIEdges(-1.0f)), skin.TextColor with { W = 0.5f });
-            list.Rect(box, swatch.Color with { W = 1.0f });
+                UIRect box = SwatchBounds(skin, scale, area, left, lineHeight, i);
+                list.Rect(box.Shrink(new UIEdges(-1.0f)), skin.TextColor with { W = 0.5f });
+                list.Rect(box, swatch.Color with { W = 1.0f });
+            }
         }
 
         // The art named in the code, after the swatches
@@ -3392,15 +3750,19 @@ public partial class CodeEditor : UIComponent
 
         // What the program has to say after the end of a line, the value a let came to, in the same pill as the hints in
         // among the code. It was plain grey words two spaces on, and the names in the middle of the line were in pills
-        for (int i = 0; i < inlineHints.Count; i++)
+        if (inlineHintsSorted.Count > 0)
         {
-            UICodeHint hint = inlineHints[i];
-            if (hint.Line < firstLine || hint.Line > lastLine || hint.Line >= document.LineCount || IsHidden(hint.Line, out _))
-                continue;
+            for (int i = FirstInlineHintAtOrAfter(firstLine); i < inlineHintsSorted.Count; i++)
+            {
+                UICodeHint hint = inlineHintsSorted[i];
+                if (hint.Line > lastLine) break;
+                if (hint.Line < 0 || hint.Line >= document.LineCount || IsHidden(hint.Line, out _))
+                    continue;
 
-            int length = document.LineAt(hint.Line).Length;
-            float x = left + EndX(skin, scale, hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + INLAY_END_GAP) + ArtWidthOn(hint.Line);
-            DrawPill(list, skin, scale, hint.Text, x, TopOf(area, hint.Line, length, lineHeight), colors);
+                int length = document.LineAt(hint.Line).Length;
+                float x = left + EndX(skin, scale, hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + INLAY_END_GAP) + ArtWidthOn(hint.Line);
+                DrawPill(list, skin, scale, hint.Text, x, TopOf(area, hint.Line, length, lineHeight), colors);
+            }
         }
 
         PaintLenses(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
@@ -3413,11 +3775,8 @@ public partial class CodeEditor : UIComponent
         {
             int length = document.LineAt(note.Line).Length;
             float x = left + EndX(skin, scale, note.Line, length) + digit * (SwatchesOn(note.Line) * 2 + LINE_NOTE_GAP) + ArtWidthOn(note.Line) + LensWidthOn(note.Line, digit);
-            for (int i = 0; i < inlineHints.Count; i++)
-            {
-                if (inlineHints[i].Line == note.Line)
-                    x += EndHintWidth(skin, scale, inlineHints[i].Text, digit);
-            }
+            for (int i = FirstInlineHintAtOrAfter(note.Line); i < inlineHintsSorted.Count && inlineHintsSorted[i].Line == note.Line; i++)
+                x += EndHintWidth(skin, scale, inlineHintsSorted[i].Text, digit);
 
             list.Text(note.Text, new Vector2(x, TopOf(area, note.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * LINE_NOTE_INK * noteShown }, markup: false);
         }
@@ -3427,8 +3786,14 @@ public partial class CodeEditor : UIComponent
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, error, firstLine, lastLine);
         for (int i = 0; i < moreErrors.Count; i++)
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, moreErrors[i], firstLine, lastLine);
-        for (int i = 0; i < diagnostics.Count; i++)
-            PaintDiagnostic(list, skin, scale, area, left, lineHeight, diagnostics[i], firstLine, lastLine);
+        if (diagnosticsSorted.Length > 0)
+        {
+            for (int i = FirstDiagnosticAtOrAfter(firstLine); i < diagnosticsSorted.Length; i++)
+            {
+                if (diagnosticsSorted[i].Line > lastLine) break;
+                PaintDiagnostic(list, skin, scale, area, left, lineHeight, diagnosticsSorted[i], firstLine, lastLine);
+            }
+        }
 
         PaintSpelling(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
         PaintAgentHints(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
@@ -3500,13 +3865,44 @@ public partial class CodeEditor : UIComponent
         list.EndParts();
     }
 
-    // The box a piece of a line takes from one column to another, on the row the first is on
+    // The box a piece of a line takes from one column to another, bounded to the wrapped row that `from` is on.
     private UIRect Piece(UISkin skin, float scale, UIRect area, float left, float lineHeight, int line, int from, int to)
     {
-        float top = TopOf(area, line, from, lineHeight);
-        float x0 = ColumnX(skin, scale, line, from);
-        float x1 = RowOf(line, to) == RowOf(line, from) ? ColumnX(skin, scale, line, to) : x0 + (to - from) * FontOf(skin).Measure("0", scale, markup: false).X;
+        if (document.LineCount == 0)
+            return default;
+
+        line = Math.Clamp(line, 0, document.LineCount - 1);
+        string text = document.LineAt(line);
+        from = Math.Clamp(from, 0, text.Length);
+        to = Math.Clamp(to, from, text.Length);
+
+        int rowIndex = RowOf(line, from);
+        float top = RowTop(area, rowIndex, lineHeight);
+        if (rows.Count == 0 || rows[rowIndex].Line != line)
+        {
+            float fallbackX0 = ColumnX(skin, scale, line, from);
+            float fallbackX1 = ColumnX(skin, scale, line, to);
+            return new UIRect(new Vector2(left + fallbackX0, top - lineHeight), new Vector2(left + fallbackX1, top));
+        }
+
+        CodeRow row = rows[rowIndex];
+        int rowStart = Math.Min(row.Start, from);
+        int endOnRow = Math.Min(to, Math.Min(row.End, text.Length));
+        float x0 = row.Indent + (from > rowStart ? Width(skin, scale, text.AsSpan(rowStart, from - rowStart)) + InlaysWidth(skin, scale, line, rowStart, from) : 0.0f);
+        float x1 = endOnRow > from ? x0 + Width(skin, scale, text.AsSpan(from, endOnRow - from)) + InlaysWidth(skin, scale, line, from, endOnRow) : x0;
         return new UIRect(new Vector2(left + x0, top - lineHeight), new Vector2(left + x1, top));
+    }
+
+    /// <summary>The painted rectangle for a column span on its starting visual row, for tests.</summary>
+    internal UIRect PieceBounds(int line, int from, int to)
+    {
+        if (paintedSkin is not { } skin)
+            return default;
+        float scale = paintedScale;
+        float lineHeight = FontOf(skin).LineHeight * scale;
+        UIRect area = TextArea(skin, scale);
+        EnsureRows(skin, scale);
+        return Piece(skin, scale, area, area.Min.X + TEXT_PAD - scrollX, lineHeight, line, from, to);
     }
 
     /* Signature help, how the function being called at the caret is called */
@@ -3807,13 +4203,13 @@ public partial class CodeEditor : UIComponent
     // After a folded line, a box with the lines it hides counted and the line that closes it, "… }"
     private void PaintFolded(UIDrawList list, UISkin skin, float scale, float x, float top, float lineHeight, int foldEnd, UISyntaxColors colors)
     {
-        string closing = foldEnd < document.LineCount ? document.LineAt(foldEnd).Trim() : string.Empty;
+        ReadOnlySpan<char> closing = foldEnd >= 0 && foldEnd < document.LineCount ? document.LineAt(foldEnd).AsSpan().Trim() : default;
         float gap = FontOf(skin).Measure(" ", scale, markup: false).X;
         float dots = FontOf(skin).Measure("…", scale, markup: false).X;
         var box = new UIRect(new Vector2(x + gap, top - lineHeight + 2.0f), new Vector2(x + gap * 3.0f + dots, top - 2.0f));
         list.Rect(box, skin.HoverColor);
         list.Text("…", new Vector2(x + gap * 2.0f, top), scale, colors.Comment, markup: false);
-        if (closing.Length > 0)
+        if (!closing.IsEmpty)
             Draw(list, skin, scale, closing, box.Max.X + gap, top, colors.Of(SyntaxKind.Punctuation));
     }
 
@@ -3987,48 +4383,117 @@ public partial class CodeEditor : UIComponent
         list.Rect(strip, back);
         list.Rect(new UIRect(strip.Min, new Vector2(strip.Max.X, strip.Min.Y + 1.0f)), skin.TextColor with { W = 0.06f });
 
-        list.PushClip(strip);
-        Span<char> number = stackalloc char[12];
+        // Gutter line numbers stay anchored while sticky header code shifts with horizontal scrollX under the code clip.
+        if (LineNumbers)
+        {
+            list.PushClip(new UIRect(new Vector2(content.Min.X, strip.Min.Y), new Vector2(area.Min.X, strip.Max.Y)));
+            Span<char> number = stackalloc char[12];
+            for (int i = 0; i < held.Count; i++)
+            {
+                int line = held[i];
+                if ((uint)line >= (uint)document.LineCount)
+                    continue;
+                float top = area.Max.Y - i * lineHeight;
+                Number(list, number, diffNumbers is var (_, news) ? (line < news.Length ? news[line] : 0) : line + FirstLineNumber, area.Min.X - digit * GUTTER_GAP, top, scale, digit, skin.Palette.Syntax.LineNumber);
+            }
+            list.PopClip();
+        }
+
+        list.PushClip(new UIRect(new Vector2(area.Min.X, strip.Min.Y), new Vector2(area.Max.X, strip.Max.Y)));
         for (int i = 0; i < held.Count; i++)
         {
             int line = held[i];
+            if ((uint)line >= (uint)document.LineCount)
+                continue;
             string written = document.LineAt(line);
             float top = area.Max.Y - i * lineHeight;
-            float x = area.Min.X + TEXT_PAD;
+            float x = area.Min.X + TEXT_PAD - scrollX;
             int at = 0;
-
-            // The line's number where the gutter has it, a diff's the new version's
-            if (LineNumbers)
-                Number(list, number, diffNumbers is var (_, news) ? (line < news.Length ? news[line] : 0) : line + FirstLineNumber, area.Min.X - digit * GUTTER_GAP, top, scale, digit, skin.Palette.Syntax.LineNumber);
 
             if (DrawnColours(line, written) is { } colours)
             {
                 foreach (SyntaxSpan span in colours)
                 {
-                    if (span.Start + span.Length > written.Length)
+                    if (x > area.Max.X || span.Start >= written.Length)
                         break;
-                    x += Width(skin, scale, written.AsSpan(at, span.Start - at));
-                    x = Draw(list, skin, scale, written.AsSpan(span.Start, span.Length), x, top, ColourOf(colors, span));
-                    at = span.Start + span.Length;
+                    if (span.Start < 0 || span.Length <= 0)
+                        continue;
+
+                    int from = Math.Max(span.Start, at);
+                    int to = Math.Min(span.Start + span.Length, written.Length);
+                    if (to <= from)
+                        continue;
+
+                    if (from > at)
+                    {
+                        ReadOnlySpan<char> gap = written.AsSpan(at, from - at);
+                        x = gap.IsWhiteSpace() ? x + Width(skin, scale, gap) : DrawSticky(list, skin, scale, gap, x, top, colors.Of(SyntaxKind.Name), area.Min.X, area.Max.X);
+                    }
+
+                    x = DrawSticky(list, skin, scale, written.AsSpan(from, to - from), x, top, ColourOf(colors, span), area.Min.X, area.Max.X);
+                    at = to;
                 }
+
+                if (at < written.Length && x <= area.Max.X)
+                    DrawSticky(list, skin, scale, written.AsSpan(at), x, top, colors.Of(SyntaxKind.Name), area.Min.X, area.Max.X);
             }
             else
             {
-                Draw(list, skin, scale, written, x, top, colors.Of(SyntaxKind.Name));
+                DrawSticky(list, skin, scale, written, x, top, colors.Of(SyntaxKind.Name), area.Min.X, area.Max.X);
             }
         }
         list.PopClip();
     }
 
+    // Helper method to draw a sticky-header text span while skipping glyphs completely scrolled past area.Min.X.
+    private float DrawSticky(UIDrawList list, UISkin skin, float scale, ReadOnlySpan<char> text, float x, float top, Vector4 color, float minX, float maxX)
+    {
+        if (text.IsEmpty || x > maxX)
+            return x;
+
+        if (x >= minX)
+            return Draw(list, skin, scale, text, x, top, color);
+
+        float tab = TabWidth(skin, scale);
+        UIFont font = FontOf(skin);
+        int at = 0;
+        while (at < text.Length)
+        {
+            char c = text[at];
+            int len = c == '\t' ? 1 : (char.IsHighSurrogate(c) && at + 1 < text.Length ? 2 : 1);
+            float w = c == '\t' ? tab : font.Measure(text.Slice(at, len), scale, markup: false).X;
+            if (x + w > minX)
+                break;
+            x += w;
+            at += len;
+        }
+
+        return at < text.Length && x <= maxX ? Draw(list, skin, scale, text[at..], x, top, color) : x;
+    }
+
+    private int FirstSwatchAtOrAfter(int line)
+    {
+        int low = 0, high = swatches.Count;
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+            if (swatches[mid].Line < line)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+        return low;
+    }
+
     // How many swatches a line has at its end, for what's written after them
     private int SwatchesOn(int line)
     {
+        if (swatches.Count == 0)
+            return 0;
+
         int count = 0;
-        for (int i = 0; i < swatches.Count; i++)
-        {
-            if (swatches[i].Line == line)
-                count++;
-        }
+        for (int i = FirstSwatchAtOrAfter(line); i < swatches.Count && swatches[i].Line == line; i++)
+            count++;
         return count;
     }
 
@@ -4070,6 +4535,20 @@ public partial class CodeEditor : UIComponent
     // whole screen's loading picture would never fit in there as it is
     private const int ART_MOST = 256;
 
+    private int FirstArtAtOrAfter(int line)
+    {
+        int low = 0, high = art.Count;
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+            if (art[mid].Line < line)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+        return low;
+    }
+
     // The art at the end of the lines in sight, one after the other after the swatches, what there is no picture of left out
     private void PaintArt(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int firstLine, int lastLine)
     {
@@ -4082,10 +4561,12 @@ public partial class CodeEditor : UIComponent
         int line = -1;
         float x = 0.0f, middle = 0.0f;
 
-        for (int i = 0; i < art.Count && i < artBoxes.Length; i++)
+        for (int i = FirstArtAtOrAfter(firstLine); i < art.Count && i < artBoxes.Length; i++)
         {
             HidlArt item = art[i];
-            if (item.Line < firstLine || item.Line > lastLine || item.Line >= document.LineCount || IsHidden(item.Line, out _))
+            if (item.Line > lastLine)
+                break;
+            if (item.Line < 0 || item.Line >= document.LineCount || IsHidden(item.Line, out _))
                 continue;
 
             if (item.Line != line)
@@ -4110,10 +4591,13 @@ public partial class CodeEditor : UIComponent
     // How much room the art at the end of a line took the last time it was drawn, for what's written after it
     private float ArtWidthOn(int line)
     {
+        if (art.Count == 0)
+            return 0.0f;
+
         float width = 0.0f;
-        for (int i = 0; i < art.Count && i < artBoxes.Length; i++)
+        for (int i = FirstArtAtOrAfter(line); i < art.Count && i < artBoxes.Length && art[i].Line == line; i++)
         {
-            if (art[i].Line == line && artBoxes[i].Width > 0.0f)
+            if (artBoxes[i].Width > 0.0f)
                 width += artBoxes[i].Width + ART_GAP;
         }
         return width;
@@ -4332,6 +4816,7 @@ public partial class CodeEditor : UIComponent
         }
 
         diagnostics = moved;
+        RebuildDiagnosticsSorted();
     }
 
     // Whether a line has something wrong on it, for its number in the gutter
@@ -4350,13 +4835,13 @@ public partial class CodeEditor : UIComponent
         // The worst on the line, an error over a warning, a hint is no mark at all
         bool marked = false;
         warning = true;
-        for (int i = 0; i < diagnostics.Count; i++)
+        for (int i = FirstDiagnosticAtOrAfter(line); i < diagnosticsSorted.Length && diagnosticsSorted[i].Line == line; i++)
         {
-            if (diagnostics[i].Line != line || diagnostics[i].Hint)
+            if (diagnosticsSorted[i].Hint)
                 continue;
 
             marked = true;
-            warning &= diagnostics[i].Warning;
+            warning &= diagnosticsSorted[i].Warning;
         }
 
         return marked;

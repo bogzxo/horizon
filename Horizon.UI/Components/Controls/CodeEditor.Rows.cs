@@ -50,6 +50,10 @@ public partial class CodeEditor
     private readonly Dictionary<int, int> foldable = [];
     private readonly List<(int Start, int End, int MaxEnd)> foldableSorted = [];
     private readonly HashSet<int> folded = [];
+    private readonly List<(int Start, int End)> foldableScratch = [];
+    private readonly List<int> foldedScratch = [];
+    private readonly List<(int Start, int End)> foldedIntervals = [];
+    private int foldedIntervalsVersion = -1;
     private int foldsChanged;
 
     // What the lines and the caret were last tick, to move the folds along with lines put in or taken out above them
@@ -119,10 +123,19 @@ public partial class CodeEditor
     public void UnfoldAtCaret()
     {
         int line = document.Caret.Line;
-        int before = folded.Count;
-        folded.RemoveWhere(start => start == line || (foldable.TryGetValue(start, out int end) && start < line && line <= end));
-        if (folded.Count != before)
+        foldedScratch.Clear();
+        foreach (int start in folded)
+        {
+            if (start == line || (foldable.TryGetValue(start, out int end) && start < line && line <= end))
+                foldedScratch.Add(start);
+        }
+
+        if (foldedScratch.Count > 0)
+        {
+            for (int i = 0; i < foldedScratch.Count; i++)
+                folded.Remove(foldedScratch[i]);
             foldsChanged++;
+        }
     }
 
     /// <summary>
@@ -203,26 +216,77 @@ public partial class CodeEditor
                 foldable[start] = end;
         }
 
-        if (folded.RemoveWhere(start => !foldable.ContainsKey(start)) > 0)
-            foldsChanged++;
-
-        // Build a sorted prefix-max index of foldable scopes so StickyLines queries run in O(log N + depth).
-        foldableSorted.Clear();
-        if (foldable.Count > 0)
+        foldedScratch.Clear();
+        foreach (int start in folded)
         {
-            if (foldableSorted.Capacity < foldable.Count)
-                foldableSorted.Capacity = foldable.Count;
-            foreach (var (start, end) in foldable)
-                foldableSorted.Add((start, end, end));
-            foldableSorted.Sort(static (a, b) => a.Start.CompareTo(b.Start));
-            int maxEnd = int.MinValue;
-            for (int i = 0; i < foldableSorted.Count; i++)
-            {
-                var entry = foldableSorted[i];
-                if (entry.End > maxEnd)
-                    maxEnd = entry.End;
-                foldableSorted[i] = (entry.Start, entry.End, maxEnd);
-            }
+            if (!foldable.ContainsKey(start))
+                foldedScratch.Add(start);
+        }
+        if (foldedScratch.Count > 0)
+        {
+            for (int i = 0; i < foldedScratch.Count; i++)
+                folded.Remove(foldedScratch[i]);
+            foldsChanged++;
+        }
+
+        RebuildFoldableSorted();
+        foldedIntervalsVersion = -1;
+        linesWere = document.LineCount;
+        caretLineWas = document.Caret.Line;
+    }
+
+    // Helper method to build a sorted prefix-max index of foldable scopes so StickyLines queries run in O(log N + depth).
+    private void RebuildFoldableSorted()
+    {
+        foldableSorted.Clear();
+        if (foldable.Count == 0)
+            return;
+
+        if (foldableSorted.Capacity < foldable.Count)
+            foldableSorted.Capacity = foldable.Count;
+        foreach (var (start, end) in foldable)
+            foldableSorted.Add((start, end, end));
+        foldableSorted.Sort(static (a, b) => a.Start.CompareTo(b.Start));
+        int maxEnd = int.MinValue;
+        for (int i = 0; i < foldableSorted.Count; i++)
+        {
+            var entry = foldableSorted[i];
+            if (entry.End > maxEnd)
+                maxEnd = entry.End;
+            foldableSorted[i] = (entry.Start, entry.End, maxEnd);
+        }
+    }
+
+    // Helper method to build a sorted non-overlapping list of outermost active folds for O(log F) IsHidden queries.
+    private void EnsureFoldedIntervals()
+    {
+        if (foldedIntervalsVersion == foldsChanged)
+            return;
+
+        foldedIntervalsVersion = foldsChanged;
+        foldedIntervals.Clear();
+        if (folded.Count == 0)
+            return;
+
+        foldableScratch.Clear();
+        foreach (int start in folded)
+        {
+            if (foldable.TryGetValue(start, out int end) && end > start)
+                foldableScratch.Add((start, end));
+        }
+
+        if (foldableScratch.Count == 0)
+            return;
+
+        foldableScratch.Sort(static (a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : b.End.CompareTo(a.End));
+        int maxEnd = -1;
+        for (int i = 0; i < foldableScratch.Count; i++)
+        {
+            var interval = foldableScratch[i];
+            if (interval.End <= maxEnd)
+                continue;
+            foldedIntervals.Add(interval);
+            maxEnd = interval.End;
         }
     }
 
@@ -233,28 +297,71 @@ public partial class CodeEditor
     private void UpdateFolds()
     {
         int lines = document.LineCount, caret = document.Caret.Line;
-        if (lines != linesWere && folded.Count > 0)
+        if (lines != linesWere && (foldable.Count > 0 || folded.Count > 0))
         {
             int by = lines - linesWere, pivot = Math.Min(caret, caretLineWas);
-            var moved = new List<int>(folded.Count);
-            foreach (int start in folded)
-                moved.Add(start > pivot ? start + by : start);
+            int removed = by < 0 ? -by : 0;
+            bool changed = false;
 
-            folded.Clear();
-            foreach (int start in moved)
+            if (foldable.Count > 0)
             {
-                if (start >= 0 && start < lines)
-                    folded.Add(start);
+                foldableScratch.Clear();
+                foreach (var (start, end) in foldable)
+                {
+                    if (by < 0 && start > pivot && start <= pivot + removed)
+                        continue;
+
+                    int newStart = start > pivot ? start + by : start;
+                    int newEnd;
+                    if (by > 0)
+                        newEnd = end >= pivot ? end + by : end;
+                    else
+                        newEnd = end > pivot + removed ? end + by : end > pivot ? pivot : end;
+
+                    newEnd = Math.Min(newEnd, lines - 1);
+                    if (newStart >= 0 && newStart < lines && newEnd > newStart)
+                        foldableScratch.Add((newStart, newEnd));
+                }
+
+                foldable.Clear();
+                for (int i = 0; i < foldableScratch.Count; i++)
+                {
+                    var (start, end) = foldableScratch[i];
+                    if (!foldable.TryGetValue(start, out int existing) || end > existing)
+                        foldable[start] = end;
+                }
+
+                RebuildFoldableSorted();
+                changed = true;
             }
 
-            foldsChanged++;
+            if (folded.Count > 0)
+            {
+                foldedScratch.Clear();
+                foreach (int start in folded)
+                {
+                    if (by < 0 && start > pivot && start <= pivot + removed)
+                        continue;
+                    int newStart = start > pivot ? start + by : start;
+                    if (newStart >= 0 && newStart < lines && foldable.ContainsKey(newStart))
+                        foldedScratch.Add(newStart);
+                }
+
+                folded.Clear();
+                for (int i = 0; i < foldedScratch.Count; i++)
+                    folded.Add(foldedScratch[i]);
+                changed = true;
+            }
+
+            if (changed)
+                foldsChanged++;
         }
 
         linesWere = lines;
         caretLineWas = caret;
 
-        // A caret that went inside something folded opens it, a caret is never hidden
-        if (folded.Count > 0 && IsHidden(caret, out int into))
+        // A caret that went inside something folded opens every enclosing fold, a caret is never hidden
+        while (folded.Count > 0 && IsHidden(caret, out int into))
         {
             folded.Remove(into);
             foldsChanged++;
@@ -264,14 +371,32 @@ public partial class CodeEditor
     // Whether a line is folded away, and into which line, the outermost fold round it
     private bool IsHidden(int line, out int into)
     {
-        into = -1;
-        foreach (int start in folded)
+        if (folded.Count == 0)
         {
-            if (start < line && foldable.TryGetValue(start, out int end) && line <= end && (into < 0 || start < into))
-                into = start;
+            into = -1;
+            return false;
         }
 
-        return into >= 0;
+        EnsureFoldedIntervals();
+        int low = 0, high = foldedIntervals.Count;
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+            if (foldedIntervals[mid].Start < line)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+
+        int candidate = low - 1;
+        if (candidate >= 0 && line <= foldedIntervals[candidate].End)
+        {
+            into = foldedIntervals[candidate].Start;
+            return true;
+        }
+
+        into = -1;
+        return false;
     }
 
     /// <summary>The rows made again if anything they hang on changed (the text, the folds, the wrapping and the width it wraps at).</summary>
