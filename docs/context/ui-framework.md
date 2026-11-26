@@ -454,16 +454,16 @@ Unclear: whether any control exposes semantic roles; none found in this assembly
 | Typed characters & key encoding | `Input/UIKeyboard.cs`, `Input/UIKeys.cs` |
 | Menu/shortcut registration | `Components/Popups/UICommands.cs`, `Input/UIShortcuts.cs`, `MenuBar*.cs` |
 | Painting primitives | `Drawing/UIDrawList*.cs` |
-| Drawing text / fonts / rich text | `UIDrawList.Text.cs`, `Drawing/UIFont.cs`, `UIRichText*.cs`, `horizon/Horizon/Rendering/2D/Text/GlyphAtlas.cs`, `horizon/Horizon/shaders/ui/ui.slang` |
+| Drawing text / fonts / rich text | `UIDrawList.Text.cs` (1-quad `SubpixelInkFlag` when dual-source enabled), `UIRenderer.cs` (hybrid per-stretch split: `ui.slang`+`BlendMode.Alpha` for opaque/non-subpixel quads, `ui_dual.slang`+`BlendMode.DualSource` for contiguous `SubpixelInkFlag` runs), `Drawing/UIFont.cs`, `UIRichText*.cs`, `horizon/Horizon/Rendering/2D/Text/GlyphAtlas.cs`, `horizon/Horizon/shaders/ui/{ui,ui_dual}.slang` |
 | Glass/blur/shadows | `Drawing/UIGlass*.cs`, `horizon/Horizon/shaders/post/glass.slang`, `horizon/Horizon/Rendering/Common/PostProcessing/GaussianBlur.cs` (`Margin`), `UIDrawList.cs` (`GlassMark/Glass/Lifted/Shadow`) |
 | Skin art, palette, themes | `Skinning/UISkin*.cs`, `UIPalette.cs`, `UITheme.cs` |
 | Tweens/intros | `UITweens.cs`, `UIComponent.cs` (Intro), `UIComponent.Sliding.cs` |
-| Code editor features | `Components/Controls/CodeEditor.<Feature>.cs`, `UITextDocument*.cs`, `Scripting/*Highlighter*.cs` |
+| Code editor features | `Components/Controls/CodeEditor.<Feature>.cs` (double-buffered colouring arrays, single-line `foldable` reuse, `SemanticSpans` array reuse), `UITextDocument*.cs`, `Scripting/*Highlighter*.cs` |
 | Layout files / bindings | `Layout/UILayout.cs`, `UIModule.Runtime.cs`, `Scripting/UIScript*.cs` |
 | Properties exposed to HIDL | each component's `DefineScript` override; base in `UIComponent.Scripting.cs` |
 | Script-owned UI (extensions) | `Scripting/UIScriptedLayout.cs`, `UIScriptedScreens.cs`, `hex/docs/extensions.md` |
 | MCP UI tree / click | `hex/Hex.Dawn/Agents/DawnScene.McpUiTree.cs`, `DawnScene.McpScreen.cs` |
-| Perf / frame pacing / retained picture | `UICompositor.cs` (`Retained`, `FrameRateLimit`, `NoteFrame`), `Drawing/UIDrawList.Reuse.cs`, `Diagnostics/` |
+| Perf / frame pacing / retained picture | `UICompositor.cs` (`Retained`, `FrameRateLimit`, `NoteFrame`, immediate `PostLayer` retention, indexed `Touch` loop), `Drawing/UIDrawList.Reuse.cs`, `Label`/`Button` leaf `Measure` caches + zero-alloc `Button` punch, `TreeView.WithoutIcons` fast-path, `Diagnostics/` (`PerformanceSample.Read(..., full: false)`) |
 | Debug overlays | `Layout/UILayoutOverlay.cs`, `Engine/Debugging/SkylineDebugger.cs` (Debug only) |
 | UI tests | `horizon/Horizon.Tests/UI/` |
 | Scene with a UI ready | `Engine/Scene2D.cs` (`UI` property) |

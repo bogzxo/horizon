@@ -189,7 +189,9 @@ public enum BlendFactor
     DstAlpha,
     OneMinusDstAlpha,
     Src1Color,
-    OneMinusSrc1Color
+    OneMinusSrc1Color,
+    Src1Alpha,
+    OneMinusSrc1Alpha
 }
 
 /// <summary>Where an attachment of a render target sits, which is also which output of a fragment shader it takes.</summary>

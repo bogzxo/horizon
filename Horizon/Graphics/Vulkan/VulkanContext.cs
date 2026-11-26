@@ -677,7 +677,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         IsPortability = deviceExtensions.Contains(PORTABILITY_SUBSET);
         HasDrawIndirectCount = available12.DrawIndirectCount;
         HasMultiDrawIndirect = available.Features.MultiDrawIndirect;
-        SupportsDualSourceBlend = available.Features.DualSrcBlend;
+        SupportsDualSourceBlend = available.Features.DualSrcBlend && Limits.MaxFragmentDualSrcAttachments >= 1;
 
         if (!available12.DescriptorIndexing || !available12.DescriptorBindingSampledImageUpdateAfterBind || !available12.ShaderSampledImageArrayNonUniformIndexing || !available12.RuntimeDescriptorArray)
             throw new InvalidOperationException($"{DeviceName} hasn't got descriptor indexing with update after bind, which the bindless textures can't do without.");

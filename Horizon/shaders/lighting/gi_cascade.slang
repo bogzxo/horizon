@@ -67,27 +67,69 @@ float4 trace(float2 probe, float2 direction, Field field)
     if (!hasAnything(field)) return float4(0.0, 0.0, 0.0, 1.0);
 
     float t = params.uIntervalStart;
-    float2 origin = worldOf(probe / params.uSize);
+    float2 probeUv = probe / params.uSize;
     float2 step = direction * params.uPixelWorld;
-    float invPixelWorld = 1.0 / params.uPixelWorld;
+    float2 uvStep = step * field.pictureScale;
 
-    // A probe inside a wall sees out of the face of it, the rays that head deeper in see nothing at all
-    float out = 0.0;
-    if (!leaveWall(origin, direction, out, field, true))
+    // Exact slab intersection of probeUv + uvStep * t against [0, 1]^2
+    float tEnter = -1e30;
+    float tExit = 1e30;
+    if (abs(uvStep.x) > 1e-12)
+    {
+        float invX = 1.0 / uvStep.x;
+        float tx0 = -probeUv.x * invX;
+        float tx1 = (1.0 - probeUv.x) * invX;
+        tEnter = max(tEnter, min(tx0, tx1));
+        tExit = min(tExit, max(tx0, tx1));
+    }
+    else if (probeUv.x < 0.0 || probeUv.x > 1.0)
+    {
+        tExit = -1e30;
+    }
+    if (abs(uvStep.y) > 1e-12)
+    {
+        float invY = 1.0 / uvStep.y;
+        float ty0 = -probeUv.y * invY;
+        float ty1 = (1.0 - probeUv.y) * invY;
+        tEnter = max(tEnter, min(ty0, ty1));
+        tExit = min(tExit, max(ty0, ty1));
+    }
+    else if (probeUv.y < 0.0 || probeUv.y > 1.0)
+    {
+        tExit = -1e30;
+    }
+
+    // Top cascade has nothing above it and off-screen rays cannot hit any on-screen radiance
+    if (params.uHasUpper == 0 && (tExit <= t || tEnter >= params.uIntervalEnd))
         return float4(0.0, 0.0, 0.0, 0.0);
 
-    if (out > 0.0)
+    float marchEnd = params.uHasUpper == 0 ? min(params.uIntervalEnd, tExit) : params.uIntervalEnd;
+    float2 origin = worldOf(probeUv);
+    float invPixelWorld = 1.0 / params.uPixelWorld;
+
+    // A probe inside a wall sees out of the face of it, the rays that head deeper in see nothing at all.
+    // On-screen probes check the cached combined signed distance in uTexRadiance.a first to skip leaveWall when open.
+    bool probeOnScreen = all(probeUv >= 0.0) && all(probeUv <= 1.0);
+    bool needLeaveWall = !probeOnScreen || uTexRadiance.SampleLevel(probeUv, 0.0).a <= 0.0;
+    if (needLeaveWall)
     {
-        out += 0.5 * fieldTexel(field);
-        t = max(t, out * invPixelWorld);
+        float outDist = 0.0;
+        if (!leaveWall(origin, direction, outDist, field, true))
+            return float4(0.0, 0.0, 0.0, 0.0);
+
+        if (outDist > 0.0)
+        {
+            outDist += 0.5 * fieldTexel(field);
+            t = max(t, outDist * invPixelWorld);
+        }
     }
 
     for (int i = 0; i < MOST_STEPS; i++)
     {
-        if (t >= params.uIntervalEnd) break;
+        if (t >= marchEnd) break;
+        if (params.uHasUpper != 0 && t > tExit) break;
 
-        float2 position = origin + step * t;
-        float2 picture = pictureOfFast(position, field);
+        float2 picture = probeUv + uvStep * t;
         if (all(picture >= 0.0) && all(picture <= 1.0))
         {
             // Single tap fetches both the cached combined wall+sprite distance (alpha) and the wall radiance (rgb)
@@ -100,6 +142,7 @@ float4 trace(float2 probe, float2 direction, Field field)
         else
         {
             // Off the picture there is no sprite field and no cached radiance, fall back to the wall SDF
+            float2 position = origin + step * t;
             float toWall = wallsDistance(position, field);
             if (toWall < 0.25)
                 return float4(0.0, 0.0, 0.0, 0.0);
@@ -121,14 +164,16 @@ float4 upper(float2 probePixels, uint direction)
     float2 count = params.uUpperProbeCount;
     at = clamp(at, 0.0, count - 1.0);
 
-    int upperSqrt = int(params.uUpperDirectionsSqrt);
+    uint upperSqrt = uint(params.uUpperDirectionsSqrt);
+    uint mask = upperSqrt - 1u;
+    uint shift = firstbithigh(upperSqrt);
     float2 invCascade = 1.0 / params.uCascadeSize;
 
     float4 total = float4(0.0, 0.0, 0.0, 0.0);
-    for (int k = 0; k < 4; k++)
+    for (uint k = 0u; k < 4u; k++)
     {
-        int d = int(direction) * 4 + k;
-        float2 dirCell = float2(d % upperSqrt, d / upperSqrt);
+        uint d = direction * 4u + k;
+        float2 dirCell = float2(float(d & mask), float(d >> shift));
         total += uTexUpper.SampleLevel((dirCell * count + at + 0.5) * invCascade, 0.0);
     }
 

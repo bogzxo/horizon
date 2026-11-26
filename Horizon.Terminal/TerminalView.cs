@@ -39,6 +39,7 @@ public partial class TerminalView : UIComponent, IDisposable
     private PseudoTerminal? process;
     private readonly ConcurrentQueue<byte[]> arrived = new();
     private int drawnVersion = -1;
+    private int requestedVersion = -1;
 
     // Where the cursor is drawn, gliding towards where it is, and the blink
     private Vector2 cursorAt;
@@ -235,6 +236,8 @@ public partial class TerminalView : UIComponent, IDisposable
         program?.Dispose();
         program = null;
         screen.Reset();
+        drawnVersion = -1;
+        requestedVersion = -1;
         scrolled = 0;
         hasSelection = false;
         ClearEnded();
@@ -256,6 +259,8 @@ public partial class TerminalView : UIComponent, IDisposable
         process = null;
         program?.Dispose();
         screen.Reset();
+        drawnVersion = -1;
+        requestedVersion = -1;
         scrolled = 0;
         hasSelection = false;
         ClearEnded();
@@ -444,8 +449,23 @@ public partial class TerminalView : UIComponent, IDisposable
         // the frame deadline: doing so renders continuously even when the terminal has nothing new to show.
         // A view that isn't shown (a tab behind another, a pane zoomed away) is never painted, so the version it drew
         // never catches up: it asks once as its screen changes and not again every tick until somebody looks at it.
-        if (changed || bell > 0.0f || (screen.Version != drawnVersion && IsShownInHierarchy))
+        bool resizeReady = false;
+        if (resizePending)
+        {
+            long elapsedMs = Environment.TickCount64 - sizeWantedSince;
+            if (elapsedMs >= RESIZE_SETTLE_MS)
+                resizeReady = true;
+            else
+                GameEngine.Instance?.WindowManager?.RequestTickIn(Math.Max(0.01, (RESIZE_SETTLE_MS - elapsedMs) / 1000.0));
+        }
+
+        bool versionNeedsFrame = screen.Version != drawnVersion && screen.Version != requestedVersion && IsShownInHierarchy;
+        if (changed || bell > 0.0f || resizeReady || versionNeedsFrame)
+        {
+            if (IsShownInHierarchy && screen.Version != drawnVersion)
+                requestedVersion = screen.Version;
             RequestFrame();
+        }
     }
 
     private const float SYNC_MOST = 0.1f;
@@ -1067,7 +1087,8 @@ public partial class TerminalView : UIComponent, IDisposable
             else
             {
                 resizePending = true;
-                Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestFrames();
+                double remainingSeconds = Math.Max(0.01, (RESIZE_SETTLE_MS - (now - sizeWantedSince)) / 1000.0);
+                Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestTickIn(remainingSeconds);
             }
         }
         else
@@ -1190,6 +1211,7 @@ public partial class TerminalView : UIComponent, IDisposable
         PaintEnded(list, palette);
         list.EndParts();
         drawnVersion = screen.Version;
+        requestedVersion = screen.Version;
     }
 
     // Version fingerprint for the static terminal cell grid (everything PaintRow reads, excluding cursor blink/glide state)

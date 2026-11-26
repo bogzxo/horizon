@@ -303,7 +303,7 @@ dotnet test Horizon.Tests/Horizon.Tests.csproj
 dotnet test Horizon.Tests/Horizon.Tests.csproj --filter "FullyQualifiedName~Horizon.Tests.Shaders"     # tasks.hor test_shaders
 dotnet test Horizon.Tests --no-build --configuration Release --verbosity normal --blame-hang-timeout 3m --blame-hang-dump-type none   # CI
 ```
-Self-test suite note: run from the real build output, not a copy (copies lose `hex-extensions`; memory note), and avoid heredocs that mangle escapes.
+Pass 7 counts: `Horizon.Tests` = 2,640 unit tests; `Horizon.Testing --checks` = 848 self-checks. Self-test suite note: run from the real build output, not a copy (copies lose `hex-extensions`; memory note), and avoid heredocs that mangle escapes.
 
 ## 11. CI (`.github/workflows/`)
 
@@ -370,7 +370,7 @@ Mirror Android/iOS: `IPlatform` + `IPlatformHost` + `IPlatformSurface` + `IPlatf
 - Android Testing assembly name is `Horizon.Testing` on purpose (InternalsVisibleTo). Namespace `Horizon.Testing.Android` collides with `Android.*` implicit usings, so csproj does `<Using Remove="Android.App" .../>`; in linked files qualify with `global::Android...`. Same for iOS (UIKit, Foundation, CoreGraphics removed).
 - Namespace != assembly: `Horizon.Terminal` types live in `Horizon.UI.Components`, `Horizon.Tooling` in `Horizon.UI.Scripting` (moved out of the engine, namespaces kept). Search by type, not by assembly name.
 - macOS: surface creation must run on the main thread; Silk GLFW has no Vulkan on mac; default windowing = SDL off Windows. `HORIZON_WINDOWING` overrides.
-- Desktop gamepad: `GlfwInputWithoutGamepads` used when `ReadsGamepads` is false and not SDL, because Silk's GLFW context enumerates controllers at creation and a broken driver can stall it for a minute (comment in `DesktopWindow.cs:~147`).
+- Desktop gamepad: On GLFW (`!UsesSdl`), `DesktopWindow` always creates `GlfwInputWithoutGamepads` at `_window.Load` because Silk's GLFW context enumerates controllers synchronously at creation and a broken driver can stall startup. When `ReadsGamepads` is true, `DesktopHost.OpenGamepads` returns a deferred `SilkGamepadSource` reporting `0` initially and triggers the 16-slot probe on the window thread via `DesktopWindow.FramePresented()` -> `DesktopHost.OnFirstFramePresented()` -> `SilkGamepadSource.ActivateProbe()`.
 - Check scenes run by *update count* not clock (`UISelfTest`); `--checks` runs at 240 updates/s with VSync off; going faster than frames breaks skin stitching (comment in `Program.cs`).
 - Examples are factories (`Func<Scene>`) so leaving an example frees GPU state; constructors must not touch the GPU (Initialize runs on the render thread).
 - Real-process pty tests are flaky under parallelism: keep them in the serialized collection. DAP tests have a 15 s read timeout because Linux/macOS runners once hung silently.
@@ -394,10 +394,11 @@ Mirror Android/iOS: `IPlatform` + `IPlatformHost` + `IPlatformSurface` + `IPlatf
 | Audio backends | `SdlAudioOutput.cs`, `Audio/AAudioOutput*.cs`, `Audio/IosAudioOutput.cs`; core `Horizon/Audio/AudioDevice.cs` (`HORIZON_AUDIO`) |
 | Shader packs | `Horizon.Shaders.Build/Program.cs`, `tasks.hor`, `Horizon/shaders.manifest`, `scripts/verify-apk-shaders.ps1`, `Horizon.Tests/Shaders/` |
 | Pty | `Horizon/Core/Processes/PseudoTerminal*.cs` |
-| VT parsing / screen | `Horizon.Terminal/VtParser.cs`, `TerminalScreen.cs` |
-| Terminal embedding in an app | `Horizon.Terminal/Hosting/TerminalHost.cs`, `ITerminalHostUi.cs`, `ITerminalProgram.cs` |
-| Terminal plugins/keys/shell scripts | `Horizon.Terminal/Assets/terminal/**` |
-| LSP client | `Horizon.Tooling/LanguageServers/LanguageServers.cs`, `LanguageServer.cs` |
+| VT parsing / screen | `Horizon.Terminal/VtParser.cs`, `TerminalScreen.cs` (`TerminalView` one-shot `requestedVersion` & `RequestTickIn` resize debounce) |
+| Terminal embedding in an app | `Horizon.Terminal/Hosting/TerminalHost.cs`, `TerminalHost.Watching.cs` (`IsWatchedPath` filter before `Wake()`, non-recursive settings/keys watchers, `RequestTickIn` settle), `ITerminalHostUi.cs`, `ITerminalProgram.cs` |
+| Terminal plugins/keys/shell scripts | `Horizon.Terminal/Assets/terminal/**` (`dusk.ps1` 24h `DUSK_COMMANDS_FILE` cache; lazy zero-closure `TerminalCommandLookup.ScanPath`; non-blocking `TerminalProfiles.Discover`) |
+| LSP client | `Horizon.Tooling/LanguageServers/LanguageServers.cs`, `LanguageServer.cs` (cached `incrementalChanges`, span suffix glob fast-path) |
+| Desktop input & clipboard | `Horizon.Platform.Desktop` (`SilkInputSource.AsciiStrings` 128-entry ASCII table, `WindowsClipboard` direct span copy) |
 | Debugger client | `Horizon.Tooling/Debugging/DebugSession.cs`, `DebugAdapterConnection.cs` |
 | Check harness | `Horizon.Testing/Host/TestHost.cs`, `TestCatalog.cs`, `CheckReport.cs`, `Checks/TestChecks.cs`, `Checks/UISelfTest.cs` |
 | Per-platform harness differences | `Horizon.Testing/Host/TestPlatform.Desktop.cs`, `Horizon.Testing.Android/Host/TestPlatform.Android.cs`, `Horizon.Testing.iOS/Host/TestPlatform.iOS.cs` |

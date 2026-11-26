@@ -13,12 +13,13 @@ struct ParticleInstance
     float2 velocity;
 };
 
-// VkDrawIndirectCommand, the instance count is what this fills in.
+// VkDrawIndexedIndirectCommand (20 bytes), the instance count is what this fills in.
 struct DrawCommand
 {
-    uint vertexCount;
+    uint indexCount;
     uint instanceCount;
-    uint firstVertex;
+    uint firstIndex;
+    int vertexOffset;
     uint firstInstance;
 };
 

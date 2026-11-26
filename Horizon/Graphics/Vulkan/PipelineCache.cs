@@ -1,3 +1,6 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+
 using Horizon.Logging;
 
 using Silk.NET.Core.Native;
@@ -131,14 +134,42 @@ internal sealed unsafe class PipelineCache : IDisposable
         }
     }
 
+    private static ReadOnlySpan<byte> VsMainUtf8 => "vsMain\0"u8;
+    private static ReadOnlySpan<byte> FsMainUtf8 => "fsMain\0"u8;
+    private static ReadOnlySpan<byte> CsMainUtf8 => "csMain\0"u8;
+
+    private static byte* EntryPointPointer(string entryPoint, out nint allocated)
+    {
+        allocated = 0;
+        if (string.Equals(entryPoint, "vsMain", StringComparison.Ordinal))
+            return (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetReference(VsMainUtf8));
+        if (string.Equals(entryPoint, "fsMain", StringComparison.Ordinal))
+            return (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetReference(FsMainUtf8));
+        if (string.Equals(entryPoint, "csMain", StringComparison.Ordinal))
+            return (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetReference(CsMainUtf8));
+
+        allocated = SilkMarshal.StringToPtr(entryPoint);
+        return (byte*)allocated;
+    }
+
     /// <summary>The pipeline for a shader drawn a certain way, made the first time it is asked for.</summary>
     public Pipeline GetGraphics(in GraphicsKey key, Shader shader, VertexArray? vertices, ReadOnlySpan<Format> colorFormats, Format depthFormat, bool hasStencil)
     {
         lock (gate)
         {
             if (graphics.TryGetValue(key, out Pipeline existing)) return existing;
+        }
 
-            Pipeline made = MakeGraphics(key, shader, vertices, colorFormats, depthFormat, hasStencil);
+        Pipeline made = MakeGraphics(key, shader, vertices, colorFormats, depthFormat, hasStencil);
+
+        lock (gate)
+        {
+            if (graphics.TryGetValue(key, out Pipeline raced))
+            {
+                context.Vk.DestroyPipeline(context.Device, made, null);
+                return raced;
+            }
+
             graphics[key] = made;
             SaveSoon();
             return made;
@@ -150,11 +181,115 @@ internal sealed unsafe class PipelineCache : IDisposable
         lock (gate)
         {
             if (compute.TryGetValue(shader.Handle, out Pipeline existing)) return existing;
+        }
 
-            Pipeline made = MakeCompute(shader);
+        Pipeline made = MakeCompute(shader);
+
+        lock (gate)
+        {
+            if (compute.TryGetValue(shader.Handle, out Pipeline raced))
+            {
+                context.Vk.DestroyPipeline(context.Device, made, null);
+                return raced;
+            }
+
             compute[shader.Handle] = made;
             SaveSoon();
             return made;
+        }
+    }
+
+    /// <summary>Compiles any uncached compute pipelines in a single batched <c>vkCreateComputePipelines</c> call.</summary>
+    public void WarmCompute(ReadOnlySpan<Shader> shaders)
+    {
+        if (shaders.IsEmpty) return;
+
+        var pending = new List<Shader>(shaders.Length);
+        lock (gate)
+        {
+            foreach (Shader shader in shaders)
+            {
+                if (shader is not { IsValid: true, IsCompute: true }) continue;
+                if (compute.TryGetValue(shader.Handle, out Pipeline existing))
+                {
+                    shader.ComputePipeline = existing;
+                    continue;
+                }
+                if (!pending.Contains(shader))
+                    pending.Add(shader);
+            }
+        }
+
+        if (pending.Count == 0) return;
+
+        var infos = new ComputePipelineCreateInfo[pending.Count];
+        var allocated = new nint[pending.Count];
+        var created = new Pipeline[pending.Count];
+
+        for (int i = 0; i < pending.Count; i++)
+        {
+            Shader shader = pending[i];
+            Shader.Stage stage = default;
+            for (int s = 0; s < shader.Modules.Count; s++)
+            {
+                if (shader.Modules[s].Kind == ShaderStage.Compute)
+                {
+                    stage = shader.Modules[s];
+                    break;
+                }
+            }
+
+            byte* namePtr = EntryPointPointer(stage.EntryPoint, out allocated[i]);
+            infos[i] = new ComputePipelineCreateInfo
+            {
+                SType = StructureType.ComputePipelineCreateInfo,
+                Stage = new PipelineShaderStageCreateInfo
+                {
+                    SType = StructureType.PipelineShaderStageCreateInfo,
+                    Stage = ShaderStageFlags.ComputeBit,
+                    Module = stage.Module,
+                    PName = namePtr
+                },
+                Layout = layouts.PipelineLayout
+            };
+        }
+
+        Result result;
+        fixed (ComputePipelineCreateInfo* infoPtr = infos)
+        fixed (Pipeline* pipePtr = created)
+        {
+            result = context.Vk.CreateComputePipelines(context.Device, cache, (uint)pending.Count, infoPtr, null, pipePtr);
+        }
+
+        for (int i = 0; i < allocated.Length; i++)
+        {
+            if (allocated[i] != 0) SilkMarshal.Free(allocated[i]);
+        }
+
+        VulkanContext.Check(result, "warming compute pipelines");
+
+        lock (gate)
+        {
+            bool added = false;
+            for (int i = 0; i < pending.Count; i++)
+            {
+                Shader shader = pending[i];
+                Pipeline pipeline = created[i];
+                if (compute.TryGetValue(shader.Handle, out Pipeline raced))
+                {
+                    context.Vk.DestroyPipeline(context.Device, pipeline, null);
+                    shader.ComputePipeline = raced;
+                }
+                else
+                {
+                    context.Name(ObjectType.Pipeline, pipeline.Handle, $"{shader.Name} compute pipeline");
+                    compute[shader.Handle] = pipeline;
+                    shader.ComputePipeline = pipeline;
+                    added = true;
+                }
+            }
+
+            if (added) SaveSoon();
         }
     }
 
@@ -186,13 +321,13 @@ internal sealed unsafe class PipelineCache : IDisposable
         for (int i = 0; i < stages.Length; i++)
         {
             var stage = shader.Modules[i];
-            entries[i] = SilkMarshal.StringToPtr(stage.EntryPoint);
+            byte* namePtr = EntryPointPointer(stage.EntryPoint, out entries[i]);
             stages[i] = new PipelineShaderStageCreateInfo
             {
                 SType = StructureType.PipelineShaderStageCreateInfo,
                 Stage = StageOf(stage.Kind),
                 Module = stage.Module,
-                PName = (byte*)entries[i]
+                PName = namePtr
             };
         }
 
@@ -352,7 +487,10 @@ internal sealed unsafe class PipelineCache : IDisposable
             };
 
             Result result = vk.CreateGraphicsPipelines(context.Device, cache, 1, in info, null, out Pipeline pipeline);
-            foreach (nint entry in entries) SilkMarshal.Free(entry);
+            foreach (nint entry in entries)
+            {
+                if (entry != 0) SilkMarshal.Free(entry);
+            }
             VulkanContext.Check(result, $"making a pipeline for {shader.Name}");
             context.Name(ObjectType.Pipeline, pipeline.Handle, $"{shader.Name} pipeline");
             return pipeline;
@@ -362,7 +500,7 @@ internal sealed unsafe class PipelineCache : IDisposable
     private Pipeline MakeCompute(Shader shader)
     {
         var compute = shader.Modules.First(stage => stage.Kind == ShaderStage.Compute);
-        nint entry = SilkMarshal.StringToPtr(compute.EntryPoint);
+        byte* namePtr = EntryPointPointer(compute.EntryPoint, out nint entry);
         var info = new ComputePipelineCreateInfo
         {
             SType = StructureType.ComputePipelineCreateInfo,
@@ -371,13 +509,13 @@ internal sealed unsafe class PipelineCache : IDisposable
                 SType = StructureType.PipelineShaderStageCreateInfo,
                 Stage = ShaderStageFlags.ComputeBit,
                 Module = compute.Module,
-                PName = (byte*)entry
+                PName = namePtr
             },
             Layout = layouts.PipelineLayout
         };
 
         Result result = context.Vk.CreateComputePipelines(context.Device, cache, 1, in info, null, out Pipeline pipeline);
-        SilkMarshal.Free(entry);
+        if (entry != 0) SilkMarshal.Free(entry);
         VulkanContext.Check(result, $"making a compute pipeline for {shader.Name}");
         context.Name(ObjectType.Pipeline, pipeline.Handle, $"{shader.Name} compute pipeline");
         return pipeline;
@@ -411,8 +549,11 @@ internal sealed unsafe class PipelineCache : IDisposable
         BlendFactor.SrcAlpha => Silk.NET.Vulkan.BlendFactor.SrcAlpha,
         BlendFactor.OneMinusSrcAlpha => Silk.NET.Vulkan.BlendFactor.OneMinusSrcAlpha,
         BlendFactor.DstAlpha => Silk.NET.Vulkan.BlendFactor.DstAlpha,
+        BlendFactor.OneMinusDstAlpha => Silk.NET.Vulkan.BlendFactor.OneMinusDstAlpha,
         BlendFactor.Src1Color => Silk.NET.Vulkan.BlendFactor.Src1Color,
         BlendFactor.OneMinusSrc1Color => Silk.NET.Vulkan.BlendFactor.OneMinusSrc1Color,
+        BlendFactor.Src1Alpha => Silk.NET.Vulkan.BlendFactor.Src1Alpha,
+        BlendFactor.OneMinusSrc1Alpha => Silk.NET.Vulkan.BlendFactor.OneMinusSrc1Alpha,
         _ => Silk.NET.Vulkan.BlendFactor.OneMinusDstAlpha
     };
 

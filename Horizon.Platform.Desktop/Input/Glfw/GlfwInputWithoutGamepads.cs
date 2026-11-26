@@ -53,6 +53,8 @@ internal sealed unsafe class GlfwInputWithoutGamepads : IInputContext
 
     public nint Handle { get; }
 
+    internal Silk.NET.GLFW.Glfw GlfwApi => glfw;
+
     public IReadOnlyList<IGamepad> Gamepads { get; } = [];
 
     public IReadOnlyList<IJoystick> Joysticks { get; } = [];

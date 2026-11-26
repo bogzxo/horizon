@@ -23,6 +23,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     private const float BODY_STEP = 2.0f;       // The furthest a body moves a particle out of its way in a pass. The few passes of a step have to
                                                 // stay under half a tile between them, or a fast body would plough particles through the map
     private const float CONTACT_RANGE = 1.25f;  // How far apart (in diameters) two particles can be and still be worth keeping an eye on
+    private const float CLOSE_PAIR_RANGE = 1.15f; // Close-pair partition threshold (diameter + single-step separation slack) for SeparatePairs
     private const float SPREAD_RANGE = 1.5f;    // How far (in diameters) the particles of a pile keep nudging each other away
     private const float SPREAD_RATE = 80.0f;    // How far they nudge at a Spread of 1, in diameters a second (for two right up against each other it is a ninth of this)
     private const float SETTLE_RATE = 0.25f;    // How much (in diameters) of an old overlap two particles are put apart by every step
@@ -34,6 +35,11 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     {
         public int A, B;
         public float Gap, Nx, Ny;
+    }
+
+    private struct SpreadPair
+    {
+        public int A, B;
     }
 
     // Compact SoA position buffers kept in persistent _particles[0..live) order for L1-resident pair passes
@@ -59,6 +65,8 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
     // Spatial grid buffers: bounded flat 2D dense grid when span <= MAX_DENSE_CELLS, spatial hash fallback otherwise.
     private int[] _denseCellStart = [];
+    private int[] _occupiedCells = [];
+    private int _occupiedCellCount;
     private int[] _cellStart = [0];
     private int[] _cellParticles = [];
     private int[] _cellOf = [];
@@ -66,12 +74,15 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     private int _denseMinCellX, _denseMinCellY, _denseGridW, _denseGridH;
     private bool _usedDenseGrid;
 
-    // Single-stream interleaved pair list (indices in [0..live) matching Pass 5 pair order)
+    // Close pairs [0.._pairCount) used by both Settle and SeparatePairs; spread-only pairs [0.._spreadPairCount) used only by Settle
     private FluidPair[] _pairs = [];
     private int _pairCount;
+    private SpreadPair[] _spreadPairs = [];
+    private int _spreadPairCount;
 
     internal bool LastStepUsedDenseGrid => _usedDenseGrid;
-    internal int LastPairCount => _pairCount;
+    internal int LastPairCount => _pairCount + _spreadPairCount;
+    internal int LastClosePairCount => _pairCount;
 
     /// <summary>
     /// How many times a step the particles are pushed apart. More of them make for a stiffer pile that sags less
@@ -212,12 +223,14 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             if (predicted.Y > maxY) maxY = predicted.Y;
         }
 
-        // 2. Sort particles into cells and build the pair list once
+        // 2. Sort particles into cells and build partitioned close/spread pair lists once
+        float closeThreshold = diameter * CLOSE_PAIR_RANGE;
+        float closeThresholdSq = closeThreshold * closeThreshold;
         SortIntoCells(live, range, minX, maxX, minY, maxY, mapReach, bodiesMin, bodiesMax, hasBodies, grid);
         if (_usedDenseGrid)
-            FindPairsDense(live, _denseMinCellX, _denseMinCellY, _denseGridW, _denseGridH, range);
+            FindPairsDense(_denseGridW, _denseGridH, range, closeThresholdSq);
         else
-            FindPairsHash(live, range);
+            FindPairsHash(live, range, closeThresholdSq);
 
         // 3. Whatever was overlapping before anyone moved (let go on top of each other, or squeezed further than
         // the passes could undo) is put apart a little at a time, and what is merely close is nudged apart (the spread).
@@ -236,7 +249,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         float safeReachSq = safeReach * safeReach;
         for (int pass = 0; pass < iterations; pass++)
         {
-            SeparatePairs(diameter);
+            SeparatePairs(diameter, (pass & 1) != 0);
 
             // The few that are near something solid only get out of it every other pass, which is plenty
             // as long as the last pass is one of them, nothing may be left inside of the map
@@ -395,6 +408,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         _nearBodies = new bool[capacity];
         _cellParticles = new int[capacity];
         _cellOf = new int[capacity];
+        _occupiedCells = new int[capacity];
 
         // Twice as many slots as there can be particles keeps most cells in a slot of their own (hash fallback)
         int slots = 16;
@@ -403,11 +417,19 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         _cellStart = new int[slots + 1];
         _cellMask = slots - 1;
 
-        // Pre-size interleaved pair buffer up front for this capacity so FindPairs does not repeatedly resize
+        // Pre-size interleaved pair buffers up front for this capacity so FindPairs does not repeatedly resize
         int pairCapacity = capacity > 0 ? Math.Max(capacity * 8, 1024) : 0;
         if (pairCapacity > _pairs.Length)
         {
             _pairs = new FluidPair[pairCapacity];
+        }
+        if (pairCapacity > _spreadPairs.Length)
+        {
+            _spreadPairs = new SpreadPair[pairCapacity];
+        }
+        if (capacity > 0 && _denseCellStart.Length < 16385)
+        {
+            _denseCellStart = new int[16385];
         }
     }
 
@@ -482,12 +504,19 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             }
 
             int total = 0;
-            for (int c = 0; c <= cellCount; c++)
+            int occupiedCount = 0;
+            ref int occupiedBase = ref MemoryMarshal.GetArrayDataReference(_occupiedCells);
+            for (int c = 0; c < cellCount; c++)
             {
                 ref int slot = ref Unsafe.Add(ref cellStartBase, c);
-                total += slot;
+                int count = slot;
+                if (count > 0)
+                    Unsafe.Add(ref occupiedBase, occupiedCount++) = c;
+                total += count;
                 slot = total;
             }
+            Unsafe.Add(ref cellStartBase, cellCount) = total;
+            _occupiedCellCount = occupiedCount;
 
             for (int i = 0; i < live; i++)
             {
@@ -551,81 +580,199 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     }
 
     /// <summary>
-    /// Dense flat 2D 3-row-slice pair finder: scans the contiguous horizontal slices across rows [cy-1..cy+1]
-    /// and [cx-1..cx+1] in spawn-order <see cref="_pos"/> with zero hash collisions and zero 9-cell deduplication.
+    /// Dense flat 2D occupied-cell half-neighborhood pair finder: scans each occupied cell (cx, cy) against itself
+    /// (a &lt; b) and its 4 forward neighbors (cx+1, cy), (cx-1, cy+1), (cx, cy+1), (cx+1, cy+1) with zero per-particle
+    /// Floor/Clamp and zero j &lt;= i branches, partitioning close pairs for SeparatePairs from spread-only pairs.
     /// </summary>
     [SkipLocalsInit]
-    private void FindPairsDense(int live, int minCellX, int minCellY, int gridW, int gridH, float range)
+    private void FindPairsDense(int gridW, int gridH, float range, float closeThresholdSq)
     {
         float rangeSquared = range * range;
-        float scale = 1.0f / range;
-        int count = 0;
+        int closeCount = 0;
+        int spreadCount = 0;
         var pairs = _pairs;
         int pairCapacity = pairs.Length;
+        var spreadPairs = _spreadPairs;
+        int spreadCapacity = spreadPairs.Length;
 
         ref int cellStartBase = ref MemoryMarshal.GetArrayDataReference(_denseCellStart);
+        ref int occupiedBase = ref MemoryMarshal.GetArrayDataReference(_occupiedCells);
         ref int cellParticlesBase = ref MemoryMarshal.GetArrayDataReference(_cellParticles);
         ref Vector2 posBase = ref MemoryMarshal.GetArrayDataReference(_pos);
         ref FluidPair pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
+        ref SpreadPair spreadBase = ref MemoryMarshal.GetArrayDataReference(spreadPairs);
 
-        for (int i = 0; i < live; i++)
+        int occupiedCount = _occupiedCellCount;
+        for (int occ = 0; occ < occupiedCount; occ++)
         {
-            Vector2 posI = Unsafe.Add(ref posBase, i);
-            int cx = Math.Clamp((int)MathF.Floor(posI.X * scale) - minCellX, 0, gridW - 1);
-            int cy = Math.Clamp((int)MathF.Floor(posI.Y * scale) - minCellY, 0, gridH - 1);
+            int c = Unsafe.Add(ref occupiedBase, occ);
+            int cy = c / gridW;
+            int cx = c - cy * gridW;
 
-            int ny0 = cy > 0 ? cy - 1 : 0;
-            int ny1 = cy + 1 < gridH ? cy + 1 : gridH - 1;
-            int nx0 = cx > 0 ? cx - 1 : 0;
-            int nx1 = cx + 1 < gridW ? cx + 2 : gridW;
+            int startA = Unsafe.Add(ref cellStartBase, c);
+            int endA = Unsafe.Add(ref cellStartBase, c + 1);
 
-            for (int ry = ny0; ry <= ny1; ry++)
+            // 1. Self-cell pairs (ia < ib)
+            for (int ia = startA; ia < endA; ia++)
             {
-                int row = ry * gridW;
-                int start = Unsafe.Add(ref cellStartBase, row + nx0);
-                int end = Unsafe.Add(ref cellStartBase, row + nx1);
+                int pA = Unsafe.Add(ref cellParticlesBase, ia);
+                Vector2 posA = Unsafe.Add(ref posBase, pA);
 
-                for (int k = start; k < end; k++)
+                for (int ib = ia + 1; ib < endA; ib++)
                 {
-                    int j = Unsafe.Add(ref cellParticlesBase, k);
-                    if (j <= i) continue;
+                    int pB = Unsafe.Add(ref cellParticlesBase, ib);
+                    Vector2 posB = Unsafe.Add(ref posBase, pB);
+                    float dx = posB.X - posA.X, dy = posB.Y - posA.Y;
+                    float distSq = dx * dx + dy * dy;
+                    if (distSq >= rangeSquared) continue;
 
-                    Vector2 posJ = Unsafe.Add(ref posBase, j);
-                    float dx = posJ.X - posI.X, dy = posJ.Y - posI.Y;
-                    if (dx * dx + dy * dy >= rangeSquared) continue;
-
-                    if (count == pairCapacity)
+                    if (distSq < closeThresholdSq)
                     {
-                        pairs = GrowPairs(ref pairCapacity);
-                        pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
+                        if (closeCount == pairCapacity)
+                        {
+                            pairs = GrowPairs(ref pairCapacity);
+                            pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
+                        }
+                        ref FluidPair dst = ref Unsafe.Add(ref pairBase, closeCount++);
+                        dst.A = pA;
+                        dst.B = pB;
                     }
+                    else
+                    {
+                        if (spreadCount == spreadCapacity)
+                        {
+                            spreadPairs = GrowSpreadPairs(ref spreadCapacity);
+                            spreadBase = ref MemoryMarshal.GetArrayDataReference(spreadPairs);
+                        }
+                        ref SpreadPair dst = ref Unsafe.Add(ref spreadBase, spreadCount++);
+                        dst.A = pA;
+                        dst.B = pB;
+                    }
+                }
+            }
 
-                    ref FluidPair dst = ref Unsafe.Add(ref pairBase, count++);
-                    dst.A = i;
-                    dst.B = j;
+            // 2. Right neighbor cell (cx + 1, cy)
+            if (cx + 1 < gridW)
+            {
+                int startR = endA;
+                int endR = Unsafe.Add(ref cellStartBase, c + 2);
+                if (startR < endR)
+                {
+                    for (int ia = startA; ia < endA; ia++)
+                    {
+                        int pA = Unsafe.Add(ref cellParticlesBase, ia);
+                        Vector2 posA = Unsafe.Add(ref posBase, pA);
+
+                        for (int ib = startR; ib < endR; ib++)
+                        {
+                            int pB = Unsafe.Add(ref cellParticlesBase, ib);
+                            Vector2 posB = Unsafe.Add(ref posBase, pB);
+                            float dx = posB.X - posA.X, dy = posB.Y - posA.Y;
+                            float distSq = dx * dx + dy * dy;
+                            if (distSq >= rangeSquared) continue;
+
+                            if (distSq < closeThresholdSq)
+                            {
+                                if (closeCount == pairCapacity)
+                                {
+                                    pairs = GrowPairs(ref pairCapacity);
+                                    pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
+                                }
+                                ref FluidPair dst = ref Unsafe.Add(ref pairBase, closeCount++);
+                                dst.A = pA;
+                                dst.B = pB;
+                            }
+                            else
+                            {
+                                if (spreadCount == spreadCapacity)
+                                {
+                                    spreadPairs = GrowSpreadPairs(ref spreadCapacity);
+                                    spreadBase = ref MemoryMarshal.GetArrayDataReference(spreadPairs);
+                                }
+                                ref SpreadPair dst = ref Unsafe.Add(ref spreadBase, spreadCount++);
+                                dst.A = pA;
+                                dst.B = pB;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Forward row contiguous slice: (cx - 1, cy + 1), (cx, cy + 1), (cx + 1, cy + 1)
+            if (cy + 1 < gridH)
+            {
+                int nextRow = (cy + 1) * gridW;
+                int nx0 = cx > 0 ? cx - 1 : 0;
+                int nx1 = cx + 1 < gridW ? cx + 2 : gridW;
+                int startNext = Unsafe.Add(ref cellStartBase, nextRow + nx0);
+                int endNext = Unsafe.Add(ref cellStartBase, nextRow + nx1);
+                if (startNext < endNext)
+                {
+                    for (int ia = startA; ia < endA; ia++)
+                    {
+                        int pA = Unsafe.Add(ref cellParticlesBase, ia);
+                        Vector2 posA = Unsafe.Add(ref posBase, pA);
+
+                        for (int ib = startNext; ib < endNext; ib++)
+                        {
+                            int pB = Unsafe.Add(ref cellParticlesBase, ib);
+                            Vector2 posB = Unsafe.Add(ref posBase, pB);
+                            float dx = posB.X - posA.X, dy = posB.Y - posA.Y;
+                            float distSq = dx * dx + dy * dy;
+                            if (distSq >= rangeSquared) continue;
+
+                            if (distSq < closeThresholdSq)
+                            {
+                                if (closeCount == pairCapacity)
+                                {
+                                    pairs = GrowPairs(ref pairCapacity);
+                                    pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
+                                }
+                                ref FluidPair dst = ref Unsafe.Add(ref pairBase, closeCount++);
+                                dst.A = pA;
+                                dst.B = pB;
+                            }
+                            else
+                            {
+                                if (spreadCount == spreadCapacity)
+                                {
+                                    spreadPairs = GrowSpreadPairs(ref spreadCapacity);
+                                    spreadBase = ref MemoryMarshal.GetArrayDataReference(spreadPairs);
+                                }
+                                ref SpreadPair dst = ref Unsafe.Add(ref spreadBase, spreadCount++);
+                                dst.A = pA;
+                                dst.B = pB;
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        _pairCount = count;
+        _pairCount = closeCount;
+        _spreadPairCount = spreadCount;
     }
 
     /// <summary>
     /// Spatial-hash fallback pair finder when particles span more than <see cref="MAX_DENSE_CELLS"/> cells.
     /// </summary>
     [SkipLocalsInit]
-    private void FindPairsHash(int live, float range)
+    private void FindPairsHash(int live, float range, float closeThresholdSq)
     {
         float rangeSquared = range * range;
         float scale = 1.0f / range;
-        int count = 0;
+        int closeCount = 0;
+        int spreadCount = 0;
         var pairs = _pairs;
         int pairCapacity = pairs.Length;
+        var spreadPairs = _spreadPairs;
+        int spreadCapacity = spreadPairs.Length;
 
         ref int cellStartBase = ref MemoryMarshal.GetArrayDataReference(_cellStart);
         ref int cellParticlesBase = ref MemoryMarshal.GetArrayDataReference(_cellParticles);
         ref Vector2 posBase = ref MemoryMarshal.GetArrayDataReference(_pos);
         ref FluidPair pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
+        ref SpreadPair spreadBase = ref MemoryMarshal.GetArrayDataReference(spreadPairs);
 
         Span<int> cells = stackalloc int[9];
 
@@ -664,23 +811,40 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
                         Vector2 other = Unsafe.Add(ref posBase, j);
                         float awayX = other.X - position.X, awayY = other.Y - position.Y;
-                        if (awayX * awayX + awayY * awayY >= rangeSquared) continue;
+                        float distSq = awayX * awayX + awayY * awayY;
+                        if (distSq >= rangeSquared) continue;
 
-                        if (count == pairCapacity)
+                        if (distSq < closeThresholdSq)
                         {
-                            pairs = GrowPairs(ref pairCapacity);
-                            pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
-                        }
+                            if (closeCount == pairCapacity)
+                            {
+                                pairs = GrowPairs(ref pairCapacity);
+                                pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
+                            }
 
-                        ref FluidPair dst = ref Unsafe.Add(ref pairBase, count++);
-                        dst.A = i;
-                        dst.B = j;
+                            ref FluidPair dst = ref Unsafe.Add(ref pairBase, closeCount++);
+                            dst.A = i;
+                            dst.B = j;
+                        }
+                        else
+                        {
+                            if (spreadCount == spreadCapacity)
+                            {
+                                spreadPairs = GrowSpreadPairs(ref spreadCapacity);
+                                spreadBase = ref MemoryMarshal.GetArrayDataReference(spreadPairs);
+                            }
+
+                            ref SpreadPair dst = ref Unsafe.Add(ref spreadBase, spreadCount++);
+                            dst.A = i;
+                            dst.B = j;
+                        }
                     }
                 }
             }
         }
 
-        _pairCount = count;
+        _pairCount = closeCount;
+        _spreadPairCount = spreadCount;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -690,6 +854,15 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         Array.Resize(ref _pairs, newCapacity);
         capacity = newCapacity;
         return _pairs;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private SpreadPair[] GrowSpreadPairs(ref int capacity)
+    {
+        int newCapacity = Math.Max(_spreadPairs.Length * 2, 1024);
+        Array.Resize(ref _spreadPairs, newCapacity);
+        capacity = newCapacity;
+        return _spreadPairs;
     }
 
     /// <summary>
@@ -716,11 +889,12 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         float most = diameter * SETTLE_RATE;
         float inverseRange = 1.0f / range;
         int pairCount = _pairCount;
+        int spreadPairCount = _spreadPairCount;
 
         ref FluidPair pairBase = ref MemoryMarshal.GetArrayDataReference(_pairs);
         ref Vector2 prevBase = ref MemoryMarshal.GetArrayDataReference(_prev);
 
-        // Mutate only _prev[] in the pair loop; the accumulated delta (_prev - _origins) is applied to _pos[] once below
+        // Mutate only _prev[] in the pair loops; the accumulated delta (_prev - _origins) is applied to _pos[] once below
         for (int i = 0; i < pairCount; i++)
         {
             ref FluidPair pair = ref Unsafe.Add(ref pairBase, i);
@@ -729,23 +903,27 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             ref Vector2 second = ref Unsafe.Add(ref prevBase, b);
 
             float x = second.X - first.X, y = second.Y - first.Y;
-            float distance = MathF.Sqrt(x * x + y * y);
+            float distSq = x * x + y * y;
+            float distance;
 
-            // In a slope there are more neighbours on the uphill side, so the nudges add up to one going downhill.
-            // Being pressed into each other (at the bottom of a deep pile) doesn't make the nudge any harder.
-            float closeness = MathF.Max(1.0f - MathF.Max(distance, diameter) * inverseRange, 0.0f);
-            float amount = MathF.Min(MathF.Max(diameter - distance, 0.0f) * 0.5f, most) + spread * closeness * closeness;
-
-            if (distance > 0.0001f)
+            if (distSq > 1e-8f)
             {
-                float invDist = 1.0f / distance;
+                float invDist = MathF.ReciprocalSqrtEstimate(distSq);
+                invDist *= 1.5f - 0.5f * distSq * invDist * invDist;
+                distance = distSq * invDist;
                 x *= invDist;
                 y *= invDist;
             }
             else
             {
+                distance = 0.0f;
                 GetAnyDirection(a, b, out x, out y);
             }
+
+            // In a slope there are more neighbours on the uphill side, so the nudges add up to one going downhill.
+            // Being pressed into each other (at the bottom of a deep pile) doesn't make the nudge any harder.
+            float closeness = MathF.Max(1.0f - MathF.Max(distance, diameter) * inverseRange, 0.0f);
+            float amount = MathF.Min(MathF.Max(diameter - distance, 0.0f) * 0.5f, most) + spread * closeness * closeness;
 
             // However far they are apart after this is as far as the passes have to keep them
             pair.Gap = MathF.Min(distance + amount * 2.0f, diameter);
@@ -758,6 +936,46 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
             first.X -= x; first.Y -= y;
             second.X += x; second.Y += y;
+        }
+
+        if (spreadPairCount > 0)
+        {
+            ref SpreadPair spreadBase = ref MemoryMarshal.GetArrayDataReference(_spreadPairs);
+            for (int i = 0; i < spreadPairCount; i++)
+            {
+                ref readonly SpreadPair pair = ref Unsafe.Add(ref spreadBase, i);
+                int a = pair.A, b = pair.B;
+                ref Vector2 first = ref Unsafe.Add(ref prevBase, a);
+                ref Vector2 second = ref Unsafe.Add(ref prevBase, b);
+
+                float x = second.X - first.X, y = second.Y - first.Y;
+                float distSq = x * x + y * y;
+                float distance;
+
+                if (distSq > 1e-8f)
+                {
+                    float invDist = MathF.ReciprocalSqrtEstimate(distSq);
+                    invDist *= 1.5f - 0.5f * distSq * invDist * invDist;
+                    distance = distSq * invDist;
+                    x *= invDist;
+                    y *= invDist;
+                }
+                else
+                {
+                    distance = 0.0f;
+                    GetAnyDirection(a, b, out x, out y);
+                }
+
+                float closeness = MathF.Max(1.0f - MathF.Max(distance, diameter) * inverseRange, 0.0f);
+                float amount = MathF.Min(MathF.Max(diameter - distance, 0.0f) * 0.5f, most) + spread * closeness * closeness;
+                if (amount <= 0.0f) continue;
+
+                x *= amount;
+                y *= amount;
+
+                first.X -= x; first.Y -= y;
+                second.X += x; second.Y += y;
+            }
         }
 
         // Apply accumulated settle shift (_prev[i] - _origins[i]) to _pos[i] in one vectorized pass
@@ -839,9 +1057,10 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
     /// <summary>
     /// Helper method to push every two particles that are closer than they are to be kept apart, each going half of the way.
+    /// Alternates forward/reverse sweep order across passes so spatially ordered pairs introduce no directional bias.
     /// </summary>
     [SkipLocalsInit]
-    private void SeparatePairs(float diameter)
+    private void SeparatePairs(float diameter, bool reverse)
     {
         float diameterSquared = diameter * diameter;
         int pairCount = _pairCount;
@@ -849,25 +1068,49 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         ref FluidPair pairBase = ref MemoryMarshal.GetArrayDataReference(_pairs);
         ref Vector2 posBase = ref MemoryMarshal.GetArrayDataReference(_pos);
 
-        for (int i = 0; i < pairCount; i++)
+        if (!reverse)
         {
-            ref readonly FluidPair pair = ref Unsafe.Add(ref pairBase, i);
-            ref Vector2 first = ref Unsafe.Add(ref posBase, pair.A);
-            ref Vector2 second = ref Unsafe.Add(ref posBase, pair.B);
+            for (int i = 0; i < pairCount; i++)
+            {
+                ref readonly FluidPair pair = ref Unsafe.Add(ref pairBase, i);
+                ref Vector2 first = ref Unsafe.Add(ref posBase, pair.A);
+                ref Vector2 second = ref Unsafe.Add(ref posBase, pair.B);
 
-            float x = second.X - first.X, y = second.Y - first.Y;
-            if (x * x + y * y >= diameterSquared) continue;
+                float x = second.X - first.X, y = second.Y - first.Y;
+                if (x * x + y * y >= diameterSquared) continue;
 
-            // How far apart they are is measured along the way they were apart to begin with, one that has ended up
-            // on top of (or just past) the other is then still put back on the side it came from
-            float normalX = pair.Nx, normalY = pair.Ny;
-            float amount = (pair.Gap - (x * normalX + y * normalY)) * 0.5f;
-            if (amount <= 0.0f) continue;
+                // How far apart they are is measured along the way they were apart to begin with, one that has ended up
+                // on top of (or just past) the other is then still put back on the side it came from
+                float normalX = pair.Nx, normalY = pair.Ny;
+                float amount = (pair.Gap - (x * normalX + y * normalY)) * 0.5f;
+                if (amount <= 0.0f) continue;
 
-            x = normalX * amount;
-            y = normalY * amount;
-            first.X -= x; first.Y -= y;
-            second.X += x; second.Y += y;
+                x = normalX * amount;
+                y = normalY * amount;
+                first.X -= x; first.Y -= y;
+                second.X += x; second.Y += y;
+            }
+        }
+        else
+        {
+            for (int i = pairCount - 1; i >= 0; i--)
+            {
+                ref readonly FluidPair pair = ref Unsafe.Add(ref pairBase, i);
+                ref Vector2 first = ref Unsafe.Add(ref posBase, pair.A);
+                ref Vector2 second = ref Unsafe.Add(ref posBase, pair.B);
+
+                float x = second.X - first.X, y = second.Y - first.Y;
+                if (x * x + y * y >= diameterSquared) continue;
+
+                float normalX = pair.Nx, normalY = pair.Ny;
+                float amount = (pair.Gap - (x * normalX + y * normalY)) * 0.5f;
+                if (amount <= 0.0f) continue;
+
+                x = normalX * amount;
+                y = normalY * amount;
+                first.X -= x; first.Y -= y;
+                second.X += x; second.Y += y;
+            }
         }
     }
 
@@ -903,7 +1146,9 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     {
         // If neighbours pushed the particle past the midpoint (or all the way across) a thin wall, resolve it back
         // to the entry face along the segment from where it started rather than letting Overlaps eject it out the far side.
-        if (position != reference)
+        // Skip the 2-pass tunnel sweep when displacement is below half a radius (resting particles cannot tunnel).
+        float sweepThreshold = Radius * 0.5f;
+        if (Vector2.DistanceSquared(position, reference) >= sweepThreshold * sweepThreshold)
         {
             for (int sweep = 0; sweep < 2; sweep++)
             {
@@ -920,22 +1165,6 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             }
         }
 
-        Vector2 reach = new(Radius);
-        if (!grid.TryGetCells(position - reach, position + reach, out int x0, out int y0, out int x1, out int y1)) return;
-
-        for (int y = y0; y <= y1; y++)
-        {
-            for (int x = x0; x <= x1; x++)
-            {
-                foreach (int index in grid.GetShapes(x, y))
-                {
-                    ref readonly PhysicsShape shape = ref grid[index];
-                    if (!shape.Overlaps(position, Radius, out Vector2 normal, out float depth)) continue;
-
-                    position += normal * depth;
-                    contact = normal;
-                }
-            }
-        }
+        grid.SeparateCircle(ref position, Radius, ref contact);
     }
 }

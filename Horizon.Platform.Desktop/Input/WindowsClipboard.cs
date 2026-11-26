@@ -44,9 +44,12 @@ internal static partial class WindowsClipboard
                     if (most <= 0)
                         return string.Empty;
 
-                    string said = Marshal.PtrToStringUni(text, most);
-                    int end = said.IndexOf('\0');
-                    return end >= 0 ? said[..end] : said;
+                    unsafe
+                    {
+                        ReadOnlySpan<char> span = new((void*)text, most);
+                        int end = span.IndexOf('\0');
+                        return end >= 0 ? new string(span[..end]) : new string(span);
+                    }
                 }
                 finally
                 {
@@ -82,8 +85,16 @@ internal static partial class WindowsClipboard
 
                     try
                     {
-                        Marshal.Copy(text.ToCharArray(), 0, into, text.Length);
-                        Marshal.WriteInt16(into, text.Length * 2, 0);
+                        unsafe
+                        {
+                            fixed (char* src = text)
+                            {
+                                nuint byteCount = (nuint)(text.Length * sizeof(char));
+                                if (byteCount > 0)
+                                    Buffer.MemoryCopy(src, (void*)into, byteCount, byteCount);
+                                *((char*)into + text.Length) = '\0';
+                            }
+                        }
                     }
                     finally
                     {

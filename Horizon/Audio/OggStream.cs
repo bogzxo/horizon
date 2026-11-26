@@ -63,6 +63,12 @@ public sealed class OggStream : IAudioStream
         if (block.Length < wanted * channels) block = new float[wanted * channels];
 
         int got = reader.ReadSamples(block, 0, wanted * channels) / channels;
+        if (channels == 2)
+        {
+            block.AsSpan(0, got * 2).CopyTo(frames);
+            return got;
+        }
+
         for (int i = 0; i < got; i++)
         {
             float left = block[i * channels];

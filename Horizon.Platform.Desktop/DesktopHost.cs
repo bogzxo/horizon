@@ -19,7 +19,7 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
     private IPlatformAppearance? macAppearance;
     private IPlatformDialogs? macDialogs;
     private readonly List<SilkGamepadSource> gamepads = [];
-    private volatile bool disposed, closed;
+    private volatile bool disposed, closed, firstFramePresented;
 
     internal DesktopHost(PlatformHostRequest request)
     {
@@ -125,7 +125,29 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
     internal void DoWork() => dispatcher.Drain();
 
     /// <summary>Opens a feed of the controllers, sampled on the window's thread once it's started.</summary>
-    internal SilkGamepadSource OpenGamepads(Silk.NET.Input.IInputContext context) => new(context, Post, Sampled);
+    internal SilkGamepadSource? OpenGamepads(Silk.NET.Input.IInputContext context)
+    {
+        if (!request.ReadsGamepads)
+            return null;
+        if (context is GlfwInputWithoutGamepads glfwInput)
+            return new SilkGamepadSource(glfwInput.GlfwApi, Post, Sampled, IsFirstFramePresented);
+        return new SilkGamepadSource(context, Post, Sampled);
+    }
+
+    private bool IsFirstFramePresented() => firstFramePresented;
+
+    /// <summary>Called once from the render thread after the first frame presents to trigger deferred GLFW gamepad probing.</summary>
+    internal void OnFirstFramePresented()
+    {
+        firstFramePresented = true;
+        Post(ActivateDeferredGamepads);
+    }
+
+    private void ActivateDeferredGamepads()
+    {
+        for (int index = 0; index < gamepads.Count; index++)
+            gamepads[index].ActivateProbe();
+    }
 
     // A feed started or let go of, on the window's thread
     private void Sampled(SilkGamepadSource source, bool sampled)

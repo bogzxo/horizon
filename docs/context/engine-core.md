@@ -299,7 +299,7 @@ pitch, pan, loop)` returns `SoundHandle(slot,id)`, `PlayMusic(IAudioStream, fade
 Self-contained, deterministic-step, runs in `UpdatePhysics` (sim thread). Not a general engine; built for the 2D fighter plus voxel 3D.
 - 2D: `PhysicsWorld : GameComponent` (`Physics/2D/PhysicsWorld.cs:24`), `Gravity`, static vs dynamic body lists (`PhysicsBodyComponent2D`,
   `Static/Dynamic/Kinematic` via `PhysicsBodySimulationType`), fixtures (`RectanglePhysicsFixture`, `CirclePhysicsFixture`, `OutlinePhysicsFixture`),
-  `PhysicsStaticGrid` spatial grid for static tiles, particles/fluids (CPU `PhysicsParticleGroup`, GPU feed `PhysicsParticleFeed`), radial forces,
+  `PhysicsStaticGrid` spatial grid (`AllRectangles` + stamp-deduped queries) for static tiles, particles/fluids (CPU `PhysicsParticleGroup` / `PhysicsFluidParticleGroup` occupied-cell spatial table, 4-neighbor `FindPairsDense`, close/spread partitioning, `_nearMask`, pre-sized `_denseCellStart`; GPU feed `PhysicsParticleFeed`), radial forces,
   `RenderDebug` overlay drawn via `PrimitiveRenderer` through `Capture/Render`. `CharacterController2D` (coyote time, jump buffer, short hop) pushes with forces.
 - 3D: `CollisionWorld3D` (boxes + `ICollisionField` e.g. voxel tree from Rendering, raycast), `CharacterController3D(world, feet)`; `Box3`.
 - Rough edge (explicit TODO, `PhysicsBodyComponent2D.cs:22`): `Position` is publicly settable; teleporting through it is everywhere.
@@ -365,6 +365,7 @@ Self-contained, deterministic-step, runs in `UpdatePhysics` (sim thread). Not a 
 16. `FilesBesideProgram`/`PlatformPaths.BesideProgram` must be set before anything asks for a folder, or caches land in the user dir.
 17. Stray TODO count is very low in this scope (one TODO found: `PhysicsBodyComponent2D.Position` mutability). Comments contain some profanity and casual tone; keep to house voice.
 18. `Horizon.Tests` may contain a `~syncthing~*.tmp` leftover file (sync artifact, ignore).
+19. Pass 7 startup and runtime paths: `PreparedDevice` (`Horizon/Graphics/Vulkan`) prepares Vulkan/instance initialization ahead of device creation (`WindowManager.Device.cs`); `AudioDevice` opens asynchronously (`openAsync: true`) with a 48 kHz `AudioMixer` rescaled via `AudioMixer.SetSampleRate(int)` if the backend negotiates another rate (`AudioMixer.MixFloatStereo1To1Simd` handles 1:1 stereo float SIMD mixing); `SceneManager.SetUp` runs update, physics, and `EntityLifecycle.Flush()` before `Render(dt)` on warm-up turns and exits as soon as `!_unfinished`; and hot simulation/windowing types (`WindowManager`, `SceneManager`, `PhysicsWorld`, `PhysicsBodyComponent2D`, `TransformComponent2D`, `TransformComponent3D`, `IntervalRunnerFixedStep`, `IntervalRunnerSubStep`) are `sealed`.
 
 ## 13. Where to look for X
 

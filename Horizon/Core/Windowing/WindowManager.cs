@@ -49,7 +49,7 @@ public sealed record DisplayState(Vector2 ViewportSize, Vector2 WindowSize, Vect
 /// and the next frame gets it done before it draws.
 /// </para>
 /// </summary>
-public partial class WindowManager : GameComponent, IDisposable
+public sealed partial class WindowManager : GameComponent, IDisposable
 {
     // The platform the window manager runs on, owned by it and disposed once the GPU is gone
     private readonly IPlatformHost host;
@@ -915,8 +915,9 @@ public partial class WindowManager : GameComponent, IDisposable
 
         nextLoopLog = now + logLoopsEvery;
 
-        foreach (LoopStatistics loop in Loops)
+        for (int i = 0; i < Loops.Count; i++)
         {
+            LoopStatistics loop = Loops[i];
             var totals = loop.AllocationTotals;
             loopLogBuffer.Clear()
                 .Append('[').Append(Name).Append("] ").Append(loop.Name)

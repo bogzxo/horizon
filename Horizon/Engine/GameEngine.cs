@@ -188,7 +188,7 @@ public class GameEngine : Entity
         var host = Horizon.Platform.PlatformInstallation.CreateHost(Horizon.Platform.PlatformInstallation.Resolve(Configuration.Platform), request);
 
         Input = AddComponent<InputManager>(new() { ReadsGamepads = Configuration.Gamepads });
-        Audio = Horizon.Audio.AudioDevice.For(open: Configuration.WindowConfiguration.Mode != RunMode.Application, host);
+        Audio = Horizon.Audio.AudioDevice.For(open: Configuration.WindowConfiguration.Mode != RunMode.Application, host, openAsync: true);
 
 #if DEBUG
         // Before the scenes, so it has had its say about the mouse and the keys by the time a scene reads them

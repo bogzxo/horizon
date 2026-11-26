@@ -40,7 +40,7 @@ namespace Horizon.Engine.Components;
 /// <see cref="ResetTo"/> throws the lot away for one scene.
 /// </para>
 /// </summary>
-public class SceneManager : Entity
+public sealed class SceneManager : Entity
 {
     // What a change of scene does with the scene that is on screen and whatever is underneath it
     private enum Way
@@ -903,13 +903,6 @@ public class SceneManager : Entity
         int turn = 0;
         for (; turn < MAX_WARM_UP; turn++)
         {
-            _unfinished = false;
-            scene.Render(dt);
-            Horizon.Core.Diagnostics.StartupTrace.Mark($"warm-up turn {turn} drawn{(_unfinished ? ", unfinished" : string.Empty)}");
-
-            if (!_unfinished && turn > 0)
-                break;
-
             scene.UpdateState(dt);
             scene.UpdatePhysics(dt);
             Horizon.Core.Diagnostics.StartupTrace.Mark($"warm-up turn {turn} updated");
@@ -919,6 +912,13 @@ public class SceneManager : Entity
 
             // It set another scene from its very first update, which is the one to show then
             if (_halt)
+                break;
+
+            _unfinished = false;
+            scene.Render(dt);
+            Horizon.Core.Diagnostics.StartupTrace.Mark($"warm-up turn {turn} drawn{(_unfinished ? ", unfinished" : string.Empty)}");
+
+            if (!_unfinished)
                 break;
         }
 

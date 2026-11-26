@@ -20,54 +20,112 @@ public sealed partial class TerminalHost
     /// <summary>What was taken in last, for a test, "settings", "keys" or a plugin's id.</summary>
     public string LastTakenIn { get; private set; } = string.Empty;
 
+    /// <summary>The active file system watchers, for testing.</summary>
+    internal IReadOnlyList<FileSystemWatcher> Watchers => watchers;
+
+    /// <summary>Number of queued or unsettled watched paths, for testing.</summary>
+    internal int PendingWatchCount => changedFiles.Count + pending.Count;
+
     /// <summary>
-    /// Watches the folders of the settings, the keys and the user's plugins. Once, after <see cref="Start"/>. A folder
-    /// that isn't there yet is made, so the watch is in place for the first file somebody puts in it.
+    /// Whether a file path is one this host actually reloads: the settings file, any configured keys file, or a file
+    /// inside a configured user plugin folder. Unrelated writes in the user folder (sessions.hor, api.hor, history.txt,
+    /// cache/commands-*.txt) return false so they never queue work or wake the window.
+    /// </summary>
+    public bool IsWatchedPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        try
+        {
+            if (options.SettingsFile is { } settingsFile && SameFile(path, settingsFile))
+                return true;
+
+            for (int i = 0; i < options.KeysFiles.Count; i++)
+            {
+                if (SameFile(path, options.KeysFiles[i]))
+                    return true;
+            }
+
+            return PluginFolderOf(path) is not null;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Watches the folders of the settings, the keys and the user's plugins. Once, after <see cref="Start"/>. The
+    /// settings and keys folders are watched non-recursively so cache writes never fire the watcher; separate recursive
+    /// watchers are attached only for existing configured user plugin folders.
     /// </summary>
     public void Watch()
     {
-        var folders = new HashSet<string>(Horizon.Core.Platform.PlatformPaths.Comparer);
+        var shallowFolders = new HashSet<string>(Horizon.Core.Platform.PlatformPaths.Comparer);
         if (options.SettingsFile is { } settings && Path.GetDirectoryName(Path.GetFullPath(settings)) is { } settingsFolder)
-            folders.Add(settingsFolder);
-        foreach (string keys in options.KeysFiles)
+            shallowFolders.Add(settingsFolder);
+        for (int i = 0; i < options.KeysFiles.Count; i++)
         {
-            if (Path.GetDirectoryName(Path.GetFullPath(keys)) is { } keysFolder)
-                folders.Add(keysFolder);
-        }
-        foreach (var (folder, builtIn) in options.PluginFolders)
-        {
-            if (!builtIn)
-                folders.Add(Path.GetFullPath(folder));
+            if (Path.GetDirectoryName(Path.GetFullPath(options.KeysFiles[i])) is { } keysFolder)
+                shallowFolders.Add(keysFolder);
         }
 
-        foreach (string folder in folders)
+        var recursiveFolders = new HashSet<string>(Horizon.Core.Platform.PlatformPaths.Comparer);
+        for (int i = 0; i < options.PluginFolders.Count; i++)
         {
-            try
+            var (folder, builtIn) = options.PluginFolders[i];
+            if (builtIn)
+                continue;
+
+            string full = Path.GetFullPath(folder);
+            if (Directory.Exists(full))
             {
+                recursiveFolders.Add(full);
+                shallowFolders.Remove(full);
+            }
+        }
+
+        foreach (string folder in shallowFolders)
+            AttachWatcher(folder, includeSubdirectories: false, createIfMissing: true);
+
+        foreach (string folder in recursiveFolders)
+            AttachWatcher(folder, includeSubdirectories: true, createIfMissing: false);
+    }
+
+    private void AttachWatcher(string folder, bool includeSubdirectories, bool createIfMissing)
+    {
+        try
+        {
+            if (createIfMissing)
                 Directory.CreateDirectory(folder);
-                var watcher = new FileSystemWatcher(folder)
-                {
-                    IncludeSubdirectories = true,
-                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size
-                };
-                watcher.Changed += Changed;
-                watcher.Created += Changed;
-                watcher.Deleted += Changed;
-                watcher.Renamed += (_, e) => Queue(e.FullPath);
-                watcher.EnableRaisingEvents = true;
-                watchers.Add(watcher);
-            }
-            catch (Exception e)
+            var watcher = new FileSystemWatcher(folder)
             {
-                Say($"{folder} can't be watched, changes to it want a restart: {e.Message}", true);
-            }
+                IncludeSubdirectories = includeSubdirectories,
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size
+            };
+            watcher.Changed += Changed;
+            watcher.Created += Changed;
+            watcher.Deleted += Changed;
+            watcher.Renamed += Renamed;
+            watcher.EnableRaisingEvents = true;
+            watchers.Add(watcher);
+        }
+        catch (Exception e)
+        {
+            Say($"{folder} can't be watched, changes to it want a restart: {e.Message}", true);
         }
     }
 
     private void Changed(object sender, FileSystemEventArgs e) => Queue(e.FullPath);
 
-    private void Queue(string path)
+    private void Renamed(object sender, RenamedEventArgs e) => Queue(e.FullPath);
+
+    internal void Queue(string path)
     {
+        if (!IsWatchedPath(path))
+            return;
+
         changedFiles.Enqueue(path);
         Interlocked.Exchange(ref changedAt, Stopwatch.GetTimestamp());
         GameEngine.Instance?.WindowManager.Wake();
@@ -85,9 +143,10 @@ public sealed partial class TerminalHost
         while (changedFiles.TryDequeue(out string? path))
             pending.Add(path);
 
-        if (Stopwatch.GetElapsedTime(Interlocked.Read(ref changedAt)).TotalSeconds < SETTLE_SECONDS)
+        double elapsed = Stopwatch.GetElapsedTime(Interlocked.Read(ref changedAt)).TotalSeconds;
+        if (elapsed < SETTLE_SECONDS)
         {
-            GameEngine.Instance?.WindowManager.RequestFrames();
+            GameEngine.Instance?.WindowManager.RequestTickIn(Math.Max(0.01, SETTLE_SECONDS - elapsed));
             return;
         }
 

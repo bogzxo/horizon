@@ -35,6 +35,10 @@ internal sealed class PhysicsStaticGrid
     private int[] _stamps = [];
     private int[] _found = [];
     private int _stamp;
+    private bool _allRectangles;
+
+    /// <summary>True when every static shape in the grid is an axis-aligned rectangle (enables AABB-only fast paths).</summary>
+    public bool AllRectangles => _allRectangles;
 
     /// <summary>
     /// Goes up every time the grid is rebuilt, for whoever remembers things about the map (sleeping particles).
@@ -140,6 +144,17 @@ internal sealed class PhysicsStaticGrid
         _bodyPositions = [.. bodyPositions];
         _stamps = new int[_shapes.Length];
         _found = new int[_shapes.Length];
+        _stamp = 0;
+        bool allRects = true;
+        for (int i = 0; i < _shapes.Length; i++)
+        {
+            if (_shapes[i].IsCircle || _shapes[i].Outline is not null)
+            {
+                allRects = false;
+                break;
+            }
+        }
+        _allRectangles = allRects;
         _origin = min;
         Max = max;
         Version++;
@@ -216,12 +231,72 @@ internal sealed class PhysicsStaticGrid
     {
         if (!TryGetCells(point, point, out int x, out int y, out _, out _)) return false;
 
+        if (_allRectangles)
+        {
+            foreach (int shape in GetShapes(x, y))
+            {
+                ref readonly PhysicsShape s = ref _shapes[shape];
+                if (point.X > s.Min.X && point.X < s.Max.X && point.Y > s.Min.Y && point.Y < s.Max.Y)
+                    return true;
+            }
+            return false;
+        }
+
         foreach (int shape in GetShapes(x, y))
         {
             if (_shapes[shape].Contains(point)) return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Resolves circle-vs-static-grid overlaps for a particle, deduplicating multi-cell static shapes and using the
+    /// fast AABB-only box check when every static shape in the grid is a rectangle.
+    /// </summary>
+    public void SeparateCircle(ref Vector2 position, float radius, ref Vector2 contact)
+    {
+        Vector2 reach = new(radius);
+        if (!TryGetCells(position - reach, position + reach, out int x0, out int y0, out int x1, out int y1)) return;
+
+        bool allRects = _allRectangles;
+        if (x0 == x1 && y0 == y1)
+        {
+            foreach (int index in GetShapes(x0, y0))
+            {
+                ref readonly PhysicsShape shape = ref _shapes[index];
+                bool hit = allRects
+                    ? shape.OverlapsRectangle(position, radius, out Vector2 normal, out float depth)
+                    : shape.Overlaps(position, radius, out normal, out depth);
+                if (!hit) continue;
+
+                position += normal * depth;
+                contact = normal;
+            }
+            return;
+        }
+
+        int stamp = NextStamp();
+        for (int y = y0; y <= y1; y++)
+        {
+            for (int x = x0; x <= x1; x++)
+            {
+                foreach (int index in GetShapes(x, y))
+                {
+                    if (_stamps[index] == stamp) continue;
+                    _stamps[index] = stamp;
+
+                    ref readonly PhysicsShape shape = ref _shapes[index];
+                    bool hit = allRects
+                        ? shape.OverlapsRectangle(position, radius, out Vector2 normal, out float depth)
+                        : shape.Overlaps(position, radius, out normal, out depth);
+                    if (!hit) continue;
+
+                    position += normal * depth;
+                    contact = normal;
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -236,12 +311,29 @@ internal sealed class PhysicsStaticGrid
         Vector2 min = Vector2.Min(from, to), max = Vector2.Max(from, to);
         if (!TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return false;
 
+        if (x0 == x1 && y0 == y1)
+        {
+            foreach (int index in GetShapes(x0, y0))
+            {
+                if (_shapes[index].TryIntersectSegment(from, to, out float t, out Vector2 normal) && t < hitT)
+                {
+                    hitT = t;
+                    hitNormal = normal;
+                }
+            }
+            return hitT <= 1.0f;
+        }
+
+        int stamp = NextStamp();
         for (int y = y0; y <= y1; y++)
         {
             for (int x = x0; x <= x1; x++)
             {
                 foreach (int index in GetShapes(x, y))
                 {
+                    if (_stamps[index] == stamp) continue;
+                    _stamps[index] = stamp;
+
                     if (_shapes[index].TryIntersectSegment(from, to, out float t, out Vector2 normal) && t < hitT)
                     {
                         hitT = t;
@@ -263,18 +355,42 @@ internal sealed class PhysicsStaticGrid
         Vector2 min = Vector2.Min(from, to), max = Vector2.Max(from, to);
         if (!TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return false;
 
+        if (x0 == x1 && y0 == y1)
+        {
+            foreach (int index in GetShapes(x0, y0))
+            {
+                if (_shapes[index].TryIntersectSegment(from, to, out _, out _)) return true;
+            }
+            return false;
+        }
+
+        int stamp = NextStamp();
         for (int y = y0; y <= y1; y++)
         {
             for (int x = x0; x <= x1; x++)
             {
                 foreach (int index in GetShapes(x, y))
                 {
+                    if (_stamps[index] == stamp) continue;
+                    _stamps[index] = stamp;
+
                     if (_shapes[index].TryIntersectSegment(from, to, out _, out _)) return true;
                 }
             }
         }
 
         return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private int NextStamp()
+    {
+        if (++_stamp == 0)
+        {
+            Array.Clear(_stamps);
+            _stamp = 1;
+        }
+        return _stamp;
     }
 
     /// <summary>
@@ -285,7 +401,7 @@ internal sealed class PhysicsStaticGrid
     {
         if (!TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return default;
 
-        _stamp++;
+        int stamp = NextStamp();
         int count = 0;
 
         for (int y = y0; y <= y1; y++)
@@ -294,9 +410,9 @@ internal sealed class PhysicsStaticGrid
             {
                 foreach (int shape in GetShapes(x, y))
                 {
-                    if (_stamps[shape] == _stamp) continue;
+                    if (_stamps[shape] == stamp) continue;
 
-                    _stamps[shape] = _stamp;
+                    _stamps[shape] = stamp;
                     _found[count++] = shape;
                 }
             }

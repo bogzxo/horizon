@@ -100,8 +100,10 @@ public partial class UICompositor
         // finger doesn't take over a mouse that's dragging
         if (touchId is null && !pointerWasDown)
         {
-            foreach (TouchPoint candidate in input.Touch.Points)
+            var points = input.Touch.Points;
+            for (int i = 0; i < points.Count; i++)
             {
+                TouchPoint candidate = points[i];
                 if (!candidate.WasPressed)
                     continue;
 

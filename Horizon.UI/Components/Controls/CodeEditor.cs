@@ -208,7 +208,23 @@ public partial class CodeEditor : UIComponent
         Dictionary<int, int> Foldable,
         List<(int Start, int End, int MaxEnd)> FoldableSorted,
         IReadOnlyList<UICodeFoldingRange>? NativeRanges,
-        bool CompleteNative);
+        bool CompleteNative,
+        bool ReusedFoldable);
+
+    // Double-buffered spare colouring arrays recycled on the UI thread after TakeColouring swaps, so 20k-line edits
+    // reuse LOH arrays instead of allocating fresh ones on every keystroke. Never mutated while a colouring task is in flight.
+    private string[]? spareLines;
+    private CodeLineStart[]? spareStarts;
+    private List<SyntaxSpan>[]? spareSpans;
+    private Dictionary<int, int>? spareFoldable;
+    private List<(int Start, int End, int MaxEnd)>? spareFoldableSorted;
+    private List<HidlSwatch>? spareSwatches;
+    private List<HidlArt>? spareArt;
+    private IReadOnlyList<UICodeFoldingRange>? foldableNativeRanges;
+    private bool foldableCompleteNative;
+
+    internal int ColouringBufferReuseCount { get; private set; }
+    internal int FoldableReuseCount { get; private set; }
 
     // What the colours there are now were worked out by, null for none (plain text), the next colouring goes on from them
     // when it's the same
@@ -1366,10 +1382,10 @@ public partial class CodeEditor : UIComponent
     }
 
     /// <summary>Helper method to snapshot the document's line references without joining them on the UI thread.</summary>
-    private string[] SnapshotLines()
+    private string[] SnapshotLines(string[]? reuse = null)
     {
         int count = document.LineCount;
-        var lines = new string[count];
+        var lines = reuse is not null && reuse.Length == count ? reuse : new string[count];
         for (int i = 0; i < count; i++)
             lines[i] = document.LineAt(i);
         return lines;
@@ -1482,49 +1498,143 @@ public partial class CodeEditor : UIComponent
     private void StartColouring()
     {
         int version = document.Version, count = document.LineCount;
-        string[] lines = SnapshotLines();
+
+        // Take ownership of the retired spare buffer set on the UI thread before launching the background task.
+        string[]? linesBuf = spareLines;
+        CodeLineStart[]? startsBuf = spareStarts;
+        List<SyntaxSpan>[]? spansBuf = spareSpans;
+        Dictionary<int, int>? foldableBuf = spareFoldable;
+        List<(int Start, int End, int MaxEnd)>? foldableSortedBuf = spareFoldableSorted;
+        List<HidlSwatch>? swatchesBuf = spareSwatches;
+        List<HidlArt>? artBuf = spareArt;
+        spareLines = null;
+        spareStarts = null;
+        spareSpans = null;
+        spareFoldable = null;
+        spareFoldableSorted = null;
+        spareSwatches = null;
+        spareArt = null;
+
+        bool reusedAnyBuffer = (linesBuf is not null && linesBuf.Length == count)
+            || (startsBuf is not null && startsBuf.Length == count)
+            || (spansBuf is not null && spansBuf.Length == count);
+        if (reusedAnyBuffer)
+            ColouringBufferReuseCount++;
+
+        string[] lines = SnapshotLines(linesBuf);
+        CodeLineStart[] starts = startsBuf is not null && startsBuf.Length == count ? startsBuf : new CodeLineStart[count];
+        List<SyntaxSpan>[]? targetSpans = spansBuf is not null && spansBuf.Length == count ? spansBuf : null;
 
         changeSeen = version;
         ICodeHighlighter reader = highlighter;
         IReadOnlyList<UICodeFoldingRange>? nativeRanges = nativeFoldingRanges;
         bool completeNative = completeNativeFolding;
+        bool canReuseFoldable = ReferenceEquals(colouredWith, reader)
+            && ReferenceEquals(nativeRanges, foldableNativeRanges)
+            && completeNative == foldableCompleteNative;
 
         // Gone on from the last colouring when it was this highlighter's, only the lines from the edit on read again
         CodeColouring? last = ReferenceEquals(colouredWith, reader) ? new CodeColouring(colouredLines, spans, lineStarts) : null;
         colouring = Task.Run(() =>
         {
-            var found = new List<HidlSwatch>();
-            var named = new List<HidlArt>();
-            var starts = new CodeLineStart[count];
+            var found = swatchesBuf ?? new List<HidlSwatch>();
+            found.Clear();
+            var named = artBuf ?? new List<HidlArt>();
+            named.Clear();
+
             List<SyntaxSpan>[] read;
+            bool reusedFoldable = false;
             if (last is null)
             {
-                read = reader.NeedsFullText
-                    ? reader.Read(string.Join('\n', lines), count, starts, found, named)
-                    : reader.ReadLines(lines, starts, found, named);
+                if (reader is TextMateHighlighter tm)
+                    read = tm.ReadLines(lines, starts, found, named, targetSpans);
+                else
+                    read = reader.NeedsFullText
+                        ? reader.Read(string.Join('\n', lines), count, starts, found, named)
+                        : reader.ReadLines(lines, starts, found, named);
+            }
+            else if (reader is TextMateHighlighter tm)
+            {
+                read = tm.ReadAgain(lines, starts, last, copyKept: false, out int singleChangedLine, out int lexedLines, destination: targetSpans);
+                if (canReuseFoldable && lines.Length == last.Lines.Length)
+                {
+                    if (lexedLines == 0)
+                        reusedFoldable = true;
+                    else if (lexedLines == 1 && singleChangedLine >= 0
+                        && SameBracketsOnLine(last.Lines[singleChangedLine], last.Spans[singleChangedLine], lines[singleChangedLine], read[singleChangedLine]))
+                        reusedFoldable = true;
+                }
             }
             else
             {
-                // Skip full-document string.Join when the highlighter operates per-line (e.g. TextMateHighlighter).
+                // Skip full-document string.Join when the highlighter operates per-line.
                 string text = reader.NeedsFullText ? string.Join('\n', lines) : string.Empty;
                 read = reader.ReadAgain(text, lines, starts, last, found, named);
             }
             EnsureSwatchesSorted(found);
             EnsureArtSorted(named);
 
-            // Compute foldable brace pairs and prefix-max sorted index off the UI thread so TakeColouring() is O(1).
-            var computedFoldable = new Dictionary<int, int>();
-            ScanFoldableInto(computedFoldable, lines, read, nativeRanges, completeNative);
-            var computedFoldableSorted = BuildFoldableSorted(computedFoldable);
+            var computedFoldable = foldableBuf ?? new Dictionary<int, int>();
+            var computedFoldableSorted = foldableSortedBuf ?? new List<(int Start, int End, int MaxEnd)>();
+            if (!reusedFoldable)
+            {
+                // Compute foldable brace pairs and prefix-max sorted index off the UI thread so TakeColouring() is O(1).
+                ScanFoldableInto(computedFoldable, lines, read, nativeRanges, completeNative);
+                FillFoldableSorted(computedFoldable, computedFoldableSorted);
+            }
 
-            var result = new Colouring(version, read, lines, found, starts, named, reader, computedFoldable, computedFoldableSorted, nativeRanges, completeNative);
+            var result = new Colouring(version, read, lines, found, starts, named, reader, computedFoldable, computedFoldableSorted, nativeRanges, completeNative, reusedFoldable);
             GameEngine.Instance?.WindowManager?.Wake();
             return result;
         });
     }
 
+    /// <summary>
+    /// Returns true when the sequence of bracket tokens (<c>{ } [ ] ( )</c>) on a single edited line is identical to
+    /// the previous colouring's bracket tokens, meaning foldable brace ranges cannot have changed.
+    /// </summary>
+    private static bool SameBracketsOnLine(string oldLine, List<SyntaxSpan> oldSpans, string newLine, List<SyntaxSpan> newSpans)
+    {
+        int i = 0, j = 0;
+        while (true)
+        {
+            char oldBracket = '\0';
+            while (i < oldSpans.Count)
+            {
+                SyntaxSpan s = oldSpans[i++];
+                if (s.Kind is (SyntaxKind.Bracket1 or SyntaxKind.Bracket2 or SyntaxKind.Bracket3) && s.Start < oldLine.Length)
+                {
+                    oldBracket = oldLine[s.Start];
+                    break;
+                }
+            }
+
+            char newBracket = '\0';
+            while (j < newSpans.Count)
+            {
+                SyntaxSpan s = newSpans[j++];
+                if (s.Kind is (SyntaxKind.Bracket1 or SyntaxKind.Bracket2 or SyntaxKind.Bracket3) && s.Start < newLine.Length)
+                {
+                    newBracket = newLine[s.Start];
+                    break;
+                }
+            }
+
+            if (oldBracket != newBracket)
+                return false;
+            if (oldBracket == '\0')
+                return true;
+        }
+    }
+
     private void TakeColouring(Colouring done)
     {
+        string[] oldLines = colouredLines;
+        CodeLineStart[] oldStarts = lineStarts;
+        List<SyntaxSpan>[] oldSpans = spans;
+        Dictionary<int, int> oldFoldable = foldable;
+        List<(int Start, int End, int MaxEnd)> oldFoldableSorted = foldableSorted;
+
         spans = done.Spans;
         colouredLines = done.Lines;
         lineStarts = done.Starts;
@@ -1537,10 +1647,45 @@ public partial class CodeEditor : UIComponent
         coloured = done.Version;
         fresh.Clear();
         freshText = null;
-        if (ReferenceEquals(done.NativeRanges, nativeFoldingRanges) && done.CompleteNative == completeNativeFolding)
+
+        if (done.ReusedFoldable && ReferenceEquals(done.NativeRanges, nativeFoldingRanges) && done.CompleteNative == completeNativeFolding)
+        {
+            FoldableReuseCount++;
+            linesWere = document.LineCount;
+            caretLineWas = document.Caret.Line;
+            if (!ReferenceEquals(done.Foldable, foldable))
+                spareFoldable = done.Foldable;
+            if (!ReferenceEquals(done.FoldableSorted, foldableSorted))
+                spareFoldableSorted = done.FoldableSorted;
+        }
+        else if (ReferenceEquals(done.NativeRanges, nativeFoldingRanges) && done.CompleteNative == completeNativeFolding)
+        {
             ApplyPrecomputedFoldable(done.Foldable, done.FoldableSorted);
+            foldableNativeRanges = done.NativeRanges;
+            foldableCompleteNative = done.CompleteNative;
+            if (!ReferenceEquals(oldFoldable, foldable))
+                spareFoldable = oldFoldable;
+            if (!ReferenceEquals(oldFoldableSorted, foldableSorted))
+                spareFoldableSorted = oldFoldableSorted;
+        }
         else
+        {
             FindFoldable();
+            if (!ReferenceEquals(done.Foldable, foldable))
+                spareFoldable = done.Foldable;
+            if (!ReferenceEquals(done.FoldableSorted, foldableSorted))
+                spareFoldableSorted = done.FoldableSorted;
+        }
+
+        // Recycle retired arrays on the UI thread for the next colouring pass.
+        if (!ReferenceEquals(oldLines, colouredLines) && oldLines.Length > 0)
+            spareLines = oldLines;
+        if (!ReferenceEquals(oldStarts, lineStarts) && oldStarts.Length > 0)
+            spareStarts = oldStarts;
+        if (!ReferenceEquals(oldSpans, spans) && oldSpans.Length > 0)
+            spareSpans = oldSpans;
+        spareSwatches = done.Swatches;
+        spareArt = done.Art;
     }
 
     /// <summary>
@@ -2255,21 +2400,25 @@ public partial class CodeEditor : UIComponent
             {
                 if (hoverFor != (document.Version, at.Line, start))
                 {
-                    hoverFor = (document.Version, at.Line, start);
                     if (hoverCacheVersion != document.Version)
                     {
                         hoverCache.Clear();
                         hoverCacheVersion = document.Version;
                     }
 
-                    if (!hoverCache.TryGetValue((at.Line, start), out string? cached))
+                    if (hoverCache.TryGetValue((at.Line, start), out string? cached))
                     {
+                        hoverFor = (document.Version, at.Line, start);
+                        hoverText = cached;
+                    }
+                    else
+                    {
+                        hoverFor = (document.Version, at.Line, start);
                         if (hoverCache.Count >= MAX_HOVER_CACHE)
                             hoverCache.Clear();
                         hoverCache[(at.Line, start)] = cached = source(this, new UITextPosition(at.Line, start)) ?? string.Empty;
+                        hoverText = cached;
                     }
-
-                    hoverText = cached;
                 }
 
                 said = hoverText;

@@ -193,6 +193,7 @@ public partial class UICompositor : GameComponent, IDisposable
     private bool pictureCurrent;
     private ulong pictureGlassGeneration;
     private Matrix4x4 pictureView, pictureProjection;
+    private bool retained = true;
 
     /// <summary>
     /// Whether the UI keeps the picture it last drew and lays that over the frame for as long as nothing in it
@@ -200,7 +201,17 @@ public partial class UICompositor : GameComponent, IDisposable
     /// is standing still (most of them, most of the time) then costs one quad a frame however much is in it, and
     /// nothing is sent to the GPU for it at all. What it takes is the memory of a picture the size of the screen.
     /// </summary>
-    public bool Retained { get; set; } = true;
+    public bool Retained
+    {
+        get => retained;
+        set
+        {
+            if (retained == value)
+                return;
+            retained = value;
+            pictureCurrent = false;
+        }
+    }
 
     /// <summary>
     /// What <see cref="FrameRateLimit"/> is for every UI made from here on, 120 unless a game says otherwise. Set
@@ -1016,7 +1027,8 @@ public partial class UICompositor : GameComponent, IDisposable
         // Letters ClearType's way or grey, hinted or not, for the screen the window is on now (see GlyphSmoothing)
         float density = GameEngine.Instance?.WindowManager?.DisplayScale ?? 1.0f;
         bool subpixels = Horizon.Rendering.Text.GlyphSmoothing.Subpixels(density, drawnNative, out bool bgr);
-        back.UseSmoothing(subpixels, bgr, Horizon.Rendering.Text.GlyphSmoothing.Hints(density));
+        bool dualSource = drawnNative && (GameEngine.Instance?.Graphics?.SupportsDualSourceBlend ?? false);
+        back.UseSmoothing(subpixels, bgr, Horizon.Rendering.Text.GlyphSmoothing.Hints(density), dualSource);
         foreach (var module in snapshot)
         {
             if (!module.Enabled)
@@ -1979,6 +1991,7 @@ public partial class UICompositor : GameComponent, IDisposable
         layer.Dispose();
         glassPass?.Dispose();
         glassPass = null;
+        pictureCurrent = false;
 
         renderer.Dispose();
         Skin = null;

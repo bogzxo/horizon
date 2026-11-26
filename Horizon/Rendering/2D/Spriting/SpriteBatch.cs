@@ -1,6 +1,7 @@
 using Horizon.Logging;
 using System.Collections.Concurrent;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Horizon.Core.Components;
 using Horizon.Core.Threading;
@@ -67,8 +68,19 @@ public class SpriteBatch : GameObject
         public Camera? Camera;
     }
 
-    /// <summary>Gets the shader.</summary>
-    public Technique Shader { get; set; }
+    private Technique _shader = null!;
+
+    /// <summary>Gets or sets the shader used to draw queued/direct items.</summary>
+    public Technique Shader
+    {
+        get => _shader;
+        set
+        {
+            _shader = value;
+            if (_itemMesh is not null)
+                _itemMesh.Shader = value;
+        }
+    }
 
     // The groups by what they are drawn out of, and in the order they came, which never changes for a group
     private readonly Dictionary<uint, SpriteGroup> _sheetGroups = new();
@@ -136,7 +148,16 @@ public class SpriteBatch : GameObject
     /// every stretch on its own used up the regions of the buffer inside one frame and waited on the GPU for a second.
     /// </summary>
     /// <returns>Whether there is anything to draw, <see cref="EndItems"/> is called either way.</returns>
-    public bool BeginItems(ReadOnlySpan<SpriteItem> items, ReadOnlySpan<SpriteRun> runs, ReadOnlySpan<SpriteTexture> shared = default)
+    public bool BeginItems(ReadOnlySpan<SpriteItem> items, ReadOnlySpan<SpriteRun> runs, ReadOnlySpan<SpriteTexture> shared = default) =>
+        BeginItems(0UL, items, runs, shared);
+
+    /// <summary>
+    /// Revision-aware overload of <see cref="BeginItems(ReadOnlySpan{SpriteItem}, ReadOnlySpan{SpriteRun}, ReadOnlySpan{SpriteTexture})"/>.
+    /// When <paramref name="revision"/> is non-zero and matches the last uploaded revision with identical resolved bindless
+    /// texture slots, reuses the previously uploaded GPU buffer region without re-copying or re-uploading items.
+    /// </summary>
+    [SkipLocalsInit]
+    public bool BeginItems(ulong revision, ReadOnlySpan<SpriteItem> items, ReadOnlySpan<SpriteRun> runs, ReadOnlySpan<SpriteTexture> shared = default)
     {
         sentItems = 0;
         if (!Enabled || items.IsEmpty || Shader is null)
@@ -144,32 +165,72 @@ public class SpriteBatch : GameObject
 
         PrepareItems();
 
+        Span<uint> table = stackalloc uint[shared.Length + 2];
+        ulong textureHash = 14695981039346656037UL;
+        if (revision != 0)
+        {
+            textureHash = (textureHash ^ (uint)shared.Length) * 1099511628211UL;
+            for (int i = 0; i < shared.Length; i++)
+            {
+                uint idx = shared[i].Index;
+                table[i] = idx;
+                textureHash = (textureHash ^ idx) * 1099511628211UL;
+            }
+
+            textureHash = (textureHash ^ (uint)runs.Length) * 1099511628211UL;
+            foreach (ref readonly SpriteRun run in runs)
+            {
+                textureHash = (textureHash ^ (uint)run.First) * 1099511628211UL;
+                textureHash = (textureHash ^ (uint)run.Count) * 1099511628211UL;
+                textureHash = (textureHash ^ (run.Texture0.IsValid ? run.Texture0.Index : SpriteItem.NoTexture)) * 1099511628211UL;
+                textureHash = (textureHash ^ (run.Texture1.IsValid ? run.Texture1.Index : SpriteItem.NoTexture)) * 1099511628211UL;
+            }
+
+            if (_itemMesh!.TryReuseItems(revision, items.Length, textureHash, out bool cachedCasters))
+            {
+                itemsBegun = true;
+                if (cachedCasters) NoteCasters();
+                sentItems = items.Length;
+                return true;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < shared.Length; i++) table[i] = shared[i].Index;
+        }
+
         Span<SpriteItem> buffer = _itemMesh!.BeginItems(items.Length);
         itemsBegun = true;
         if (!buffer.IsEmpty)
         {
-            Span<uint> table = stackalloc uint[shared.Length + 2];
-            for (int i = 0; i < shared.Length; i++) table[i] = shared[i].Index;
+            ref SpriteItem srcBase = ref MemoryMarshal.GetReference(items);
+            ref SpriteItem dstBase = ref MemoryMarshal.GetReference(buffer);
+            ref uint tableBase = ref MemoryMarshal.GetReference(table);
 
             uint casters = 0;
-            foreach (var run in runs)
+            foreach (ref readonly SpriteRun run in runs)
             {
                 int count = shared.Length;
-                if (run.Texture0.IsValid) table[count++] = run.Texture0.Index;
-                if (run.Texture1.IsValid) table[count++] = run.Texture1.Index;
+                if (run.Texture0.IsValid) Unsafe.Add(ref tableBase, count++) = run.Texture0.Index;
+                if (run.Texture1.IsValid) Unsafe.Add(ref tableBase, count++) = run.Texture1.Index;
 
+                int start = Math.Max(0, run.First);
                 int end = Math.Min(run.First + run.Count, items.Length);
-                for (int i = Math.Max(0, run.First); i < end; i++)
+                uint ucount = (uint)count;
+                for (int i = start; i < end; i++)
                 {
-                    SpriteItem item = items[i];
+                    SpriteItem item = Unsafe.Add(ref srcBase, i);
                     uint slot = SpriteItem.TextureOf(item.Flags);
-                    item.Flags = SpriteItem.WithTexture(item.Flags, slot < (uint)count ? table[(int)slot] : SpriteItem.NoTexture);
-                    buffer[i] = item;
+                    uint resolved = slot < ucount ? Unsafe.Add(ref tableBase, (int)slot) : SpriteItem.NoTexture;
+                    item.Flags = SpriteItem.WithTexture(item.Flags, resolved);
+                    Unsafe.Add(ref dstBase, i) = item;
                     casters |= item.Flags & SpriteItem.ShadowFlag;
                 }
             }
 
-            if (casters != 0) NoteCasters();
+            bool hasCasters = casters != 0;
+            if (hasCasters) NoteCasters();
+            if (revision != 0) _itemMesh.RememberItems(revision, items.Length, textureHash, hasCasters);
 
             sentItems = items.Length;
         }

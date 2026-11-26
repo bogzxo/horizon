@@ -277,15 +277,27 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
     float visible = 1.0;
     float through = 1.0;
     float previous = 1e9;
-    bool sprites = field.hasSprites && !inWall;
+    bool sprites = field.hasSprites && !inWall && spriteShadow > 0.0;
     bool inside = false;
     float enteredAt = 0.0;
+
+    float2 wallUvStart = (from - field.origin) * field.invExtent;
+    float2 wallUvStep = direction * field.invExtent;
+    float2 spriteUvStart = pictureOfFast(from, field);
+    float2 spriteUvStep = direction * field.pictureScale;
+
     for (int step = 0; step < 32; step++)
     {
         if (t >= furthest) break;
 
-        float2 at = from + direction * t;
-        float walls = sprites ? wallsDistance(at, field) : wallDistance(at, field, false);
+        float walls = 1e9;
+        if (field.hasWalls)
+        {
+            float2 wallUv = wallUvStart + wallUvStep * t;
+            float distanceField = uTexField.SampleLevel(clamp(wallUv, 0.0, 1.0), 0.0).r;
+            float2 outside = max(abs(wallUv - 0.5) - 0.5, 0.0);
+            walls = all(outside <= 0.0) ? distanceField : max(distanceField, 0.0) + length(outside * field.extent);
+        }
         float d = walls;
 
         // The nearest thing that is near enough along the way to be tall enough to count, for the penumbra. A
@@ -298,7 +310,8 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
         {
             // Sprites on their own, which the march goes through, a step at a time while inside of one (and in
             // bigger steps through one that is too far off to be tall enough, it is only being got past)
-            float ds = spritesDistance(at, field, false);
+            float2 picUv = spriteUvStart + spriteUvStep * t;
+            float ds = (all(picUv >= 0.0) && all(picUv <= 1.0)) ? uTexSprites.SampleLevel(picUv, 0.0).r : 1e9;
             if (ds < 0.05)
             {
                 if (!inside) enteredAt = t;
@@ -549,4 +562,103 @@ float ambientOcclusion(float2 position, Field field, float radius, int samples, 
     }
 
     return 1.0 - strength * share * occluded / float(samples);
+}
+
+// Computes both (aoWithSprites, aoWithoutSprites) sharing the wall-exit gradient and angular sincos setup.
+// Skips sprite work entirely when no sprite field is active or the nearest sprite is beyond radius + margin.
+float2 ambientOcclusionPair(float2 position, Field field, float radius, int samples, float strength)
+{
+    if (!hasAnything(field) || samples <= 0 || radius <= 0.0 || strength <= 0.0) return float2(1.0, 1.0);
+
+    float texel = fieldTexel(field);
+    float2 at = position;
+    float2 baseDir = float2(1.0, 0.0);
+    float span = 6.2831853;
+    float share = 1.0;
+
+    float d = wallsDistance(at, field);
+    float margin = 2.0 * max(max(field.cellSize.x, field.cellSize.y), field.spritePixelWorld);
+    bool wallsNear = d <= radius + margin;
+    bool spritesNear = field.hasSprites && spritesDistance(at, field, false) <= radius + margin;
+
+    if (!wallsNear && !spritesNear) return float2(1.0, 1.0);
+
+    if (d < texel)
+    {
+        if (-d >= radius) return float2(1.0, 1.0);
+
+        float2 slope = float2(
+            wallsDistance(at + float2(texel, 0.0), field) - wallsDistance(at - float2(texel, 0.0), field),
+            wallsDistance(at + float2(0.0, texel), field) - wallsDistance(at - float2(0.0, texel), field));
+        if (dot(slope, slope) < 1e-8) return float2(1.0, 1.0);
+
+        float2 outward = normalize(slope);
+        if (d < 0.0)
+        {
+            at += outward * (-d + 0.5 * texel);
+            float still = wallsDistance(at, field);
+            if (still < 0.0)
+            {
+                at += outward * (-still + 0.5 * texel);
+                if (wallsDistance(at, field) < 0.0) return float2(1.0, 1.0);
+            }
+            share = 1.0 - clamp(-d / radius, 0.0, 1.0);
+        }
+
+        baseDir = float2(outward.y, -outward.x);
+        span = 3.1415927;
+    }
+
+    float halfStep = 0.5 * span / float(samples);
+    float sinHalf, cosHalf;
+    sincos(halfStep, sinHalf, cosHalf);
+    float cosStep = cosHalf * cosHalf - sinHalf * sinHalf;
+    float sinStep = 2.0 * sinHalf * cosHalf;
+    float2 direction = float2(
+        baseDir.x * cosHalf - baseDir.y * sinHalf,
+        baseDir.x * sinHalf + baseDir.y * cosHalf);
+
+    float occludedWith = 0.0;
+    float occludedWithout = 0.0;
+    for (int i = 0; i < samples; i++)
+    {
+        if (spritesNear)
+        {
+            float t = 0.5 * texel;
+            float hitWith = radius;
+            for (int step = 0; step < 4; step++)
+            {
+                float2 ahead = at + direction * t;
+                float distance = wallsNear ? wallDistance(ahead, field) : spritesDistance(ahead, field, false);
+                if (distance < 0.05) { hitWith = t; break; }
+                t += max(distance, 0.5 * texel);
+                if (t >= radius) break;
+            }
+            occludedWith += 1.0 - hitWith / radius;
+        }
+
+        if (wallsNear)
+        {
+            float tw = 0.5 * texel;
+            float hitWithout = radius;
+            for (int step = 0; step < 4; step++)
+            {
+                float2 ahead = at + direction * tw;
+                float distance = wallsDistance(ahead, field);
+                if (distance < 0.05) { hitWithout = tw; break; }
+                tw += max(distance, 0.5 * texel);
+                if (tw >= radius) break;
+            }
+            occludedWithout += 1.0 - hitWithout / radius;
+        }
+
+        direction = float2(
+            direction.x * cosStep - direction.y * sinStep,
+            direction.x * sinStep + direction.y * cosStep);
+    }
+
+    float scale = strength * share / float(samples);
+    float aoWithout = 1.0 - scale * occludedWithout;
+    float aoWith = spritesNear ? (1.0 - scale * occludedWith) : aoWithout;
+    return float2(aoWith, aoWithout);
 }

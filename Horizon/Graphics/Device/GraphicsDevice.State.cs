@@ -493,8 +493,9 @@ public sealed unsafe partial class GraphicsDevice
         }
         else
         {
+            Format swapFormat = swapchain.Format;
             pipeline = targetIsWindow
-                ? Pipelines.GetGraphics(key, boundShader, boundVertexArray, [swapchain.Format], Format.Undefined, false)
+                ? Pipelines.GetGraphics(key, boundShader, boundVertexArray, new ReadOnlySpan<Format>(in swapFormat), Format.Undefined, false)
                 : Pipelines.GetGraphics(key, boundShader, boundVertexArray, boundTarget!.ColorFormats, boundTarget.DepthFormat, boundTarget.HasStencil);
             lastGraphicsKey = key;
             lastGraphicsPipeline = pipeline;

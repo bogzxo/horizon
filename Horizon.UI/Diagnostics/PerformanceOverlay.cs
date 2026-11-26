@@ -172,17 +172,18 @@ public sealed class PerformanceOverlay : GameObject
                 up.SlideIn(Corner.ToVector() * 28.0f, 0.22f);
             }
 
+            bool full = detail == PerformanceDetail.Full;
             if ((refresh -= dt) <= 0.0f)
             {
                 refresh = REFRESH;
                 graphRefresh = GRAPH_REFRESH;
-                sample.Read(Engine);
+                sample.Read(Engine, full);
                 face.Show(detail);
             }
             else if ((graphRefresh -= dt) <= 0.0f)
             {
                 graphRefresh = GRAPH_REFRESH;
-                sample.ReadTimelines();
+                sample.ReadTimelines(full);
                 face.ShowGraphs(detail);
             }
         }

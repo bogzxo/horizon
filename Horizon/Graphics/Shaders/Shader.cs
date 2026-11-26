@@ -54,14 +54,15 @@ public sealed class Shader : GpuResource
         Params = compiled.Params;
 
         // The stages of one Slang file share a module, so each distinct SPIR-V is made once
-        var modules = new Dictionary<byte[], Silk.NET.Vulkan.ShaderModule>(ReferenceEqualityComparer.Instance);
+        var modules = new Dictionary<ReadOnlyMemory<byte>, Silk.NET.Vulkan.ShaderModule>();
         bool usesSeparateSamplers = false;
         foreach (var stage in compiled.Stages)
         {
-            if (!modules.TryGetValue(stage.Spirv, out Silk.NET.Vulkan.ShaderModule module))
+            ReadOnlyMemory<byte> spirv = stage.SpirvMemory;
+            if (!modules.TryGetValue(spirv, out Silk.NET.Vulkan.ShaderModule module))
             {
-                modules[stage.Spirv] = module = device.CreateShaderModule(stage.Spirv);
-                if (!usesSeparateSamplers && UsesSeparateSamplersInSpirv(stage.Spirv))
+                modules[spirv] = module = device.CreateShaderModule(spirv.Span);
+                if (!usesSeparateSamplers && UsesSeparateSamplersInSpirv(spirv.Span))
                     usesSeparateSamplers = true;
             }
 
@@ -131,8 +132,12 @@ public sealed class Shader : GpuResource
         if (BinaryPrimitives.ReadUInt32LittleEndian(spirv) != SPIRV_MAGIC)
             return true;
 
-        HashSet<uint>? set1Ids = null;
-        HashSet<uint>? samplerBindingIds = null;
+        Span<uint> set1Inline = stackalloc uint[64];
+        Span<uint> samplerInline = stackalloc uint[64];
+        int set1Count = 0;
+        int samplerCount = 0;
+        HashSet<uint>? set1Overflow = null;
+        HashSet<uint>? samplerOverflow = null;
 
         int offset = 20;
         while (offset + 4 <= spirv.Length)
@@ -155,17 +160,17 @@ public sealed class Shader : GpuResource
 
                 if (decoration == DECORATION_DESCRIPTOR_SET && value == 1u)
                 {
-                    if (samplerBindingIds is not null && samplerBindingIds.Contains(targetId))
+                    if (ContainsId(samplerInline, samplerCount, samplerOverflow, targetId))
                         return true;
-                    (set1Ids ??= []).Add(targetId);
+                    AddId(set1Inline, ref set1Count, ref set1Overflow, targetId);
                 }
                 else if (decoration == DECORATION_BINDING
                     && value >= DescriptorLayouts.FIRST_SAMPLER_BINDING
                     && value < DescriptorLayouts.FIRST_SAMPLER_BINDING + ShaderPreprocessor.SAMPLER_BINDINGS)
                 {
-                    if (set1Ids is not null && set1Ids.Contains(targetId))
+                    if (ContainsId(set1Inline, set1Count, set1Overflow, targetId))
                         return true;
-                    (samplerBindingIds ??= []).Add(targetId);
+                    AddId(samplerInline, ref samplerCount, ref samplerOverflow, targetId);
                 }
             }
 
@@ -173,6 +178,27 @@ public sealed class Shader : GpuResource
         }
 
         return false;
+
+        static bool ContainsId(ReadOnlySpan<uint> inline, int count, HashSet<uint>? overflow, uint id)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (inline[i] == id) return true;
+            }
+            return overflow is not null && overflow.Contains(id);
+        }
+
+        static void AddId(Span<uint> inline, ref int count, ref HashSet<uint>? overflow, uint id)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (inline[i] == id) return;
+            }
+            if (count < inline.Length)
+                inline[count++] = id;
+            else
+                (overflow ??= []).Add(id);
+        }
     }
 
     protected override void DestroyCore() => device?.DestroyShader(this);

@@ -6,7 +6,7 @@ using Horizon.Physics.Fixtures;
 
 namespace Horizon.Physics;
 
-public class PhysicsBodyComponent2D : GameComponent
+public sealed class PhysicsBodyComponent2D : GameComponent
 {
     public override ComponentCapabilities Capabilities => ComponentCapabilities.UpdateState;
     public PhysicsBodySimulationType SimulationType { get; init; }

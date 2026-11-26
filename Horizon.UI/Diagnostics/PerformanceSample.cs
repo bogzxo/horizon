@@ -106,19 +106,33 @@ internal sealed class PerformanceSample
     private double lastReadAt;
 
     /// <summary>
-    /// Reads the numbers. Simulation thread.
+    /// Reads the numbers. Simulation thread. When <paramref name="full"/> is false (compact pill), skips instability
+    /// percentiles, GPU scope pass aggregation, simulation/logic/physics loops, tick timeline sorting, and GC queries.
     /// </summary>
-    public void Read(GameEngine engine)
+    public void Read(GameEngine engine, bool full = true)
     {
         var window = engine.WindowManager;
         var loops = window.Loops;
 
         render = Find(loops, "Render");
-        simulation = Find(loops, "Simulation");
-        LoopStatistics? logic = Find(loops, "Logic"), physics = Find(loops, "Physics");
-
         Ready = render is not null;
         GpuMs = engine.GpuFrameMs;
+
+        if (!full)
+        {
+            if (render is not null)
+            {
+                Fps = render.Rate;
+                FpsTarget = render.TargetRate;
+                WorkMs = render.WorkMs;
+            }
+
+            ReadTimelines(full: false);
+            return;
+        }
+
+        simulation = Find(loops, "Simulation");
+        LoopStatistics? logic = Find(loops, "Logic"), physics = Find(loops, "Physics");
 
         if (render is not null)
         {
@@ -189,16 +203,21 @@ internal sealed class PerformanceSample
         Mid = GC.CollectionCount(1);
         Big = GC.CollectionCount(2);
 
-        ReadTimelines();
+        ReadTimelines(full: true);
     }
 
     /// <summary>
     /// Reads the timelines, which move on a slice every tenth of a second and so are read more often than the
     /// numbers, a graph that hops four times a second looks like it is thinking about it. Simulation thread.
     /// </summary>
-    public void ReadTimelines()
+    public void ReadTimelines(bool full = true)
     {
         FrameSlices = render?.CopyTimeline(Frames) ?? 0;
+        FrameUsualMs = Usual(Frames, FrameSlices, gaps: true);
+
+        if (!full)
+            return;
+
         TickSlices = simulation?.CopyTimeline(Ticks) ?? 0;
 
         // The longest anybody waited for a frame in all of it, the one number a hitch can't hide from
@@ -207,8 +226,6 @@ internal sealed class PerformanceSample
             worst = MathF.Max(worst, Frames[i].WorstGapMs);
 
         WorstGapMs = worst;
-
-        FrameUsualMs = Usual(Frames, FrameSlices, gaps: true);
         TickUsualMs = Usual(Ticks, TickSlices, gaps: false);
     }
 

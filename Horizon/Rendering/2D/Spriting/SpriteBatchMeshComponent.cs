@@ -26,13 +26,24 @@ public class SpriteBatchMesh : GameObject
     private readonly SpriteSheet? sheet;
     private readonly StreamBuffer<SpriteItem> items;
 
-    public Technique Shader { get; init; }
+    public Technique Shader { get; set; }
 
     /// <summary>The buffer the items of the frames go into.</summary>
     public StreamBuffer<SpriteItem> Items => items;
 
     // How many items the current frame has, see BeginItems
     private int frameCount;
+
+    // Last uploaded revision state for zero-copy cross-frame reuse of unchanged batches
+    private ulong cachedRevision;
+    private ulong cachedTextureHash;
+    private int cachedCount;
+    private int cachedRegion;
+    private nint cachedByteOffset;
+    private nuint cachedRegionBytes;
+    private GpuBuffer? cachedBuffer;
+    private bool cachedHasCasters;
+    private bool reusingCached;
 
     /// <summary>A mesh for the sprites of a sprite sheet.</summary>
     public SpriteBatchMesh(SpriteSheet sheet, Technique shader)
@@ -64,9 +75,54 @@ public class SpriteBatchMesh : GameObject
     /// </summary>
     public Span<SpriteItem> BeginItems(int count)
     {
+        cachedRevision = 0;
+        reusingCached = false;
         Span<SpriteItem> span = items.Begin(count);
         frameCount = span.Length;
         return span;
+    }
+
+    /// <summary>
+    /// Attempts to reuse the last uploaded <see cref="StreamBuffer{T}"/> region when <paramref name="revision"/>,
+    /// item count, resolved bindless texture hash, and backing buffer all match.
+    /// </summary>
+    internal bool TryReuseItems(ulong revision, int count, ulong textureHash, out bool hasCasters)
+    {
+        if (revision != 0
+            && revision == cachedRevision
+            && count == cachedCount
+            && textureHash == cachedTextureHash
+            && items.IsAvailable
+            && ReferenceEquals(items.Buffer, cachedBuffer)
+            && cachedBuffer is { IsValid: true })
+        {
+            reusingCached = true;
+            frameCount = count;
+            hasCasters = cachedHasCasters;
+            return true;
+        }
+
+        hasCasters = false;
+        return false;
+    }
+
+    /// <summary>Records the current <see cref="StreamBuffer{T}"/> region as reusable for <paramref name="revision"/>.</summary>
+    internal void RememberItems(ulong revision, int count, ulong textureHash, bool hasCasters)
+    {
+        if (revision == 0 || !items.IsAvailable || items.Buffer is null)
+        {
+            cachedRevision = 0;
+            return;
+        }
+
+        cachedRevision = revision;
+        cachedCount = count;
+        cachedTextureHash = textureHash;
+        cachedRegion = items.CurrentRegion;
+        cachedByteOffset = items.ByteOffset;
+        cachedRegionBytes = items.RegionBytes;
+        cachedBuffer = items.Buffer;
+        cachedHasCasters = hasCasters;
     }
 
     /// <summary>Draws a run of the items of this frame in a single call, in the order they are in.</summary>
@@ -79,15 +135,27 @@ public class SpriteBatchMesh : GameObject
         Shader.Bind();
         Shader.SetUniform(UNIFORM_MODEL_MATRIX, in globalModel);
 
-        items.BindRange(ITEMS_BINDING);
+        if (reusingCached)
+            cachedBuffer?.BindStorageRange(ITEMS_BINDING, cachedByteOffset, cachedRegionBytes);
+        else
+            items.BindRange(ITEMS_BINDING);
 
-        GraphicsDevice.Current.DrawInstanced(Topology.Triangles, 6, (uint)count, (uint)first);
+        GraphicsDevice.Current.DrawQuadInstanced((uint)count, (uint)first);
     }
 
     /// <summary>Ends the frame started by <see cref="BeginItems"/>.</summary>
     public void EndItems()
     {
-        items.End();
+        if (reusingCached)
+        {
+            items.TouchRegion(cachedRegion);
+            reusingCached = false;
+        }
+        else
+        {
+            items.End();
+        }
+
         frameCount = 0;
     }
 

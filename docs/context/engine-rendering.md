@@ -299,12 +299,14 @@ passes. Examples: `ComputeParticleSimulator2D`, `shaders/lighting/*`, `VoxelRend
 | Camera data in shaders | `Rendering/Common/CameraBlock.cs`, `shaders/common/camera.slang` |
 | Screen pass boilerplate | `shaders/common/screen.slang`, `Rendering/Common/Renderer2DTechnique.cs` |
 | Post effects | `Rendering/Common/PostProcessing/` |
-| Sprites | `Rendering/2D/Spriting/SpriteBatch.cs`, `SpriteBatchMeshComponent.cs`, `shaders/spritebatch/sprites.slang` |
-| Lighting | `Rendering/2D/DeferredRenderer2D.cs`, `2D/Lighting/`, `shaders/lighting/`, `shaders/renderer2d/deferred.slang` |
+| Sprites | `Rendering/2D/Spriting/SpriteBatch.cs`, `SpriteBatchMeshComponent.cs`, `StreamBuffer.cs` (`TouchRegion`, revision-aware `BeginItems`, shared quad `ushort[6]` IB `DrawQuadInstanced`/`DrawQuadIndirect`/`DrawQuadIndirectCount`), `TileMapGpu` (`Tile`), `shaders/spritebatch/sprites.slang` |
+| Lighting | `Rendering/2D/DeferredRenderer2D.cs`, `2D/Lighting/` (`gi_cascade.slang` screen-AABB clipping + `uTexRadiance.a` `leaveWall`, `sprite_flood_final.slang` LDS JFA fusion, `direct.slang`/`light_cells.slang` `ambientOcclusionPair` + UV hoisting, outward-spiral `sdf_rows`/`sdf_columns`), `shaders/lighting/`, `shaders/renderer2d/deferred.slang` |
 | Debug shapes | `Rendering/2D/Primitives/PrimitiveRenderer.cs`, `shaders/primitives/shapes.slang` |
 | Particles | `Rendering/2D/Particles/`, `shaders/particle/` |
 | Voxels / 3D | `Rendering/3D/`, `shaders/voxels/`, `shaders/models/mesh.slang` |
 | Render scale | `Rendering/Scaling/`, `shaders/post/{cas,fsr1_*,gsr1,upscale_nearest}.slang` |
+| Dual-source UI & Vulkan prep | `Graphics/Device/{GraphicsEnums,RenderState}.cs` (`BlendFactor.Src1Alpha`/`OneMinusSrc1Alpha`, `BlendMode.DualSource`), `shaders/ui/ui_dual.slang`, `Graphics/Vulkan` (`PreparedDevice`, `SupportsDualSourceBlend`), `Core/Windowing/WindowManager.Device.cs` |
+| ShaderPack & warming | `ShaderPack` (`ReadOnlyMemory<byte>` + lazy shared `.Spirv`), `CompiledStage`, `WarmComputePipelines`, `Technique.SetParamsBlock<T>` |
 | Render loop, snapshots | `Core/Windowing/WindowManager.cs:404-720`, `Core/Threading/RenderFrame.cs` |
 | Ownership by scene | `Graphics/Device/ObjectManager.cs`, `Horizon/Content` |
 | GPU timing/stats | `GraphicsDevice.BeginGpuScope`, `GraphicsStatistics.cs`, `GpuScope.cs` |

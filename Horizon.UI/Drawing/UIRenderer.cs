@@ -15,6 +15,11 @@ namespace Horizon.UI.Drawing;
 internal sealed class UIRenderer : IDisposable
 {
     private SpriteBatch? batch;
+    private Technique? uiShader;
+    private Technique? dualShader;
+    private bool dualShaderAvailable;
+    private bool usingDualShader;
+    private ulong uploadedRevision;
 
     // One sampler serves every renderer, so making and dropping compositors doesn't pile samplers up.
     private static uint fontSampler;
@@ -47,6 +52,19 @@ internal sealed class UIRenderer : IDisposable
     /// <summary>Whether there is nothing to draw at all, a UI whose modules are all off, or one that hasn't been painted yet.</summary>
     public bool IsEmpty => itemCount == 0;
 
+    /// <summary>Whether the last upload uses the single-pass dual-source UI shader and blend mode.</summary>
+    internal bool UsingDualShader => usingDualShader;
+
+    /// <summary>How many blend transitions the 2-pass subpixel fallback recorded for the last upload.</summary>
+    internal int BlendChangeCount => blendChanges.Count;
+
+    /// <summary>Test hook to simulate GPU dual-source shader availability without initializing a GPU device.</summary>
+    internal bool DualSourceAvailableForTest
+    {
+        get => dualShaderAvailable;
+        set => dualShaderAvailable = value;
+    }
+
     public void Initialize()
     {
         // Not part of any scene. It only ever draws what it is handed here.
@@ -56,7 +74,19 @@ internal sealed class UIRenderer : IDisposable
 
         // With the UI's own shader rather than the lit sprites', which draws its rounded boxes and their edges and
         // shadows as a quad each (see shaders/ui/ui.slang). Before the quads' mesh is made, which takes it from here
-        batch.Shader = Technique.Load("shaders/ui", "ui");
+        uiShader = Technique.Load("shaders/ui", "ui");
+        batch.Shader = uiShader;
+
+        if (GameEngine.Instance?.Graphics?.SupportsDualSourceBlend == true)
+        {
+            dualShader = Technique.Load("shaders/ui", "ui_dual");
+            dualShaderAvailable = dualShader is not null;
+        }
+        else
+        {
+            dualShader = null;
+            dualShaderAvailable = false;
+        }
 
         // Everything the UI has on the GPU exists from here on, rather than from whenever it first has something to show.
         batch.PrepareItems();
@@ -65,7 +95,7 @@ internal sealed class UIRenderer : IDisposable
         // first and then left that way by a UI with nothing to repaint
         Horizon.Rendering.Text.GlyphAtlas.Shared.Upload();
 
-        if (fontSampler != 0)
+        if (fontSampler != 0 || GameEngine.Instance?.Graphics is null)
             return;
 
         // The font is a distance field, read smoothly and without mipmaps, the shader makes the edge out of it at
@@ -114,10 +144,35 @@ internal sealed class UIRenderer : IDisposable
 
         // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
         skin = listSkin;
-        if (GroupSubpixels())
-            FindBlends();
-        else if (blendChanges.Count > 0)
-            blendChanges.Clear();
+
+        bool useDual = false;
+        if (dualShaderAvailable)
+        {
+            bool hasErase = false;
+            for (int i = 0; i < itemCount; i++)
+            {
+                if ((items[i].Flags & SpriteItem.SubpixelEraseFlag) != 0)
+                {
+                    hasErase = true;
+                    break;
+                }
+            }
+            useDual = !hasErase;
+        }
+
+        if (useDual)
+        {
+            usingDualShader = true;
+            FindDualSourceBlends();
+        }
+        else
+        {
+            usingDualShader = false;
+            if (GroupSubpixels())
+                FindBlends();
+            else if (blendChanges.Count > 0)
+                blendChanges.Clear();
+        }
         Revision++;
     }
 
@@ -133,6 +188,8 @@ internal sealed class UIRenderer : IDisposable
         atlases.Clear();
         glass.Clear();
         blendChanges.Clear();
+        usingDualShader = false;
+        uploadedRevision = 0;
         skin = null;
         Revision++;
     }
@@ -211,8 +268,12 @@ internal sealed class UIRenderer : IDisposable
             spriteRunsDirty = false;
         }
 
+        if (uiShader is not null)
+            batch.Shader = uiShader;
+
+        uploadedRevision = Revision;
         begun = true;
-        return batch.BeginItems(items.AsSpan(0, itemCount), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(spriteRuns), shared);
+        return batch.BeginItems(uploadedRevision, items.AsSpan(0, itemCount), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(spriteRuns), shared);
     }
 
     /// <summary>Draws the quads from one up to (and not including) another of what <see cref="Begin"/> sent.</summary>
@@ -226,13 +287,19 @@ internal sealed class UIRenderer : IDisposable
         var before = RenderState.Save();
 
         RenderState.Blend = true;
-        RenderState.BlendMode = BlendMode.Alpha;
         RenderState.DepthTest = false;
+        RenderState.BlendMode = BlendMode.Alpha;
 
         if (blendChanges.Count == 0)
+        {
+            if (uiShader is not null)
+                batch.Shader = uiShader;
             batch.DrawItems(from, to - from, camera);
+        }
         else
+        {
             DrawBlended(from, to, camera);
+        }
 
         RenderState.Restore(before);
     }
@@ -330,6 +397,21 @@ internal sealed class UIRenderer : IDisposable
         grouping.AsSpan(0, count).CopyTo(items.AsSpan(from, count));
     }
 
+    // Transitions for single-pass dual-source subpixel runs (non-subpixel quads stay on single-source BlendMode.Alpha)
+    private void FindDualSourceBlends()
+    {
+        blendChanges.Clear();
+        uint current = 0;
+        for (int i = 0; i < itemCount; i++)
+        {
+            uint wanted = items[i].Flags & SpriteItem.SubpixelInkFlag;
+            if (wanted == current)
+                continue;
+            blendChanges.Add((i, wanted != 0 ? BlendMode.DualSource : BlendMode.Alpha));
+            current = wanted;
+        }
+    }
+
     // The places the blend changes in what was handed over
     private void FindBlends()
     {
@@ -363,6 +445,8 @@ internal sealed class UIRenderer : IDisposable
             int end = next < blendChanges.Count ? Math.Min(blendChanges[next].At, to) : to;
             if (end > start)
             {
+                if (usingDualShader && uiShader is not null && dualShader is not null)
+                    batch!.Shader = mode == BlendMode.DualSource ? dualShader : uiShader;
                 RenderState.BlendMode = mode;
                 batch!.DrawItems(start, end - start, camera);
             }

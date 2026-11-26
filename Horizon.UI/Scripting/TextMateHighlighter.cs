@@ -118,13 +118,16 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         return spans;
     }
 
-    public List<SyntaxSpan>[] ReadLines(string[] lines, CodeLineStart[]? starts = null, List<HidlSwatch>? swatches = null, List<HidlArt>? art = null)
+    public List<SyntaxSpan>[] ReadLines(string[] lines, CodeLineStart[]? starts = null, List<HidlSwatch>? swatches = null, List<HidlArt>? art = null) =>
+        ReadLines(lines, starts, swatches, art, destination: null);
+
+    internal List<SyntaxSpan>[] ReadLines(string[] lines, CodeLineStart[]? starts, List<HidlSwatch>? swatches, List<HidlArt>? art, List<SyntaxSpan>[]? destination)
     {
         swatches?.Clear();
         art?.Clear();
 
         int count = Math.Max(1, lines.Length);
-        var spans = new List<SyntaxSpan>[count];
+        var spans = destination is not null && destination.Length == count ? destination : new List<SyntaxSpan>[count];
         IStateStack? state = null;
         int depth = 0;
 
@@ -189,13 +192,27 @@ public sealed class TextMateHighlighter : ICodeHighlighter
     /// state and at the depth of brackets it started in last time, everything after it is coloured the same as it was.
     /// </summary>
     /// <param name="copyKept">Whether what's kept is copied, for a highlighter that writes over the spans after (HIDL's).</param>
-    internal List<SyntaxSpan>[] ReadAgain(string[] lines, CodeLineStart[] starts, CodeColouring last, bool copyKept, int dirtyHint = 0)
+    internal List<SyntaxSpan>[] ReadAgain(string[] lines, CodeLineStart[] starts, CodeColouring last, bool copyKept, int dirtyHint = 0) =>
+        ReadAgain(lines, starts, last, copyKept, out _, out _, dirtyHint, destination: null);
+
+    internal List<SyntaxSpan>[] ReadAgain(
+        string[] lines,
+        CodeLineStart[] starts,
+        CodeColouring last,
+        bool copyKept,
+        out int singleChangedLine,
+        out int lexedLines,
+        int dirtyHint = 0,
+        List<SyntaxSpan>[]? destination = null)
     {
+        singleChangedLine = -1;
+        lexedLines = 0;
+
         int count = Math.Max(1, lines.Length), was = last.Lines.Length;
-        var spans = new List<SyntaxSpan>[count];
+        var spans = destination is not null && destination.Length == count ? destination : new List<SyntaxSpan>[count];
         if (lines.Length == 0 || was == 0 || last.Spans.Length != was || last.Starts.Length != was)
         {
-            ReadFrom(lines, starts, spans, 0, CodeLineStart.First, last, int.MaxValue, copyKept);
+            lexedLines = ReadFrom(lines, starts, spans, 0, CodeLineStart.First, last, int.MaxValue, copyKept);
             return spans;
         }
 
@@ -265,12 +282,14 @@ public sealed class TextMateHighlighter : ICodeHighlighter
             }
         }
 
-        ReadFrom(lines, starts, spans, from, last.Starts[from], last, lines.Length - same, copyKept);
+        lexedLines = ReadFrom(lines, starts, spans, from, last.Starts[from], last, lines.Length - same, copyKept);
+        if (lines.Length == was && first + same == count - 1)
+            singleChangedLine = first;
         return spans;
     }
 
     // The lines from one on, read until one at or past where the lines are the same again starts as it did last time
-    private void ReadFrom(string[] lines, CodeLineStart[] starts, List<SyntaxSpan>[] spans, int from, CodeLineStart start, CodeColouring last, int sameFrom, bool copyKept)
+    private int ReadFrom(string[] lines, CodeLineStart[] starts, List<SyntaxSpan>[] spans, int from, CodeLineStart start, CodeColouring last, int sameFrom, bool copyKept)
     {
         IStateStack? state = start.State as IStateStack;
         int depth = start.Depth, shift = lines.Length - last.Lines.Length;
@@ -303,7 +322,7 @@ public sealed class TextMateHighlighter : ICodeHighlighter
                 }
 
                 LastLexedLineCount = lexed;
-                return;
+                return lexed;
             }
 
             if (line < starts.Length)
@@ -318,6 +337,7 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         }
 
         LastLexedLineCount = lexed;
+        return lexed;
     }
 
     private static List<SyntaxSpan> Kept(List<SyntaxSpan> spans, bool copy) => copy ? [.. spans] : spans;

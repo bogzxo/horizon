@@ -63,6 +63,20 @@ public sealed class TerminalCommandLookup
 
     private static volatile HashSet<string>? pathCommands;
     private static int pathStarted;
+    private static volatile bool pathStale;
+
+    /// <summary>Marks the cached PATH command list stale so the next command lookup re-checks PATH lazily.</summary>
+    public static void MarkPathStale() => pathStale = true;
+
+    internal static bool HasStartedPathScan => Volatile.Read(ref pathStarted) != 0 || pathCommands is not null;
+
+    internal static void ResetPathScanForTests()
+    {
+        pathCommands = null;
+        pathScanned = null;
+        pathStale = false;
+        Volatile.Write(ref pathStarted, 0);
+    }
 
     /// <summary>"powershell", "bash", "cmd", or what else a profile is.</summary>
     public string Kind { get; }
@@ -94,8 +108,6 @@ public sealed class TerminalCommandLookup
         keywords = kind switch { "cmd" => CmdKeywordSet, "powershell" => EmptyWordSet, _ => BashKeywordSet };
         wordLookup = words.GetAlternateLookup<ReadOnlySpan<char>>();
         keywordLookup = keywords.GetAlternateLookup<ReadOnlySpan<char>>();
-        if (kind is "cmd" or "powershell")
-            ScanPath();
         if (file is not null)
             Watch(file);
     }
@@ -122,8 +134,15 @@ public sealed class TerminalCommandLookup
         if (written is not null && written.GetAlternateLookup<ReadOnlySpan<char>>().Contains(word))
             return true;
 
-        HashSet<string>? path = pathCommands;
         bool usesPath = Kind is "cmd" or "powershell";
+        HashSet<string>? path = pathCommands;
+        if (usesPath && (path is null || pathStale))
+        {
+            pathStale = false;
+            ScanPath();
+            path = pathCommands;
+        }
+
         if (usesPath && path is not null && path.GetAlternateLookup<ReadOnlySpan<char>>().Contains(word))
             return true;
 
@@ -142,6 +161,12 @@ public sealed class TerminalCommandLookup
     /// <summary>The commands it knows that start with what is typed, for a completion, the shell's own words first.</summary>
     public IEnumerable<string> StartingWith(string start)
     {
+        if (given is null && Kind is "cmd" or "powershell" && (pathCommands is null || pathStale))
+        {
+            pathStale = false;
+            ScanPath();
+        }
+
         var seen = new HashSet<string>(Names);
         IEnumerable<string> all = words.Concat(given ?? []).Concat(fileCommands ?? []).Concat(Kind is "cmd" or "powershell" ? pathCommands ?? [] : []);
         foreach (string name in all)
@@ -256,18 +281,17 @@ public sealed class TerminalCommandLookup
                             continue;
                         foreach (string file in Directory.EnumerateFiles(folder))
                         {
-                            string name = Path.GetFileName(file);
                             if (OperatingSystem.IsWindows())
                             {
-                                string extension = Path.GetExtension(name);
-                                if (!Array.Exists(extensions, e => e.Equals(extension, StringComparison.OrdinalIgnoreCase)))
+                                if (!HasExecutableExtension(file.AsSpan(), extensions))
                                     continue;
+                                string name = Path.GetFileName(file);
                                 found.Add(name);
                                 found.Add(Path.GetFileNameWithoutExtension(name));
                             }
                             else
                             {
-                                found.Add(name);
+                                found.Add(Path.GetFileName(file));
                             }
                         }
                     }
@@ -285,5 +309,21 @@ public sealed class TerminalCommandLookup
                 Volatile.Write(ref pathStarted, 0);
             }
         });
+    }
+
+    /// <summary>Zero-closure, zero-allocation check for whether a file path ends with one of the Windows PATHEXT extensions.</summary>
+    internal static bool HasExecutableExtension(ReadOnlySpan<char> path, string[] extensions)
+    {
+        ReadOnlySpan<char> extension = Path.GetExtension(path);
+        if (extension.IsEmpty)
+            return false;
+
+        for (int i = 0; i < extensions.Length; i++)
+        {
+            if (extension.Equals(extensions[i].AsSpan(), StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 }

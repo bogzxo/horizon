@@ -6,14 +6,14 @@ public sealed partial class LanguageServer
 {
     // Protected by versions; discarded on close so a reopened file starts with its own text.
     private readonly Dictionary<string, string> synchronizedText = new(Horizon.Core.Platform.PlatformPaths.Comparer);
+    private volatile bool incrementalChanges;
 
-    private bool IncrementalChanges
+    private bool IncrementalChanges => incrementalChanges;
+
+    private void UpdateSyncCapabilities()
     {
-        get
-        {
-            JsonNode? sync = serverCapabilities?["textDocumentSync"];
-            return JsonNumbers.Int(sync is JsonObject options ? options["change"] : sync, 0) == 2;
-        }
+        JsonNode? sync = serverCapabilities?["textDocumentSync"];
+        incrementalChanges = JsonNumbers.Int(sync is JsonObject options ? options["change"] : sync, 0) == 2;
     }
 
     private JsonObject ContentChange(string path, string text)

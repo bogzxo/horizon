@@ -12,6 +12,18 @@ namespace Horizon.Platform.Desktop;
 /// <summary>The desktop keyboard and mouse translated at the platform boundary.</summary>
 internal sealed class SilkInputSource : IInputSource, IDisposable
 {
+    internal static readonly string[] AsciiStrings = CreateAsciiStrings();
+
+    private static string[] CreateAsciiStrings()
+    {
+        var table = new string[128];
+        for (int i = 0; i < table.Length; i++)
+            table[i] = ((char)i).ToString();
+        return table;
+    }
+
+    internal static string CharToString(char character) => character < 128 ? AsciiStrings[character] : character.ToString();
+
     private readonly IKeyboard[] keyboards;
     private readonly IMouse[] mice;
     private readonly Func<Vector2, Vector2> toPixels;
@@ -70,7 +82,7 @@ internal sealed class SilkInputSource : IInputSource, IDisposable
         if (DesktopWindow.UsesSdl && SdlTextEditing.HandlesTextInput)
             return;
 
-        EventReceived?.Invoke(InputEvent.Typed(character.ToString()));
+        EventReceived?.Invoke(InputEvent.Typed(CharToString(character)));
     }
     private void OnMove(IMouse device, Vector2 position) => EventReceived?.Invoke(InputEvent.Pointer(InputEventKind.PointerMove, toPixels(position)));
     private void OnMouseDown(IMouse device, Silk.NET.Input.MouseButton button) => EventReceived?.Invoke(InputEvent.Pointer(InputEventKind.PointerDown, toPixels(device.Position), button: (MouseButton)button));

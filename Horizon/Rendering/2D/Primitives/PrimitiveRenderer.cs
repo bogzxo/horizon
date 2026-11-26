@@ -212,7 +212,7 @@ public class PrimitiveRenderer : GameObject
 
         stream!.BindRange(SHAPES_BINDING);
 
-        GraphicsDevice.Current.DrawInstanced(Topology.Triangles, 6, (uint)count);
+        GraphicsDevice.Current.DrawQuadInstanced((uint)count);
     }
 
     private static void EnsureShader()

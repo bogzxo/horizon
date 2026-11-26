@@ -15,14 +15,17 @@ public partial class CodeEditor
 {
     // Flat CSR index of semantic spans per line (semanticSpans[semanticOffsets[line]..semanticOffsets[line + 1]])
     // and the line text captured when they were given, avoiding per-line List<SyntaxSpan> allocations.
+    // Backing arrays are reused across LSP semantic token refreshes whenever Length fits to avoid LOH allocations.
     private SyntaxSpan[] semanticSpans = [];
     private int[] semanticOffsets = [];
     private string?[] semanticTexts = [];
+    private int semanticLineCount;
+    private int semanticVersion;
     private IReadOnlyList<SemanticSpan> semanticList = [];
 
     // Every line's grammar colours with its names laid over, made once and kept as long as neither changes. Its list is
     // used again when one of them does, so drawing allocates nothing once a line has been seen
-    private readonly Dictionary<int, (List<SyntaxSpan> Under, SyntaxSpan[] OverArray, int OverStart, int OverLength, List<SyntaxSpan> Laid)> overlaid = [];
+    private readonly Dictionary<int, (List<SyntaxSpan> Under, int OverVersion, int OverStart, int OverLength, List<SyntaxSpan> Laid)> overlaid = [];
     private const int MAX_OVERLAID = 4096;
 
     /// <summary>
@@ -36,19 +39,26 @@ public partial class CodeEditor
         {
             semanticList = value ?? [];
             overlaid.Clear();
+            semanticVersion++;
 
             int count = document.LineCount;
             int total = semanticList.Count;
             if (count <= 0 || total == 0)
             {
-                semanticSpans = [];
-                semanticOffsets = [];
-                semanticTexts = [];
+                if (semanticLineCount > 0)
+                    Array.Clear(semanticTexts, 0, Math.Min(semanticLineCount, semanticTexts.Length));
+                semanticLineCount = 0;
                 return;
             }
 
-            // Pass 1: count valid spans per line
-            var offsets = new int[count + 1];
+            // Pass 1: count valid spans per line, reusing semanticOffsets when it fits.
+            int neededOffsets = count + 1;
+            int[] offsets = semanticOffsets;
+            if (offsets.Length < neededOffsets)
+                offsets = semanticOffsets = new int[neededOffsets];
+            else
+                Array.Clear(offsets, 0, neededOffsets);
+
             int valid = 0;
             for (int i = 0; i < total; i++)
             {
@@ -62,9 +72,9 @@ public partial class CodeEditor
 
             if (valid == 0)
             {
-                semanticSpans = [];
-                semanticOffsets = [];
-                semanticTexts = [];
+                if (semanticLineCount > 0)
+                    Array.Clear(semanticTexts, 0, Math.Min(semanticLineCount, semanticTexts.Length));
+                semanticLineCount = 0;
                 return;
             }
 
@@ -72,9 +82,17 @@ public partial class CodeEditor
             for (int i = 1; i <= count; i++)
                 offsets[i] += offsets[i - 1];
 
-            // Pass 2: scatter into flat CSR array using offsets[line] as write cursor, capturing line text once per line
-            var flat = new SyntaxSpan[valid];
-            var texts = new string?[count];
+            // Pass 2: scatter into flat CSR array using offsets[line] as write cursor, reusing backing arrays when they fit.
+            SyntaxSpan[] flat = semanticSpans;
+            if (flat.Length < valid)
+                flat = semanticSpans = new SyntaxSpan[valid];
+
+            string?[] texts = semanticTexts;
+            if (texts.Length < count)
+                texts = semanticTexts = new string?[count];
+            else
+                Array.Clear(texts, 0, Math.Min(Math.Max(count, semanticLineCount), texts.Length));
+
             for (int i = 0; i < total; i++)
             {
                 SemanticSpan span = semanticList[i];
@@ -112,16 +130,14 @@ public partial class CodeEditor
                     flat.AsSpan(start, end - start).Sort(static (a, b) => a.Start.CompareTo(b.Start));
             }
 
-            semanticSpans = flat;
-            semanticOffsets = offsets;
-            semanticTexts = texts;
+            semanticLineCount = count;
         }
     }
 
     /// <summary>The names of a line, empty when it has none or its text isn't what it was when they were given.</summary>
     private bool TryGetSemanticsOf(int line, string text, out int start, out int length)
     {
-        int count = semanticTexts.Length;
+        int count = semanticLineCount;
         if (count == 0)
         {
             start = length = 0;
@@ -171,7 +187,7 @@ public partial class CodeEditor
 
         if (overlaid.TryGetValue(line, out var kept)
             && ReferenceEquals(kept.Under, under)
-            && ReferenceEquals(kept.OverArray, semanticSpans)
+            && kept.OverVersion == semanticVersion
             && kept.OverStart == overStart
             && kept.OverLength == overLength)
             return kept.Laid;
@@ -181,7 +197,7 @@ public partial class CodeEditor
 
         List<SyntaxSpan> laid = kept.Laid ?? new List<SyntaxSpan>(under.Count + overLength);
         SemanticOverlay.Overlay(under, semanticSpans.AsSpan(overStart, overLength), laid);
-        overlaid[line] = (under, semanticSpans, overStart, overLength, laid);
+        overlaid[line] = (under, semanticVersion, overStart, overLength, laid);
         return laid;
     }
 

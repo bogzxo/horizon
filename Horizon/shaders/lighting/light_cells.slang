@@ -64,10 +64,9 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
         if (params.uAoEnabled != 0)
         {
-            aoWithSprites = ambientOcclusion(position, field, params.uAoRadius, params.uAoSamples, params.uAoStrength, true);
-            aoWithoutSprites = field.hasSprites
-                ? ambientOcclusion(position, field, params.uAoRadius, params.uAoSamples, params.uAoStrength, false)
-                : aoWithSprites;
+            float2 ao = ambientOcclusionPair(position, field, params.uAoRadius, params.uAoSamples, params.uAoStrength);
+            aoWithSprites = ao.x;
+            aoWithoutSprites = ao.y;
         }
     }
 

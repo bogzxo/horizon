@@ -93,10 +93,18 @@ public sealed unsafe class StreamBuffer<T> : IDisposable where T : unmanaged
         return new Span<T>(mapped + Offset, count);
     }
 
-    /// <summary>
-    /// Ends the frame. A fence goes behind everything drawn so far, so the next frame that comes round to this region
-    /// knows when the GPU is done with it.
-    /// </summary>
+    /// <summary>The region currently active between <see cref="Begin"/> and <see cref="End"/>.</summary>
+    internal int CurrentRegion => region;
+
+    /// <summary>Updates the fence for a previously uploaded region that is being reused without overwriting it.</summary>
+    internal void TouchRegion(int which)
+    {
+        if (mapped == null || (uint)which >= REGIONS) return;
+        fences[which] = GraphicsDevice.Current.CreateFence();
+    }
+
+    /// <summary>Ends the frame. A fence goes behind everything drawn so far, so the next frame that comes round to this region
+    /// knows when the GPU is done with it.</summary>
     public void End()
     {
         if (mapped == null) return;

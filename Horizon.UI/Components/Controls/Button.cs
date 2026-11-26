@@ -114,6 +114,21 @@ public class Button : UIComponent
     // Whether the button was lit up on the last update, and whether there has been one yet.
     private bool wasLit, updated;
 
+    // Inline zero-allocation hover/click punch state (avoids allocating a TweenContext on first hover of every button).
+    private bool punchActive;
+    private float punchAmount, punchDuration, punchElapsed;
+    private Vector2 punchStartScale;
+
+    // Self-invalidating leaf Measure(UISkin) cache keyed on written text, font, style, scale, skin, and padding.
+    private string? measuredWritten;
+    private string? measuredStyle;
+    private UISkin? measuredSkin;
+    private UIFont? measuredFont;
+    private float measuredScale;
+    private int measuredSkinsVersion = -1;
+    private UIEdges measuredPadding;
+    private Vector2 measuredSize;
+
     /// <summary>Called when the button is pressed.</summary>
     public Action? OnPressed { get; set; }
 
@@ -164,12 +179,31 @@ public class Button : UIComponent
 
     protected override Vector2 Measure(UISkin skin)
     {
-        Vector2 label = skin.Font.Measure(Written(), LabelScale > 0.0f ? LabelScale : skin.TextScale);
+        string written = Written();
+        float scale = LabelScale > 0.0f ? LabelScale : skin.TextScale;
+        if (ReferenceEquals(measuredWritten, written)
+            && ReferenceEquals(measuredStyle, style)
+            && ReferenceEquals(measuredSkin, skin)
+            && ReferenceEquals(measuredFont, skin.Font)
+            && measuredScale == scale
+            && measuredSkinsVersion == UISkins.Version
+            && measuredPadding == skin.ButtonPadding)
+            return measuredSize;
+
+        Vector2 label = skin.Font.Measure(written, scale);
         bool hasArt = skin.TryGetRegion(style, out var region);
 
         // Art that says where its label goes is given that much room around it, otherwise the skin decides.
         UIEdges padding = hasArt ? region.ContentOr(skin.ButtonPadding) : skin.ButtonPadding;
-        return Vector2.Max(hasArt ? region.Size : Vector2.Zero, label + padding.Total);
+        measuredWritten = written;
+        measuredStyle = style;
+        measuredSkin = skin;
+        measuredFont = skin.Font;
+        measuredScale = scale;
+        measuredSkinsVersion = UISkins.Version;
+        measuredPadding = skin.ButtonPadding;
+        measuredSize = Vector2.Max(hasArt ? region.Size : Vector2.Zero, label + padding.Total);
+        return measuredSize;
     }
 
     protected override void Paint(UIDrawList list)
@@ -332,15 +366,49 @@ public class Button : UIComponent
     // How much of its give the compositor keeps (UICompositor.ButtonGive), all of it outside of one
     private float Give => Module?.Compositor.ButtonGive ?? 1.0f;
 
+    private void StartPunch(float amount, float duration)
+    {
+        punchStartScale = VisualScale;
+        punchAmount = amount;
+        punchDuration = duration;
+        punchElapsed = 0.0f;
+        punchActive = duration > 0.0f;
+    }
+
     protected override void Update(float dt)
     {
         bool lit = (PointerLit || Chosen) && EnabledInHierarchy;
 
         // A button that is lit from the start hasn't changed, there is nothing to bump for.
-        if (lit && !wasLit && updated && Animated && Give > 0.0f && MotionTime(0.2f) > 0.0f)
+        if (lit && !wasLit && updated && Animated && Give > 0.0f && MotionTime(0.2f) is var duration and > 0.0f)
         {
-            this.Punch(0.05f * Give, MotionTime(0.2f));
+            StartPunch(0.05f * Give, duration);
             Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
+        }
+
+        if (punchActive)
+        {
+            punchElapsed += dt;
+            float d1 = punchDuration * 0.3f;
+            float d2 = punchDuration * 0.7f;
+            Vector2 peak = new(1.0f + punchAmount);
+            if (punchElapsed < d1 && d1 > 0.0f)
+            {
+                float t = Horizon.Core.Tweening.Ease.Apply(Horizon.Core.Tweening.Easing.OutQuad, punchElapsed / d1);
+                VisualScale = Vector2.Lerp(punchStartScale, peak, t);
+                Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
+            }
+            else if (punchElapsed < punchDuration && d2 > 0.0f)
+            {
+                float t = Horizon.Core.Tweening.Ease.Apply(Horizon.Core.Tweening.Easing.OutBack, (punchElapsed - d1) / d2);
+                VisualScale = Vector2.Lerp(peak, Vector2.One, t);
+                Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
+            }
+            else
+            {
+                VisualScale = Vector2.One;
+                punchActive = false;
+            }
         }
 
         wasLit = lit;
@@ -349,9 +417,9 @@ public class Button : UIComponent
 
     protected internal override void OnClick()
     {
-        if (Animated && Give > 0.0f && MotionTime(0.2f) > 0.0f)
+        if (Animated && Give > 0.0f && MotionTime(0.2f) is var duration and > 0.0f)
         {
-            this.Punch(-0.08f * Give, MotionTime(0.2f));
+            StartPunch(-0.08f * Give, duration);
             Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
         }
 

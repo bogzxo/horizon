@@ -299,6 +299,7 @@ public sealed partial class LanguageServer : IDisposable
         {
             JsonNode? started = await rpc.Request("initialize", parameters).ConfigureAwait(false);
             serverCapabilities = started?["capabilities"] as JsonObject;
+            UpdateSyncCapabilities();
             rpc.Notify("initialized", new JsonObject());
 
             // What it's told to be, for a server that has settings, said once it's up and asked for again as it wants

@@ -198,22 +198,17 @@ internal sealed class TileMapGpu : IDisposable
     /// <summary>What a slot says when there is no texture in it, NO_TEXTURE in the shaders.</summary>
     public const uint NoTexture = SpriteItemNoTexture;
 
-    /// <summary>Must match Tile in shaders/tilemap/tilemap.slang (80 bytes, a whole number of 16, see there).</summary>
+    /// <summary>Must match Tile in shaders/tilemap/tilemap.slang (48 bytes, a whole number of 16).</summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct Tile
     {
         public Vector2 Position;
         public Vector2 Size;
-        public Vector4 Source;
+        public Vector4 UvRect;
         public float Rotation;
-        public float Flip;
-        public uint LayerIndex;
-        public uint Albedo;
-        public uint Normal;
-        public uint Specular;
-        public Vector2 TexelSize;
-        public uint Occlusion;
-        public uint Padding0, Padding1, Padding2;
+        public uint LayerAndFlip;
+        public uint AlbedoNormal;
+        public uint SpecularOcclusion;
     }
 
     /// <summary>Must match Chunk in shaders/tilemap/tilemap_cull.slang (32 bytes).</summary>
@@ -367,7 +362,7 @@ internal sealed class TileMapGpu : IDisposable
         chunks.Name = "tile map chunks";
         chunks.Upload<Chunk>(CollectionsMarshal.AsSpan(chunkList));
 
-        nuint commandBytes = (nuint)(Math.Max(1, chunkList.Count) * 16);
+        nuint commandBytes = (nuint)(Math.Max(1, chunkList.Count) * 20);
         if (commands is null || commands.Size < commandBytes)
         {
             commands?.Dispose();
@@ -410,20 +405,30 @@ internal sealed class TileMapGpu : IDisposable
         }
     }
 
-    private static Tile Convert(in TileInstance instance, uint layerIndex, TileMapTexture texture) => new()
+    private static Tile Convert(in TileInstance instance, uint layerIndex, TileMapTexture texture)
     {
-        Position = instance.Position,
-        Size = instance.Size,
-        Source = instance.Source,
-        Rotation = instance.Rotation,
-        Flip = instance.Flip,
-        LayerIndex = layerIndex,
-        Albedo = texture.Albedo.IsValid ? texture.Albedo.BindlessIndex : SpriteItemNoTexture,
-        Normal = texture.Normal.IsValid ? texture.Normal.BindlessIndex : SpriteItemNoTexture,
-        Specular = texture.Specular.IsValid ? texture.Specular.BindlessIndex : SpriteItemNoTexture,
-        Occlusion = texture.Occlusion.IsValid ? texture.Occlusion.BindlessIndex : SpriteItemNoTexture,
-        TexelSize = Vector2.One / Vector2.Max(Vector2.One, texture.Size)
-    };
+        Vector2 texelSize = Vector2.One / Vector2.Max(Vector2.One, texture.Size);
+        uint flipBits = (uint)(int)(instance.Flip + 0.5f) & 0x7u;
+        uint albedo = texture.Albedo.IsValid ? texture.Albedo.BindlessIndex : SpriteItemNoTexture;
+        uint normal = texture.Normal.IsValid ? texture.Normal.BindlessIndex : SpriteItemNoTexture;
+        uint specular = texture.Specular.IsValid ? texture.Specular.BindlessIndex : SpriteItemNoTexture;
+        uint occlusion = texture.Occlusion.IsValid ? texture.Occlusion.BindlessIndex : SpriteItemNoTexture;
+
+        return new Tile
+        {
+            Position = instance.Position,
+            Size = instance.Size,
+            UvRect = new Vector4(
+                instance.Source.X * texelSize.X,
+                instance.Source.Y * texelSize.Y,
+                instance.Source.Z * texelSize.X,
+                instance.Source.W * texelSize.Y),
+            Rotation = instance.Rotation,
+            LayerAndFlip = (layerIndex & 0xFFFFFFu) | (flipBits << 24),
+            AlbedoNormal = (albedo & 0xFFFFu) | ((normal & 0xFFFFu) << 16),
+            SpecularOcclusion = (specular & 0xFFFFu) | ((occlusion & 0xFFFFu) << 16)
+        };
+    }
 
     private const uint SpriteItemNoTexture = 0xFFFF;
 
@@ -442,7 +447,7 @@ internal sealed class TileMapGpu : IDisposable
         GpuBuffer activeCommands, activeCount;
         if (foreground == true)
         {
-            nuint commandBytes = (nuint)(Math.Max(1, chunkList.Count) * 16);
+            nuint commandBytes = (nuint)(Math.Max(1, chunkList.Count) * 20);
             if (foregroundCommands is null || foregroundCommands.Size < commandBytes)
             {
                 foregroundCommands?.Dispose();
@@ -493,7 +498,7 @@ internal sealed class TileMapGpu : IDisposable
         device.BindStorageBuffer(COMMANDS_BINDING, null);
         device.BindStorageBuffer(COUNT_BINDING, null);
         device.BindVertexArray(null);
-        device.DrawIndirectCount(Topology.Triangles, activeCommands, 0, activeCount, 0, (uint)chunkList.Count);
+        device.DrawQuadIndirectCount(activeCommands, 0, activeCount, 0, (uint)chunkList.Count);
     }
 
     private static bool EnsureShaders()

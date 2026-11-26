@@ -201,6 +201,54 @@ internal struct PhysicsShape
     }
 
     /// <summary>
+    /// Fast AABB-only circle-vs-rectangle overlap test for grids whose shapes are all axis-aligned rectangles.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public readonly bool OverlapsRectangle(Vector2 position, float radius, out Vector2 normal, out float depth)
+    {
+        const float epsilon = 0.0001f;
+
+        if (position.X + radius < Min.X || position.X - radius > Max.X ||
+            position.Y + radius < Min.Y || position.Y - radius > Max.Y)
+        {
+            normal = default;
+            depth = 0.0f;
+            return false;
+        }
+
+        Vector2 closest = Vector2.Clamp(position, Min, Max);
+        Vector2 offset = position - closest;
+        float offsetSquared = offset.LengthSquared();
+
+        if (offsetSquared > radius * radius)
+        {
+            normal = default;
+            depth = 0.0f;
+            return false;
+        }
+
+        if (offsetSquared > epsilon)
+        {
+            float distance = MathF.Sqrt(offsetSquared);
+            normal = offset / distance;
+            depth = radius - distance;
+            return true;
+        }
+
+        float left = position.X - Min.X, right = Max.X - position.X;
+        float down = position.Y - Min.Y, up = Max.Y - position.Y;
+        float nearest = MathF.Min(MathF.Min(left, right), MathF.Min(down, up));
+
+        if (nearest == up) normal = Vector2.UnitY;
+        else if (nearest == down) normal = -Vector2.UnitY;
+        else if (nearest == left) normal = -Vector2.UnitX;
+        else normal = Vector2.UnitX;
+
+        depth = nearest + radius;
+        return true;
+    }
+
+    /// <summary>
     /// Tests whether a line segment starting outside the shape enters or crosses it, returning the earliest hit
     /// fraction in [0, 1] and the outward surface normal at entry.
     /// </summary>

@@ -22,7 +22,7 @@ public enum PhysicsRadialTargets
     All = Bodies | Particles
 }
 
-public class PhysicsWorld : GameComponent
+public sealed class PhysicsWorld : GameComponent
 {
     public override ComponentCapabilities Capabilities => ComponentCapabilities.UpdatePhysics | ComponentCapabilities.Capture;
     /// <summary>

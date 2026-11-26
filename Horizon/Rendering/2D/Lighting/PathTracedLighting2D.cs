@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 using Horizon.Engine;
 using Horizon.Graphics;
@@ -163,7 +164,28 @@ public sealed class PathTracedLighting2D : IDisposable
     /// </summary>
     public float Responsiveness { get; set; } = 1.0f;
 
+    /// <summary>std140 Params block for gi_resolve.slang (80 bytes, with 4B alignment pad before uProbeOffset).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct ResolveParams
+    {
+        public Vector2 Size;           // offset 0
+        public Vector2 TraceSize;      // offset 8
+        public Vector2 CascadeSize;    // offset 16
+        public Vector2 ProbeCount;     // offset 24
+        public float ProbeSpacing;     // offset 32
+        private float pad0;            // offset 36 (std140 float2 alignment)
+        public Vector2 ProbeOffset;    // offset 40
+        public float Directions;       // offset 48
+        public float DirectionsSqrt;   // offset 52
+        public Vector2 Shift;          // offset 56
+        public float Settle;           // offset 64
+        public float FrameTime;        // offset 68
+        public float Sharpen;          // offset 72
+        public float Responsiveness;   // offset 76
+    }
+
     private static readonly TextureDefinition CascadeTexture = new(PixelFormat.Rgba16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
+    private static readonly TextureDefinition MomentsTexture = new(PixelFormat.Rg16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
 
     private Texture? cascadeA, cascadeB;
     private Texture? resultA, resultB, radiance, air;
@@ -221,10 +243,12 @@ public sealed class PathTracedLighting2D : IDisposable
     {
         var device = GraphicsDevice.Current;
 
-        if (radiancePass is not { IsValid: true }) radiancePass = new Technique(Shader.Load("shaders/lighting", "gi_radiance"));
-        if (cascadePass is not { IsValid: true }) cascadePass = new Technique(Shader.Load("shaders/lighting", "gi_cascade"));
-        if (resolvePass is not { IsValid: true }) resolvePass = new Technique(Shader.Load("shaders/lighting", "gi_resolve"));
+        bool loadedAny = false;
+        if (radiancePass is not { IsValid: true }) { radiancePass = new Technique(Shader.Load("shaders/lighting", "gi_radiance")); loadedAny = true; }
+        if (cascadePass is not { IsValid: true }) { cascadePass = new Technique(Shader.Load("shaders/lighting", "gi_cascade")); loadedAny = true; }
+        if (resolvePass is not { IsValid: true }) { resolvePass = new Technique(Shader.Load("shaders/lighting", "gi_resolve")); loadedAny = true; }
         if (!radiancePass.IsValid || !cascadePass.IsValid || !resolvePass.IsValid) return;
+        if (loadedAny) device.WarmComputePipelines([radiancePass.Shader, cascadePass.Shader, resolvePass.Shader]);
 
         float scale = Math.Clamp(Scale, 0.1f, 1.0f);
         uint wanted = (uint)MathF.Max(1.0f, MathF.Ceiling(renderer.ViewportSize.X * scale));
@@ -406,22 +430,26 @@ public sealed class PathTracedLighting2D : IDisposable
         nearestCascade.Bind(0);
         previous.Bind(1);
         previousMoments.Bind(2);
-        resolvePass.SetUniform("uShift", in shift);
 
         // How many seconds' worth a pixel may hold on to, and how long this frame was, which is how much of the
         // frame goes in. A frame that took no time at all still counts for a bit
-        resolvePass.SetUniform("uSettle", settle);
-        resolvePass.SetUniform("uFrameTime", Math.Clamp(dt, 0.0001f, 0.25f));
-        resolvePass.SetUniform("uSharpen", sharpen ? 1.0f : 0.0f);
-        resolvePass.SetUniform("uResponsiveness", MathF.Max(Responsiveness, 0.0f));
-        resolvePass.SetUniform("uSize", OutputSize);
-        resolvePass.SetUniform("uTraceSize", Size);
-        resolvePass.SetUniform("uProbeCount", in nearestProbes);
-        resolvePass.SetUniform("uProbeSpacing", nearestSpacing);
-        resolvePass.SetUniform("uProbeOffset", in nearestOffset);
-        resolvePass.SetUniform("uDirections", nearestDirections);
-        resolvePass.SetUniform("uDirectionsSqrt", 2.0f);
-        resolvePass.SetUniform("uCascadeSize", new Vector2(cascadeWidth, cascadeHeight));
+        var resolveParams = new ResolveParams
+        {
+            Size = OutputSize,
+            TraceSize = Size,
+            CascadeSize = new Vector2(cascadeWidth, cascadeHeight),
+            ProbeCount = nearestProbes,
+            ProbeSpacing = nearestSpacing,
+            ProbeOffset = nearestOffset,
+            Directions = nearestDirections,
+            DirectionsSqrt = 2.0f,
+            Shift = shift,
+            Settle = settle,
+            FrameTime = Math.Clamp(dt, 0.0001f, 0.25f),
+            Sharpen = sharpen ? 1.0f : 0.0f,
+            Responsiveness = MathF.Max(Responsiveness, 0.0f)
+        };
+        resolvePass.SetParamsBlock(in resolveParams);
         device.BindStorageImage(0, result);
         device.BindStorageImage(1, moments);
         device.Dispatch((outputWidth + 7) / 8, (outputHeight + 7) / 8);
@@ -573,9 +601,12 @@ public sealed class PathTracedLighting2D : IDisposable
         return (writeIndex ^ 1, writeIndex);
     }
 
-    private static Texture? CreatePicture(string name, uint across, uint down)
+    private static Texture? CreatePicture(string name, uint across, uint down) =>
+        CreateTexture(name, across, down, CascadeTexture);
+
+    private static Texture? CreateTexture(string name, uint across, uint down, TextureDefinition definition)
     {
-        if (!GameEngine.Instance.ObjectManager.Textures.TryCreate(new TextureDescription { Width = across, Height = down, Definition = CascadeTexture }, out var made)) return null;
+        if (!GameEngine.Instance.ObjectManager.Textures.TryCreate(new TextureDescription { Width = across, Height = down, Definition = definition }, out var made)) return null;
         made.Asset.Name = name;
         return made.Asset;
     }
@@ -621,8 +652,8 @@ public sealed class PathTracedLighting2D : IDisposable
         // nobody holding them, and then try the whole lot again the next frame, and the next, god help it
         resultA = CreatePicture("path traced result a", outputWidth, outputHeight);
         resultB = CreatePicture("path traced result b", outputWidth, outputHeight);
-        momentsA = CreatePicture("path traced wavering a", outputWidth, outputHeight);
-        momentsB = CreatePicture("path traced wavering b", outputWidth, outputHeight);
+        momentsA = CreateTexture("path traced wavering a", outputWidth, outputHeight, MomentsTexture);
+        momentsB = CreateTexture("path traced wavering b", outputWidth, outputHeight, MomentsTexture);
         radiance = CreatePicture("wall radiance", width, height);
 
         originBefore = null;

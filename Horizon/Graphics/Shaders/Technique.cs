@@ -107,6 +107,23 @@ public class Technique
     /// <summary>Sets a whole array of floats in one call, <c>float uName[N]</c>.</summary>
     public void SetUniform(string name, ReadOnlySpan<float> values) => WriteArray(name, values);
 
+    /// <summary>
+    /// Writes a pre-laid-out std140 struct directly into the Params block, bypassing per-uniform dictionary lookups.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SetParamsBlock<T>(in T value) where T : unmanaged
+    {
+        if (block.Length == 0) return;
+
+        int bytes = Math.Min(Unsafe.SizeOf<T>(), block.Length);
+        ReadOnlySpan<byte> src = MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in value))[..bytes];
+        Span<byte> dst = block.AsSpan(0, bytes);
+        if (src.SequenceEqual(dst)) return;
+
+        src.CopyTo(dst);
+        dirty = true;
+    }
+
     /// <summary>Sets one element of an array, <c>uName[i]</c>.</summary>
     public void SetUniform<T>(string name, int index, in T value) where T : unmanaged
     {

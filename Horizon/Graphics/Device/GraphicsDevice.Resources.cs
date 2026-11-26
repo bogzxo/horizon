@@ -312,7 +312,7 @@ public sealed unsafe partial class GraphicsDevice
     /* Shaders */
 
     /// <summary>Helper method to turn SPIR-V into a module.</summary>
-    internal Silk.NET.Vulkan.ShaderModule CreateShaderModule(byte[] spirv)
+    internal Silk.NET.Vulkan.ShaderModule CreateShaderModule(ReadOnlySpan<byte> spirv)
     {
         fixed (byte* pointer = spirv)
         {

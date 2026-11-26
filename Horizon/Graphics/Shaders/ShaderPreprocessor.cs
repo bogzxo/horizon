@@ -65,6 +65,7 @@ public sealed class ShaderPreprocessor : IDisposable
         "#define NO_TEXTURE 0xFFFFu");
 
     private readonly IContentFiles content;
+    private readonly bool recordInputs;
     private readonly Dictionary<string, string[]> fileSources = new();
     private readonly HashSet<string> included = new(Horizon.Core.Platform.PlatformPaths.Comparer);
     private readonly List<ShaderInput> inputs = [];
@@ -76,16 +77,20 @@ public sealed class ShaderPreprocessor : IDisposable
     public IReadOnlyList<ShaderInput> Inputs => inputs;
 
     /// <summary>Reads from the installed content and declares the running device's bindless table.</summary>
-    public ShaderPreprocessor() : this(null, null) { }
+    public ShaderPreprocessor() : this(null, null, recordInputs: true) { }
 
     /// <summary>
     /// Reads from one content source the whole way through, so a source swapped in halfway can't mix two packages
     /// into one program, and declares a bindless table of the given size (the device's when null).
     /// </summary>
     public ShaderPreprocessor(IContentFiles? content, uint? bindlessCapacity = null)
+        : this(content, bindlessCapacity, recordInputs: true) { }
+
+    internal ShaderPreprocessor(IContentFiles? content, uint? bindlessCapacity, bool recordInputs)
     {
         this.content = content ?? ContentFiles.Source;
         BindlessCapacity = bindlessCapacity ?? CurrentBindlessCapacity;
+        this.recordInputs = recordInputs;
     }
 
     /// <summary>Scans a file for the directives and brings everything in.</summary>
@@ -153,7 +158,8 @@ public sealed class ShaderPreprocessor : IDisposable
         if (!fileSources.TryGetValue(path, out string[]? lines))
             fileSources[path] = lines = ShaderLines.Split(ContentFiles.ReadAllText(content, path));
 
-        inputs.Add(new ShaderInput(path, ShaderLines.Hash(string.Join('\n', lines))));
+        if (recordInputs)
+            inputs.Add(new ShaderInput(path, ShaderLines.Hash(string.Join('\n', lines))));
         return lines;
     }
 

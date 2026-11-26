@@ -288,28 +288,28 @@ public sealed partial class UIDrawList
     private readonly record struct SubpixelGlyph(Vector2 Min, Vector2 Max, UIRect Rect, Vector2 TexMin, Vector2 TexMax, bool Culled);
     private readonly List<SubpixelGlyph> subpixelGlyphs = [];
 
-    // Whether this paint draws its letters ClearType's way and with which stripe first, and whether it hints them, as
-    // the compositor said for the screen it's on (see GlyphSmoothing and UseSmoothing)
-    private bool subpixelText, subpixelBgr, hintedText = true;
+    // Whether this paint draws its letters ClearType's way and with which stripe first, whether it hints them, and
+    // whether single-pass dual-source blending is active (see GlyphSmoothing and UseSmoothing)
+    private bool subpixelText, subpixelBgr, hintedText = true, dualSourceSubpixel;
 
     /// <summary>
     /// How this paint's letters are smoothed, said by the compositor before it paints: ClearType's way only when it's
     /// drawn straight into the window on a screen and a system that want it, unhinted on a Retina screen.
     /// </summary>
-    internal void UseSmoothing(bool subpixels, bool bgr, bool hinted)
+    internal void UseSmoothing(bool subpixels, bool bgr, bool hinted, bool dualSource = false)
     {
         subpixelText = subpixels;
         subpixelBgr = bgr;
         hintedText = hinted;
+        dualSourceSubpixel = dualSource;
         if (subpixels)
             GlyphAtlas.Subpixel.Want();
     }
 
     /// <summary>
-    /// A text's subpixel letters, twice over: first what's under each is darkened by how much of each of its stripes the
-    /// ink covers, then the ink's colour added by as much. That's a blend with a weight for each of red, green and blue,
-    /// which one quad with one alpha can't be, done with two that any GPU can blend (UIRenderer draws each run of them
-    /// with its own blend). The letters of the text go down all at once each time so a line is two runs, not two a letter.
+    /// A text's subpixel letters. When dual-source blending is active, emits one quad per glyph with
+    /// <see cref="SpriteItem.SubpixelInkFlag"/> for single-pass LCD blending. Otherwise emits two passes: first what's
+    /// under each is darkened by how much of each stripe the ink covers, then the ink's colour is added by as much.
     /// </summary>
     private void FlushSubpixels(uint color, uint fadedColor)
     {
@@ -317,17 +317,20 @@ public sealed partial class UIDrawList
         const uint ERASE_FLAGS = SpriteItem.SubpixelEraseFlag | GLYPH_SUBPIXEL_SLOT;
         const uint INK_FLAGS = SpriteItem.SubpixelInkFlag | GLYPH_SUBPIXEL_SLOT;
 
-        for (int i = 0; i < span.Length; i++)
+        if (!dualSourceSubpixel)
         {
-            ref readonly SubpixelGlyph g = ref span[i];
-            if (g.Culled)
+            for (int i = 0; i < span.Length; i++)
             {
-                KeepFrameQuad(g.Rect, g.TexMin, g.TexMax, color, ERASE_FLAGS, 0.0f, 0.0f, 0.0f);
-                ownerPainted++;
-            }
-            else
-            {
-                EmitScreenGlyph(g.Min, g.Max, g.Rect, g.TexMin, g.TexMax, color, fadedColor, ERASE_FLAGS);
+                ref readonly SubpixelGlyph g = ref span[i];
+                if (g.Culled)
+                {
+                    KeepFrameQuad(g.Rect, g.TexMin, g.TexMax, color, ERASE_FLAGS, 0.0f, 0.0f, 0.0f);
+                    ownerPainted++;
+                }
+                else
+                {
+                    EmitScreenGlyph(g.Min, g.Max, g.Rect, g.TexMin, g.TexMax, color, fadedColor, ERASE_FLAGS);
+                }
             }
         }
 

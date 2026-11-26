@@ -95,6 +95,7 @@ public sealed partial class UIDrawList
         hash.Add(subpixelText && Horizon.Rendering.Text.GlyphAtlas.Subpixel.Ready);
         hash.Add(subpixelBgr);
         hash.Add(hintedText);
+        hash.Add(dualSourceSubpixel);
         if (fades.Count > 0)
         {
             foreach (ref readonly var fade in CollectionsMarshal.AsSpan(fades))

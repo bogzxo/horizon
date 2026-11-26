@@ -81,7 +81,6 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
     float4 surface = uTexSurface.Sample(texCoords);
     float4 material = uTexMaterial.Sample(texCoords);
     float emissive = surface.b;
-    float shine = material.r * params.uSpecularIntensity;
 
     // Where on screen we are is where in the world we are, as far as the camera goes
     float2 position = worldOf(texCoords);
@@ -105,6 +104,7 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
     }
     else
     {
+        float shine = material.r * params.uSpecularIntensity;
         bool hasNormal;
         float3 normal = surfaceNormal(surface, hasNormal);
 

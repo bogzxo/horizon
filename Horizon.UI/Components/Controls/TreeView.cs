@@ -1111,28 +1111,39 @@ public partial class TreeView : UIComponent
         return item.detailFitted;
     }
 
+    // Reusable builder for WithoutIcons so stripping icon tags does not allocate a StringBuilder per call
+    [ThreadStatic]
+    private static System.Text.StringBuilder? withoutIconsBuilder;
+
     // Some text with its icons taken out, $(name) and [icon:name] both
-    private static string WithoutIcons(string text)
+    internal static string WithoutIcons(string text)
     {
-        var plain = new System.Text.StringBuilder(text.Length);
+        if (text.Length == 0 || text.AsSpan().IndexOfAny('[', '$') < 0)
+            return text;
+
+        var plain = withoutIconsBuilder ??= new System.Text.StringBuilder(64);
+        plain.Clear();
+        bool stripped = false;
         for (int i = 0; i < text.Length; i++)
         {
             if (text[i] == '[' && text.AsSpan(i).StartsWith("[icon:") && text.IndexOf(']', i) is var end and > 0)
             {
                 i = end;
+                stripped = true;
                 continue;
             }
 
             if (text[i] == '$' && text.AsSpan(i).StartsWith("$(") && text.IndexOf(')', i) is var close and > 0)
             {
                 i = close;
+                stripped = true;
                 continue;
             }
 
             plain.Append(text[i]);
         }
 
-        return plain.ToString();
+        return stripped ? plain.ToString() : text;
     }
 
     // Zero-allocation trimmed prefix length that fits before "..." in the given room

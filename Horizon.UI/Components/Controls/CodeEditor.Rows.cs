@@ -256,6 +256,8 @@ public partial class CodeEditor
         }
 
         ScanFoldableInto(foldable, colouredLines, spans, nativeFoldingRanges, completeNativeFolding);
+        foldableNativeRanges = nativeFoldingRanges;
+        foldableCompleteNative = completeNativeFolding;
         ReconcileFoldedAndSort(alreadySorted: false);
     }
 

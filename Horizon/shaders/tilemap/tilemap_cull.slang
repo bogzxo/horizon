@@ -34,12 +34,13 @@ struct Layer
     float padding2;
 };
 
-// VkDrawIndirectCommand.
+// VkDrawIndexedIndirectCommand (20 bytes).
 struct DrawCommand
 {
-    uint vertexCount;
+    uint indexCount;
     uint instanceCount;
-    uint firstVertex;
+    uint firstIndex;
+    int vertexOffset;
     uint firstInstance;
 };
 
@@ -75,9 +76,10 @@ void csMain(uint3 id : SV_DispatchThreadID)
         chunk.max.y + offset.y < params.uViewMin.y || chunk.min.y + offset.y > params.uViewMax.y) drawn = false;
 
     DrawCommand command;
-    command.vertexCount = 6;
+    command.indexCount = 6u;
     command.instanceCount = drawn ? chunk.count : 0u;
-    command.firstVertex = 0;
+    command.firstIndex = 0u;
+    command.vertexOffset = 0;
     command.firstInstance = chunk.first;
     commands[id.x] = command;
 }

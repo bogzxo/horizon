@@ -220,8 +220,6 @@ public sealed class OcclusionMap2D : IDisposable
             rows.Name = "occlusion distance rows";
         }
 
-        uint groupsX = (width + 7) / 8, groupsY = (height + 7) / 8;
-
         ReadOnlySpan<Technique> passes = [rowsShader!, columnsShader!];
         foreach (Technique pass in passes)
         {
@@ -233,7 +231,7 @@ public sealed class OcclusionMap2D : IDisposable
             grid.Bind(0);
             device.BindStorageImage(0, rows);
             device.BindStorageImage(1, field);
-            device.Dispatch(groupsX, groupsY);
+            device.Dispatch(pass.Shader.GroupsFor(width, 0), pass.Shader.GroupsFor(height, 1));
             device.Barrier(BarrierTargets.ShaderImages);
             pass.Unbind();
         }
@@ -425,6 +423,7 @@ public sealed class OcclusionMap2D : IDisposable
 
         rowsShader = new Technique(rows.Asset);
         columnsShader = new Technique(columns.Asset);
+        GraphicsDevice.Current.WarmComputePipelines([rows.Asset, columns.Asset]);
         return true;
     }
 

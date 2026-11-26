@@ -46,7 +46,7 @@ BIND_TEXTURE(0) Sampler2D uTexCascade;
 BIND_TEXTURE(1) Sampler2D uTexHistory;
 BIND_TEXTURE(2) Sampler2D uTexMoments;
 BIND_IMAGE(0) [[vk::image_format("rgba16f")]] RWTexture2D<float4> uResult;
-BIND_IMAGE(1) [[vk::image_format("rgba16f")]] RWTexture2D<float4> uMoments;
+BIND_IMAGE(1) [[vk::image_format("rg16f")]] RWTexture2D<float2> uMoments;
 
 // How close a probe has to be to count, as a share of the spacing, and what that comes to on average over a cell
 // of the grid (the square of the integral of the bell over a unit, worked out once). A pixel with a probe right on
@@ -76,6 +76,11 @@ bool finite(float4 value)
     return !any(isnan(value)) && !any(isinf(value));
 }
 
+bool finite2(float2 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void csMain(uint3 id : SV_DispatchThreadID)
@@ -93,13 +98,15 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float2 count = params.uProbeCount;
     float2 clamped = clamp(at, 0.0, count - 1.0);
     float2 invCascade = 1.0 / params.uCascadeSize;
-    int sqrtDirections = int(params.uDirectionsSqrt);
-    int directions = int(params.uDirections);
+    uint sqrtDirections = uint(params.uDirectionsSqrt);
+    uint mask = sqrtDirections - 1u;
+    uint shift = firstbithigh(sqrtDirections);
+    uint directions = uint(params.uDirections);
 
     float3 total = float3(0.0, 0.0, 0.0);
-    for (int d = 0; d < directions; d++)
+    for (uint d = 0u; d < directions; d++)
     {
-        float2 dirCell = float2(d % sqrtDirections, d / sqrtDirections);
+        float2 dirCell = float2(float(d & mask), float(d >> shift));
         total += uTexCascade.SampleLevel((dirCell * count + clamped + 0.5) * invCascade, 0.0).rgb;
     }
 
@@ -123,9 +130,9 @@ void csMain(uint3 id : SV_DispatchThreadID)
         if (all(before >= 0.0) && all(before <= 1.0))
         {
             float4 history = uTexHistory.SampleLevel(before, 0.0);
-            float4 moments = uTexMoments.SampleLevel(before, 0.0);
+            float2 moments = uTexMoments.SampleLevel(before, 0.0).rg;
 
-            if (finite(history) && finite(moments))
+            if (finite(history) && finite2(moments))
             {
                 held = history.a;
 
@@ -141,12 +148,12 @@ void csMain(uint3 id : SV_DispatchThreadID)
                 float weighed = params.uFrameTime * counts;
                 float share = max(weighed / (held + weighed), LEAST_SHARE * min(counts, 1.0));
                 light = lerp(history.rgb, total, share);
-                wavering = lerp(moments.xy, wavering, share);
+                wavering = lerp(moments, wavering, share);
                 held = min(held + weighed, params.uSettle);
             }
         }
     }
 
     uResult[texel] = float4(light, held);
-    uMoments[texel] = float4(wavering, 0.0, 1.0);
+    uMoments[texel] = wavering;
 }

@@ -46,10 +46,19 @@ if (Get-Command PSConsoleHostReadLine -ErrorAction SilentlyContinue) {
 if ($env:DUSK_COMMANDS_FILE) {
     $null = Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -MaxTriggerCount 1 -Action {
         try {
-            $folder = Split-Path -Parent $env:DUSK_COMMANDS_FILE
+            $file = $env:DUSK_COMMANDS_FILE
+            if (Test-Path -LiteralPath $file -PathType Leaf) {
+                $existing = Get-Item -LiteralPath $file -ErrorAction SilentlyContinue
+                if ($existing -and $existing.Length -gt 0 -and ([DateTime]::UtcNow - $existing.LastWriteTimeUtc).TotalHours -lt 24) {
+                    return
+                }
+            }
+            $folder = Split-Path -Parent $file
             if ($folder -and -not (Test-Path -LiteralPath $folder)) { $null = New-Item -ItemType Directory -Path $folder -Force }
+            $tmp = "$file.$PID.tmp"
             Get-Command -CommandType Alias, Function, Cmdlet, Filter -ErrorAction SilentlyContinue |
-                ForEach-Object Name | Set-Content -LiteralPath $env:DUSK_COMMANDS_FILE -Encoding utf8
+                ForEach-Object Name | Set-Content -LiteralPath $tmp -Encoding utf8
+            Move-Item -LiteralPath $tmp -Destination $file -Force
         } catch { }
     }
 }

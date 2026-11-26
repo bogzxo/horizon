@@ -120,10 +120,12 @@ public class Label : UIComponent
     private UIFont? wrappedFont;
     private float wrappedScale, wrappedWidth;
 
-    // How big a text that doesn't wrap came out, measured again only once the text, its size or the font is another
+    // How big a text that doesn't wrap came out, measured again only once the text, its size, skin or font is another
     private string? measuredText;
     private float measuredScale;
+    private UISkin? measuredSkin;
     private UIFont? measuredFont;
+    private int measuredSkinsVersion = -1;
     private bool measuredBoldProp, measuredBold;
     private Vector2 measuredSize;
 
@@ -189,11 +191,23 @@ public class Label : UIComponent
     protected override Vector2 Measure(UISkin skin)
     {
         float scale = ScaleOf(skin);
+        string text = Resolve(Text);
+
+        // Self-invalidating leaf Measure cache for the common plain, non-wrapping label path.
+        if (!Wrap && !Markdown && ReferenceEquals(text, measuredText) && measuredScale == scale
+            && ReferenceEquals(measuredSkin, skin) && ReferenceEquals(measuredFont, skin.Font)
+            && measuredSkinsVersion == UISkins.Version && measuredBoldProp == Bold
+            && ReferenceEquals(text, richDecidedFor) && !hasTags)
+        {
+            measuredFill = -1.0f;
+            drawnRich = false;
+            paintedAlign = Align;
+            wrapped = false;
+            return measuredSize;
+        }
+
         float width = Wrap ? WrapWidth() : 0.0f;
         measuredFill = Wrap && Size.X <= 0.0f && (Fill & UIFill.Horizontal) != 0 ? width : -1.0f;
-
-        // What it says, a key in a layout being the text of it in the language that is loaded, see Localisation
-        string text = Resolve(Text);
 
         // Styled text lays itself out, and is as wide as it was told to wrap to when it was. So does text that wraps
         // round something, every line has a room of its own then
@@ -214,13 +228,15 @@ public class Label : UIComponent
         if (!wrapped)
         {
             // Measured every tick it was a walk along every letter of every label for the size it was the tick before
-            if (!ReferenceEquals(measuredText, text) || measuredScale != scale || measuredFont != skin.Font || measuredBoldProp != Bold)
+            if (!ReferenceEquals(measuredText, text) || measuredScale != scale || !ReferenceEquals(measuredSkin, skin)
+                || !ReferenceEquals(measuredFont, skin.Font) || measuredSkinsVersion != UISkins.Version || measuredBoldProp != Bold)
             {
                 bool bold = Bold && !text.Contains('\n');
                 measuredSize = bold
                     ? new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale)
                     : skin.Font.Measure(text, scale);
-                (measuredText, measuredScale, measuredFont, measuredBoldProp, measuredBold) = (text, scale, skin.Font, Bold, bold);
+                (measuredText, measuredScale, measuredSkin, measuredFont, measuredSkinsVersion, measuredBoldProp, measuredBold) =
+                    (text, scale, skin, skin.Font, UISkins.Version, Bold, bold);
             }
 
             return measuredSize;

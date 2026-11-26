@@ -60,6 +60,54 @@ public sealed unsafe partial class GraphicsDevice
         Statistics.Counting.Instances += (int)instanceCount;
     }
 
+    /// <summary>Draws <paramref name="instanceCount"/> instanced quads using the shared 12-byte quad index buffer (0,1,2,0,2,3).</summary>
+    public void DrawQuadInstanced(uint instanceCount, uint firstInstance = 0)
+    {
+        if (instanceCount == 0 || !PrepareDraw(Topology.Triangles)) return;
+
+        Vk.CmdBindIndexBuffer(cmd, quadIndexBuffer, 0, IndexType.Uint16);
+        Vk.CmdDrawIndexed(cmd, 6, instanceCount, 0, 0, firstInstance);
+        Statistics.Counting.DrawCalls++;
+        Statistics.Counting.Instances += (int)instanceCount;
+    }
+
+    /// <summary>Draws one <c>VkDrawIndexedIndirectCommand</c> (20 bytes) of instanced quads using the shared quad index buffer.</summary>
+    public void DrawQuadIndirect(GpuBuffer command, nint offset = 0)
+    {
+        if (!command.IsValid || command.Buffer.Handle == 0) return;
+        if (!PrepareDraw(Topology.Triangles)) return;
+
+        Vk.CmdBindIndexBuffer(cmd, quadIndexBuffer, 0, IndexType.Uint16);
+        Vk.CmdDrawIndexedIndirect(cmd, command.Buffer, (ulong)offset, 1, 20);
+        command.LastUse = NextSubmission;
+        Statistics.Counting.DrawCalls++;
+    }
+
+    /// <summary>Draws <c>VkDrawIndexedIndirectCommand</c> entries (20 bytes each) of instanced quads using the shared quad index buffer.</summary>
+    public void DrawQuadIndirectCount(GpuBuffer commands, nint commandsOffset, GpuBuffer count, nint countOffset, uint maxDraws)
+    {
+        if (maxDraws == 0 || !commands.IsValid || !count.IsValid || commands.Buffer.Handle == 0 || count.Buffer.Handle == 0) return;
+        if (!PrepareDraw(Topology.Triangles)) return;
+
+        Vk.CmdBindIndexBuffer(cmd, quadIndexBuffer, 0, IndexType.Uint16);
+        if (Context.HasDrawIndirectCount)
+        {
+            Vk.CmdDrawIndexedIndirectCount(cmd, commands.Buffer, (ulong)commandsOffset, count.Buffer, (ulong)countOffset, maxDraws, 20);
+        }
+        else if (Context.HasMultiDrawIndirect || maxDraws == 1)
+        {
+            Vk.CmdDrawIndexedIndirect(cmd, commands.Buffer, (ulong)commandsOffset, maxDraws, 20);
+        }
+        else
+        {
+            for (uint draw = 0; draw < maxDraws; draw++)
+                Vk.CmdDrawIndexedIndirect(cmd, commands.Buffer, (ulong)commandsOffset + draw * 20, 1, 20);
+        }
+
+        commands.LastUse = count.LastUse = NextSubmission;
+        Statistics.Counting.DrawCalls++;
+    }
+
     /// <summary>
     /// Draws whatever the commands in a buffer say (VkDrawIndirectCommand, 16 bytes each), as many of them as another
     /// buffer says there are. For draws a compute pass worked out, see tilemap_cull.slang.

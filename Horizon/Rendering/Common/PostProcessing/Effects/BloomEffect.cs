@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 using Horizon.Graphics;
 
@@ -21,11 +22,33 @@ namespace Horizon.Rendering.PostProcessing;
 /// </summary>
 public sealed class BloomEffect : PostEffect
 {
-    private const string UNIFORM_TEXEL = "uTexel";
-    private const string UNIFORM_THRESHOLD = "uThreshold";
-    private const string UNIFORM_FIRST = "uFirst";
-    private const string UNIFORM_RADIUS = "uRadius";
-    private const string UNIFORM_INTENSITY = "uIntensity";
+    /// <summary>std140 Params block for bloom_down.slang (16 bytes).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BloomDownParams
+    {
+        public Vector2 Texel;
+        public float Threshold;
+        public int First;
+    }
+
+    /// <summary>std140 Params block for bloom_up.slang (16 bytes).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BloomUpParams
+    {
+        public Vector2 Texel;
+        public float Radius;
+        public float Padding;
+    }
+
+    /// <summary>std140 Params block for bloom_mix.slang (16 bytes).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BloomMixParams
+    {
+        public float Intensity;
+        public float Padding0;
+        public float Padding1;
+        public float Padding2;
+    }
 
     /// <summary>The most levels there can be, a picture halved this often is a few pixels across.</summary>
     public const int MOST_LEVELS = 8;
@@ -80,16 +103,20 @@ public sealed class BloomEffect : PostEffect
         uint width = (uint)sourceSize.X, height = (uint)sourceSize.Y;
 
         down.Bind();
-        down.SetUniform(UNIFORM_THRESHOLD, Math.Clamp(Threshold, 0.0f, 1.0f));
+        float threshold = Math.Clamp(Threshold, 0.0f, 1.0f);
         for (int level = 0; level < levels; level++)
         {
             width = Math.Max(1, width / 2);
             height = Math.Max(1, height / 2);
             PostTarget target = Fit(downs, level, width, height);
 
-            Vector2 texel = Vector2.One / sourceSize;
-            down.SetUniform(UNIFORM_TEXEL, in texel);
-            if (level <= 1) down.SetUniform(UNIFORM_FIRST, level == 0);
+            var downParams = new BloomDownParams
+            {
+                Texel = Vector2.One / sourceSize,
+                Threshold = threshold,
+                First = level == 0 ? 1 : 0
+            };
+            down.SetParamsBlock(in downParams);
             source.Bind(0);
             context.Draw(target);
 
@@ -106,13 +133,17 @@ public sealed class BloomEffect : PostEffect
             RenderState.BlendMode = AdditiveRgb;
 
             up.Bind();
-            up.SetUniform(UNIFORM_RADIUS, MathF.Max(Radius, 0.0f));
+            float radius = MathF.Max(Radius, 0.0f);
             for (int level = levels - 2; level >= 0; level--)
             {
                 PostTarget target = downs[level]!;
 
-                Vector2 texel = Vector2.One / low.Size;
-                up.SetUniform(UNIFORM_TEXEL, in texel);
+                var upParams = new BloomUpParams
+                {
+                    Texel = Vector2.One / low.Size,
+                    Radius = radius
+                };
+                up.SetParamsBlock(in upParams);
                 low.Texture.Bind(0);
                 context.DrawPreserving(target);
 
@@ -124,7 +155,8 @@ public sealed class BloomEffect : PostEffect
 
         // Over the picture
         mix.Bind();
-        mix.SetUniform(UNIFORM_INTENSITY, intensity);
+        var mixParams = new BloomMixParams { Intensity = intensity };
+        mix.SetParamsBlock(in mixParams);
         context.Source.Bind(0);
         low.Texture.Bind(1);
         context.Draw();

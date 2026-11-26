@@ -230,9 +230,9 @@ public class ParticleRenderer2D : GameObject, IDisposable
         device.BindVertexArray(null);
 
         if (draw.Indirect is { } command)
-            device.DrawIndirect(Topology.Triangles, command);
+            device.DrawQuadIndirect(command);
         else
-            device.DrawInstanced(Topology.Triangles, 6, draw.Count, draw.First);
+            device.DrawQuadInstanced(draw.Count, draw.First);
 
         Simulator.Submitted();
     }

@@ -71,9 +71,10 @@ public sealed class AudioMixer
     // Stream currently being decoded outside gate, so Release defers disposal until decode finishes
     private IAudioStream? decodingStream;
     private bool disposeDecodingStream;
+    private int sampleRate;
 
     /// <summary>The frames a second it mixes at, the device's.</summary>
-    public int SampleRate { get; }
+    public int SampleRate => Volatile.Read(ref sampleRate);
 
     /// <summary>The volume of everything, 0 to 1.</summary>
     public float MasterVolume
@@ -84,7 +85,26 @@ public sealed class AudioMixer
 
     public AudioMixer(int sampleRate)
     {
-        SampleRate = Math.Max(1, sampleRate);
+        this.sampleRate = Math.Max(1, sampleRate);
+    }
+
+    /// <summary>Updates the output sample rate under the mixer lock if the opened device negotiates a different rate.</summary>
+    internal void SetSampleRate(int newSampleRate)
+    {
+        int clamped = Math.Max(1, newSampleRate);
+        lock (gate)
+        {
+            int oldRate = sampleRate;
+            if (clamped == oldRate) return;
+            Volatile.Write(ref sampleRate, clamped);
+
+            float ratio = (float)oldRate / clamped;
+            for (int i = 0; i < voices.Length; i++)
+            {
+                if (voices[i].IsPlaying && voices[i].FadeStep > 0.0f)
+                    voices[i].FadeStep *= ratio;
+            }
+        }
     }
 
     /// <summary>The volume of a bus, 0 to 1.</summary>
@@ -361,7 +381,62 @@ public sealed class AudioMixer
         double step = voice.Pitch * stream.SampleRate / SampleRate;
         Gains(in voice, out float left, out float right);
 
-        for (int frame = 0; frame < frames; frame++)
+        int frame = 0;
+
+        // Segment-clamped SIMD 1:1 stereo fast path when pitch/sample-rate match, not fading, and frame-aligned
+        if (step == 1.0 && voice.FadeStep == 0.0f && voice.Position == Math.Truncate(voice.Position))
+        {
+            if (voice.StopWhenSilent && voice.Fade <= 0.0f)
+            {
+                if (frames > 0) Release(ref voice);
+                return;
+            }
+
+            float gainL = left * voice.Fade;
+            float gainR = right * voice.Fade;
+
+            while (frame < frames)
+            {
+                int at = (int)voice.Position;
+                if (at >= voice.Buffered && !voice.Ended)
+                {
+                    if (!RefillUnlocked(slot, id, ref lockTaken))
+                        return;
+
+                    voice = ref voices[slot];
+                    step = voice.Pitch * stream.SampleRate / SampleRate;
+                    Gains(in voice, out left, out right);
+                    if (step != 1.0 || voice.FadeStep != 0.0f || voice.Position != Math.Truncate(voice.Position))
+                        break;
+
+                    if (voice.StopWhenSilent && voice.Fade <= 0.0f)
+                    {
+                        Release(ref voice);
+                        return;
+                    }
+
+                    gainL = left * voice.Fade;
+                    gainR = right * voice.Fade;
+                    at = (int)voice.Position;
+                }
+
+                if (at >= voice.Buffered)
+                {
+                    Release(ref voice);
+                    return;
+                }
+
+                int chunk = Math.Min(frames - frame, voice.Buffered - at);
+                MixFloatStereo1To1Simd(buffer.AsSpan(at * 2, chunk * 2), output.Slice(frame * 2, chunk * 2), gainL, gainR);
+                frame += chunk;
+                voice.Position += chunk;
+            }
+
+            if (frame >= frames)
+                return;
+        }
+
+        for (; frame < frames; frame++)
         {
             int at = (int)voice.Position;
 
@@ -372,6 +447,7 @@ public sealed class AudioMixer
                     return;
 
                 voice = ref voices[slot];
+                step = voice.Pitch * stream.SampleRate / SampleRate;
                 Gains(in voice, out left, out right);
                 at = (int)voice.Position;
             }
@@ -579,6 +655,49 @@ public sealed class AudioMixer
 
                 Vector128.StoreUnsafe(outLo + loF * gains, ref dstRef, (nuint)i);
                 Vector128.StoreUnsafe(outHi + hiF * gains, ref dstRef, (nuint)(i + 4));
+            }
+        }
+
+        for (; i < count; i += 2)
+        {
+            dst[i] += src[i] * gainL;
+            dst[i + 1] += src[i + 1] * gainR;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static void MixFloatStereo1To1Simd(ReadOnlySpan<float> src, Span<float> dst, float gainL, float gainR)
+    {
+        int count = src.Length;
+        int i = 0;
+
+        if (Vector256.IsHardwareAccelerated && count >= 8)
+        {
+            Vector256<float> gains = Vector256.Create(gainL, gainR, gainL, gainR, gainL, gainR, gainL, gainR);
+            ref float srcRef = ref MemoryMarshal.GetReference(src);
+            ref float dstRef = ref MemoryMarshal.GetReference(dst);
+            int limit = count - 8;
+
+            for (; i <= limit; i += 8)
+            {
+                Vector256<float> samples = Vector256.LoadUnsafe(ref srcRef, (nuint)i);
+                Vector256<float> acc = Vector256.LoadUnsafe(ref dstRef, (nuint)i);
+                Vector256.StoreUnsafe(acc + samples * gains, ref dstRef, (nuint)i);
+            }
+        }
+
+        if (Vector128.IsHardwareAccelerated && i <= count - 4)
+        {
+            Vector128<float> gains = Vector128.Create(gainL, gainR, gainL, gainR);
+            ref float srcRef = ref MemoryMarshal.GetReference(src);
+            ref float dstRef = ref MemoryMarshal.GetReference(dst);
+            int limit = count - 4;
+
+            for (; i <= limit; i += 4)
+            {
+                Vector128<float> samples = Vector128.LoadUnsafe(ref srcRef, (nuint)i);
+                Vector128<float> acc = Vector128.LoadUnsafe(ref dstRef, (nuint)i);
+                Vector128.StoreUnsafe(acc + samples * gains, ref dstRef, (nuint)i);
             }
         }
 
