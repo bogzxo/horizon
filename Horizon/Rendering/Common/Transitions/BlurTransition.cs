@@ -21,7 +21,7 @@ public sealed class BlurTransition : ScreenTransition
     private const float OLD_SCENE_GONE = 0.5f;
 
     private readonly GaussianBlur gaussian = new();
-    private PostTechnique mix = null!;
+    private PostTechnique? mix;
 
     // The scene on screen blurred, what the old scene left behind, and the two of them on top of each other
     private PostTarget? current, outgoing, blended;
@@ -48,6 +48,9 @@ public sealed class BlurTransition : ScreenTransition
 
     protected override void Draw(float cover, bool arriving, float dt)
     {
+        if (mix is not { IsValid: true }) mix = new PostTechnique("mix");
+        if (!mix.IsValid) return;
+
         PostTarget sharp = Grab();
 
         // All the way covered has to be a real blur. With any less the small picture that is kept of the old scene couldn't pass for it
@@ -98,7 +101,7 @@ public sealed class BlurTransition : ScreenTransition
     /// </summary>
     private void Mix(Texture picture, Texture other, float amount)
     {
-        mix.Bind();
+        mix!.Bind();
         picture.Bind(0);
         other.Bind(1);
         mix.SetUniform(UNIFORM_AMOUNT, amount);

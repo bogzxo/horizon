@@ -71,26 +71,34 @@ internal sealed class LightCells : IDisposable
 
     private bool Fit(uint across, uint up)
     {
-        if (light is not null && across <= width && up <= height) return true;
+        if (light is not null && extra is not null && across <= width && up <= height) return true;
 
+        uint targetWidth = Math.Max(across, width);
+        uint targetHeight = Math.Max(up, height);
         Release();
-        width = Math.Max(across, width);
-        height = Math.Max(up, height);
 
         var textures = GameEngine.Instance.ObjectManager.Textures;
-        if (!textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = Cells }, out var a)) return false;
-        if (!textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = Cells }, out var b)) return false;
-        a.Asset.Name = "light cells a";
-        b.Asset.Name = "light cells b";
-
+        if (!textures.TryCreate(new TextureDescription { Width = targetWidth, Height = targetHeight, Definition = Cells }, out var a))
+            return false;
         light = a.Asset;
+        light.Name = "light cells a";
+
+        if (!textures.TryCreate(new TextureDescription { Width = targetWidth, Height = targetHeight, Definition = Cells }, out var b))
+        {
+            Release();
+            return false;
+        }
         extra = b.Asset;
+        extra.Name = "light cells b";
+
+        width = targetWidth;
+        height = targetHeight;
         return true;
     }
 
     private static bool EnsureShader()
     {
-        if (shader is not null) return true;
+        if (shader is { IsValid: true }) return true;
 
         if (!GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet("light_cells", ShaderDescription.FromPath("shaders/lighting", "light_cells"), out var result))
             return false;
@@ -104,6 +112,7 @@ internal sealed class LightCells : IDisposable
         light?.Dispose();
         extra?.Dispose();
         light = extra = null;
+        width = height = 0;
     }
 
     public void Dispose() => Release();

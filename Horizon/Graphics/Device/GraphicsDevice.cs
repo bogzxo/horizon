@@ -415,6 +415,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         completed = Math.Max(completed, QueryCompleted());
         frame.Reset();
+        ResetFrameDescriptorCache();
 
         cmd = frame.BeginCommandBuffer();
         ResetRecordingState();

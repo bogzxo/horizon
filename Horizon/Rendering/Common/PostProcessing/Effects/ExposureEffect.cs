@@ -42,7 +42,7 @@ public sealed class ExposureEffect : PostEffect
 
     private static readonly float[] Nothing = [0.0f, 0.0f, 0.0f, 0.0f];
 
-    private PostTechnique draw = null!;
+    private PostTechnique? draw;
     private Technique? measure;
     private GpuBuffer? adapted;
     private bool reset = true;
@@ -115,9 +115,17 @@ public sealed class ExposureEffect : PostEffect
     {
         var device = GraphicsDevice.Current;
 
+        if (draw is not { IsValid: true })
+            draw = new PostTechnique("exposure");
+        if (!draw.IsValid)
+        {
+            context.Copy();
+            return;
+        }
+
         // What the eye is used to, out of the picture as it is before this. Off, the buffer holds a 1 and the
         // draw reads that
-        if (measure is not null && adapted is not null)
+        if (measure is { IsValid: true } && adapted is { IsValid: true })
         {
             measure.Bind();
             measure.SetUniform(UNIFORM_DELTA_TIME, context.DeltaTime);
@@ -142,7 +150,7 @@ public sealed class ExposureEffect : PostEffect
         draw.SetUniform(UNIFORM_KNEE, Math.Clamp(Knee, 0.0f, 1.0f));
         draw.SetUniform(UNIFORM_DARK_GAMMA, MathF.Max(DarkGamma, 0.05f));
         draw.SetUniform(UNIFORM_MOST, MathF.Max(MostAdapted, 1.001f));
-        if (adapted is not null) draw.BindBuffer(ADAPTED_BINDING, adapted);
+        if (adapted is { IsValid: true }) draw.BindBuffer(ADAPTED_BINDING, adapted);
         context.Source.Bind(0);
         context.Draw();
         draw.Unbind();
@@ -152,6 +160,8 @@ public sealed class ExposureEffect : PostEffect
     {
         adapted?.Dispose();
         adapted = null;
+        draw = null;
+        measure = null;
         base.Dispose();
     }
 }

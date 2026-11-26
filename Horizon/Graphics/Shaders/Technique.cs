@@ -113,7 +113,11 @@ public class Technique
         if (!Find(name, out var member) || index < 0 || index >= Math.Max(member.ArrayLength, 1)) return;
 
         int at = member.Offset + index * (member.ArrayLength > 0 ? member.ArrayStride : member.Size);
-        MemoryMarshal.Write(block.AsSpan(at), in value);
+        ReadOnlySpan<byte> src = MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in value));
+        Span<byte> dst = block.AsSpan(at, src.Length);
+        if (src.SequenceEqual(dst)) return;
+
+        src.CopyTo(dst);
         dirty = true;
     }
 
@@ -123,7 +127,11 @@ public class Technique
         if (!Find(name, out var member)) return;
 
         int bytes = Math.Min(Unsafe.SizeOf<T>(), member.Size);
-        MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in value))[..bytes].CopyTo(block.AsSpan(member.Offset));
+        ReadOnlySpan<byte> src = MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in value))[..bytes];
+        Span<byte> dst = block.AsSpan(member.Offset, bytes);
+        if (src.SequenceEqual(dst)) return;
+
+        src.CopyTo(dst);
         dirty = true;
     }
 
@@ -134,11 +142,20 @@ public class Technique
         int count = Math.Min(values.Length, Math.Max(member.ArrayLength, 1));
         int stride = member.ArrayLength > 0 ? member.ArrayStride : member.Size;
         int bytes = Math.Min(Unsafe.SizeOf<T>(), member.Size);
+        bool changed = false;
 
         for (int i = 0; i < count; i++)
-            MemoryMarshal.AsBytes(values.Slice(i, 1))[..bytes].CopyTo(block.AsSpan(member.Offset + i * stride));
+        {
+            ReadOnlySpan<byte> src = MemoryMarshal.AsBytes(values.Slice(i, 1))[..bytes];
+            Span<byte> dst = block.AsSpan(member.Offset + i * stride, bytes);
+            if (!src.SequenceEqual(dst))
+            {
+                src.CopyTo(dst);
+                changed = true;
+            }
+        }
 
-        dirty = true;
+        if (changed) dirty = true;
     }
 
     private bool Find(string name, out UniformBlockLayout.Member member)
@@ -164,8 +181,9 @@ public class Technique
         device.BindShader(shader);
         device.BoundTechnique = this;
 
-        // Whatever the block holds goes to the GPU at the next draw, another technique may have been bound since
-        dirty = true;
+        // Only re-upload params if another technique (or a fresh frame) wrote them since our last flush
+        if (!ReferenceEquals(device.LastParamsTechnique, this))
+            dirty = true;
         SetUniforms();
     }
 
@@ -179,9 +197,11 @@ public class Technique
     /// <summary>Hands the block to the device if anything in it changed. The device calls this before every draw.</summary>
     internal void Flush(GraphicsDevice device)
     {
-        if (!dirty || block.Length == 0) return;
+        if (block.Length == 0) return;
+        if (!dirty && ReferenceEquals(device.LastParamsTechnique, this)) return;
 
         device.SetParams(block);
+        device.LastParamsTechnique = this;
         dirty = false;
     }
 }

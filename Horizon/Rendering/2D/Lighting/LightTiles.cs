@@ -58,10 +58,9 @@ internal sealed class LightTiles : IDisposable
         Screen = screen;
 
         var device = GraphicsDevice.Current;
-        CameraBlock.Use(camera);
 
         shader!.Bind();
-        renderer.BindLighting(shader);
+        renderer.BindLightList(shader);
         device.BindStorageBuffer(OUTPUT_BINDING, buffer);
         device.Dispatch((uint)((tilesX + 7) / 8), (uint)((tilesY + 7) / 8));
         device.Barrier(BarrierTargets.ShaderStorage);
@@ -71,7 +70,7 @@ internal sealed class LightTiles : IDisposable
 
     private static bool EnsureShader()
     {
-        if (shader is not null) return true;
+        if (shader is { IsValid: true }) return true;
 
         if (!GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet("light_tiles", ShaderDescription.FromPath("shaders/lighting", "light_tiles"), out var result))
             return false;

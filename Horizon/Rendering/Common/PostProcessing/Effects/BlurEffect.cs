@@ -26,7 +26,7 @@ public sealed class BlurEffect : PostEffect
     private const string RADIUS_CHANNEL = "radius";
 
     private readonly GaussianBlur gaussian = new();
-    private PostTechnique mix = null!;
+    private PostTechnique? mix;
     private PostTarget? blurred;
 
     /// <summary>How far the picture is smeared, in pixels of the picture. Zero is no blur at all.</summary>
@@ -65,11 +65,33 @@ public sealed class BlurEffect : PostEffect
 
         gaussian.Blur(context.Source, context.SourceSize, radius, ref blurred);
 
+        float share = GaussianBlur.Share(radius);
+        if (share >= 1.0f)
+        {
+            // At full blur only the blurred picture shows, so skip sampling the full-resolution source
+            PostTechnique copy = context.Processor.CopyTechnique;
+            if (copy.IsValid)
+            {
+                copy.Bind();
+                blurred!.Texture.Bind(0);
+                context.Draw();
+                copy.Unbind();
+                return;
+            }
+        }
+
+        if (mix is not { IsValid: true }) mix = new PostTechnique("mix");
+        if (!mix.IsValid)
+        {
+            context.Copy();
+            return;
+        }
+
         // Over the sharp picture, which is all that shows of it once the blur is big enough to matter
         mix.Bind();
         context.Source.Bind(0);
         blurred!.Texture.Bind(1);
-        mix.SetUniform(UNIFORM_AMOUNT, GaussianBlur.Share(radius));
+        mix.SetUniform(UNIFORM_AMOUNT, share);
         context.Draw();
 
         mix.Unbind();
@@ -80,6 +102,7 @@ public sealed class BlurEffect : PostEffect
         gaussian.Dispose();
         blurred?.Dispose();
         blurred = null;
+        mix = null;
 
         base.Dispose();
     }

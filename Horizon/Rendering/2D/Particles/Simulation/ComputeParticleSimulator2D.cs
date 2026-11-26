@@ -67,7 +67,7 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
         if (CreateShader() is not Shader shader)
             return;
 
-        if (compactShader is null)
+        if (compactShader is not { IsValid: true })
         {
             if (!GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet("particle2d_compact", ShaderDescription.FromPath("shaders/particle", "particle_compact"), out var compact))
             {
@@ -99,7 +99,7 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
     protected internal override bool Prepare(out ParticleDraw draw)
     {
         draw = default;
-        if (compute is null || compactShader is null || pool is null || instances is null || command is null)
+        if (compute is not { IsValid: true } || compactShader is not { IsValid: true } || pool is null || instances is null || command is null)
             return false;
 
         Upload(TakePending());

@@ -171,8 +171,17 @@ public class VoxelRenderer : Renderer3D
     private Vector3 previousEye;
     private uint frameNumber;
     private bool historyValid;
+    private bool filterAClear;
 
     public VoxelRenderer(in uint width, in uint height) : base(width, height) { }
+
+    protected override void Clear()
+    {
+        // Tonemap writes every pixel of the colour attachment; skip the colour clear once the tracer is active.
+        if (world is null || !AllTechniquesValid())
+            Clear(0, ClearColor);
+        ClearDepthStencil();
+    }
 
     // The picture is written by the last pass, a compute shader, so the render target's colour has to be an image too
     protected override RenderTarget CreateFrameBuffer(in uint width, in uint height) =>
@@ -290,14 +299,14 @@ public class VoxelRenderer : Renderer3D
                 // A wide blur in three small ones, the taps a pixel, two and four apart
                 Texture input = light[next]!;
                 Texture output = filterA!;
+                BindWorld(atrous!);
+                gPosition.Bind(1);
+                gNormal.Bind(2);
+                moments[next]!.Bind(3);
                 for (int pass = 0; pass < 3; pass++)
                 {
-                    BindWorld(atrous!);
                     atrous!.SetUniform("uStep", 1 << pass);
                     input.Bind(0);
-                    gPosition.Bind(1);
-                    gNormal.Bind(2);
-                    moments[next]!.Bind(3);
                     device.BindStorageImage(0, output);
                     device.Dispatch(Groups(halfWidth), Groups(halfHeight));
                     device.Barrier(BarrierTargets.ShaderImages);
@@ -307,11 +316,18 @@ public class VoxelRenderer : Renderer3D
                     input = output;
                     output = ReferenceEquals(output, filterA) ? filterB! : filterA!;
                 }
+
+                filterAClear = false;
             }
         }
         else
         {
-            device.ClearTexture(filterA!, Vector4.Zero);
+            if (!filterAClear)
+            {
+                device.ClearTexture(filterA!, Vector4.Zero);
+                filterAClear = true;
+            }
+
             bounce = filterA!;
         }
 
@@ -382,13 +398,13 @@ public class VoxelRenderer : Renderer3D
 
         using var scope = device.BeginGpuScope("bloom");
         Texture source = frame;
+        BindWorld(bloomDown!);
+        bloomDown!.SetUniform("uThreshold", 1.0f);
         for (int level = 0; level < BLOOM_LEVELS; level++)
         {
             Texture target = bloomDownLevels[level]!;
-            BindWorld(bloomDown!);
-            bloomDown!.SetUniform("uTargetSize", new Vector2(target.Width, target.Height));
-            bloomDown.SetUniform("uThreshold", 1.0f);
-            bloomDown.SetUniform("uFirst", level == 0 ? 1 : 0);
+            bloomDown.SetUniform("uTargetSize", new Vector2(target.Width, target.Height));
+            if (level <= 1) bloomDown.SetUniform("uFirst", level == 0 ? 1 : 0);
             source.Bind(0);
             device.BindStorageImage(0, target);
             device.Dispatch(Groups(target.Width), Groups(target.Height));
@@ -398,13 +414,13 @@ public class VoxelRenderer : Renderer3D
         }
 
         Texture low = bloomDownLevels[BLOOM_LEVELS - 1]!;
+        BindWorld(bloomUp!);
+        bloomUp!.SetUniform("uRadius", 1.0f);
         for (int level = BLOOM_LEVELS - 2; level >= 0; level--)
         {
             Texture target = bloomUpLevels[level]!;
-            BindWorld(bloomUp!);
-            bloomUp!.SetUniform("uTargetSize", new Vector2(target.Width, target.Height));
+            bloomUp.SetUniform("uTargetSize", new Vector2(target.Width, target.Height));
             bloomUp.SetUniform("uLowSize", new Vector2(low.Width, low.Height));
-            bloomUp.SetUniform("uRadius", 1.0f);
             low.Bind(0);
             bloomDownLevels[level]!.Bind(1);
             device.BindStorageImage(0, target);
@@ -436,9 +452,16 @@ public class VoxelRenderer : Renderer3D
         device.BindStorageBuffer(8, radianceCache);
     }
 
+    private bool AllTechniquesValid() =>
+        primary is { IsValid: true } && surface is { IsValid: true } && sunlight is { IsValid: true }
+        && indirect is { IsValid: true } && bounceLight is { IsValid: true } && temporal is { IsValid: true }
+        && atrous is { IsValid: true } && composite is { IsValid: true } && taa is { IsValid: true }
+        && exposure is { IsValid: true } && bloomDown is { IsValid: true } && bloomUp is { IsValid: true }
+        && tonemap is { IsValid: true };
+
     private bool LoadTechniques()
     {
-        if (primary is not null) return primary.IsValid;
+        if (primary is not null) return AllTechniquesValid();
 
         primary = Load("primary");
         surface = Load("surface");
@@ -454,8 +477,7 @@ public class VoxelRenderer : Renderer3D
         bloomUp = Load("bloom_up");
         tonemap = Load("tonemap");
 
-        return primary.IsValid && surface.IsValid && sunlight.IsValid && indirect.IsValid && bounceLight.IsValid && temporal.IsValid && atrous.IsValid && composite.IsValid
-            && taa.IsValid && exposure.IsValid && bloomDown.IsValid && bloomUp.IsValid && tonemap.IsValid;
+        return AllTechniquesValid();
 
         static Technique Load(string name) => new(Shader.Load("shaders/voxels", name));
     }
@@ -523,6 +545,7 @@ public class VoxelRenderer : Renderer3D
 
         // Nothing that was in the old pictures means anything now
         historyValid = false;
+        filterAClear = false;
         foreach (Texture? texture in light) GraphicsDevice.Current.ClearTexture(texture!, Vector4.Zero);
         foreach (Texture? texture in geometry) GraphicsDevice.Current.ClearTexture(texture!, new Vector4(0, 0, 0, -1));
         foreach (Texture? texture in moments) GraphicsDevice.Current.ClearTexture(texture!, Vector4.Zero);
@@ -538,19 +561,32 @@ public class VoxelRenderer : Renderer3D
 
     private void DisposePictures()
     {
-        foreach (Texture? texture in new[] { gPosition, gHit, gNormal, gAlbedo, gDirect, gSun, bouncePosition, bounceHit, raw, filterA, filterB, scene }) texture?.Dispose();
+        gPosition?.Dispose(); gPosition = null;
+        gHit?.Dispose(); gHit = null;
+        gNormal?.Dispose(); gNormal = null;
+        gAlbedo?.Dispose(); gAlbedo = null;
+        gDirect?.Dispose(); gDirect = null;
+        gSun?.Dispose(); gSun = null;
+        bouncePosition?.Dispose(); bouncePosition = null;
+        bounceHit?.Dispose(); bounceHit = null;
+        raw?.Dispose(); raw = null;
+        filterA?.Dispose(); filterA = null;
+        filterB?.Dispose(); filterB = null;
+        scene?.Dispose(); scene = null;
+        filterAClear = false;
+
         for (int i = 0; i < 2; i++)
         {
-            light[i]?.Dispose();
-            moments[i]?.Dispose();
-            geometry[i]?.Dispose();
-            history[i]?.Dispose();
+            light[i]?.Dispose(); light[i] = null;
+            moments[i]?.Dispose(); moments[i] = null;
+            geometry[i]?.Dispose(); geometry[i] = null;
+            history[i]?.Dispose(); history[i] = null;
         }
 
         for (int i = 0; i < BLOOM_LEVELS; i++)
         {
-            bloomDownLevels[i]?.Dispose();
-            bloomUpLevels[i]?.Dispose();
+            bloomDownLevels[i]?.Dispose(); bloomDownLevels[i] = null;
+            bloomUpLevels[i]?.Dispose(); bloomUpLevels[i] = null;
         }
     }
 
@@ -698,8 +734,14 @@ public class VoxelRenderer : Renderer3D
     /// <summary>Helper method to swap a buffer of the world for a bigger one with the same in it, copied on the card.</summary>
     private static GpuBuffer Grow(GpuBuffer old, string name, long bytes)
     {
-        GpuBuffer bigger = MakeWorldBuffer(name, Math.Max(bytes, (long)old.Size * 3 / 2));
-        GraphicsDevice.Current.CopyBuffer(old, bigger, old.Size);
+        // Keep 4-byte alignment so vkCmdFillBuffer can zero only the newly appended tail
+        long target = (Math.Max(bytes, (long)old.Size * 3 / 2) + 3L) & ~3L;
+        var device = GraphicsDevice.Current;
+        GpuBuffer bigger = GpuBuffer.Create(BufferDescription.StorageBuffer((nuint)target));
+        bigger.Name = name;
+        device.CopyBuffer(old, bigger, old.Size);
+        if (bigger.Size > old.Size)
+            device.FillBuffer(bigger, 0, (nint)old.Size, bigger.Size - old.Size);
         old.Dispose();
         return bigger;
     }
@@ -845,13 +887,14 @@ public class VoxelRenderer : Renderer3D
     protected override void DisposeOther()
     {
         DisposePictures();
-        nodeBuffer?.Dispose();
-        voxelBuffer?.Dispose();
-        materialBuffer?.Dispose();
-        modelBuffer?.Dispose();
-        frameBuffer?.Dispose();
-        exposureBuffer?.Dispose();
-        radianceCache?.Dispose();
+        nodeBuffer?.Dispose(); nodeBuffer = null;
+        voxelBuffer?.Dispose(); voxelBuffer = null;
+        materialBuffer?.Dispose(); materialBuffer = null;
+        modelBuffer?.Dispose(); modelBuffer = null;
+        frameBuffer?.Dispose(); frameBuffer = null;
+        exposureBuffer?.Dispose(); exposureBuffer = null;
+        radianceCache?.Dispose(); radianceCache = null;
+        atlas = null;
         base.DisposeOther();
     }
 }

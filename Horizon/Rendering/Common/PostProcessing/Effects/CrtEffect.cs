@@ -32,7 +32,7 @@ public sealed class CrtEffect : PostEffect
     // nothing left to make up for
     private const float SOFTEST_SCAN = -5.0f;
 
-    private PostTechnique shrink = null!, tube = null!;
+    private PostTechnique? shrink, tube;
     private PostTarget? small;
 
     /// <summary>How many logical pixels of the picture make one dot of the tube, each way, before render scaling.
@@ -68,6 +68,14 @@ public sealed class CrtEffect : PostEffect
 
     protected override void Render(PostContext context)
     {
+        if (shrink is not { IsValid: true }) shrink = new PostTechnique("crt_shrink");
+        if (tube is not { IsValid: true }) tube = new PostTechnique("crt");
+        if (!shrink.IsValid || !tube.IsValid)
+        {
+            context.Copy();
+            return;
+        }
+
         Vector2 resolution = ResolveResolution(context.LogicalSize);
         uint width = (uint)resolution.X, height = (uint)resolution.Y;
 
@@ -126,6 +134,7 @@ public sealed class CrtEffect : PostEffect
     {
         small?.Dispose();
         small = null;
+        shrink = tube = null;
 
         base.Dispose();
     }

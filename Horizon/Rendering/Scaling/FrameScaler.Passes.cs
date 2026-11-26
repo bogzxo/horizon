@@ -33,41 +33,47 @@ public sealed partial class FrameScaler
 
         using (graphics.BeginGpuScope(GPU_SCOPE))
         {
-            // A scene that was cleared and never drawn into is that colour, which it has to be by now to be read
-            source.FlushPendingClears(graphics, null);
-
-            graphics.BindWindow();
-            RenderState.Blend = false;
-            RenderState.DepthTest = false;
-            RenderState.DepthWrite = false;
-
-            Texture picture = source.Color;
-            Upscaler upscaler = now.Effective;
-            bool customDrew = upscaler == Upscaler.Custom && RunCustom(now, picture);
-            if (!customDrew)
+            try
             {
-                // A custom upscaler that fell over is CAS's to do, the way the plan does it, a stretch first if it has to be
-                bool prepass = now.HasPrepass;
-                if (upscaler == Upscaler.Custom)
-                {
-                    upscaler = Upscaler.Cas;
-                    prepass = !CasConstants.SupportsScaling(now.OutputWidth, now.OutputHeight, now.SceneWidth, now.SceneHeight);
-                }
+                // A scene that was cleared and never drawn into is that colour, which it has to be by now to be read
+                source.FlushPendingClears(graphics, null);
 
+                graphics.BindWindow();
                 RenderState.Blend = false;
                 RenderState.DepthTest = false;
                 RenderState.DepthWrite = false;
 
-                if (RenderScalePlan.HasReach(upscaler) && prepass)
-                    DrawWithPrepass(graphics, now, upscaler, picture);
-                else
-                    DrawPass(upscaler, picture, now.SceneWidth, now.SceneHeight, now.OutputWidth, now.OutputHeight, now.Sharpness);
+                Texture picture = source.Color;
+                Upscaler upscaler = now.Effective;
+                bool customDrew = upscaler == Upscaler.Custom && RunCustom(now, picture);
+                if (!customDrew)
+                {
+                    // A custom upscaler that fell over is CAS's to do, the way the plan does it, a stretch first if it has to be
+                    bool prepass = now.HasPrepass;
+                    if (upscaler == Upscaler.Custom)
+                    {
+                        upscaler = Upscaler.Cas;
+                        prepass = !CasConstants.SupportsScaling(now.OutputWidth, now.OutputHeight, now.SceneWidth, now.SceneHeight);
+
+                        // A failed custom upscaler may have altered blend or depth state
+                        RenderState.Blend = false;
+                        RenderState.DepthTest = false;
+                        RenderState.DepthWrite = false;
+                    }
+
+                    if (RenderScalePlan.HasReach(upscaler) && prepass)
+                        DrawWithPrepass(graphics, now, upscaler, picture);
+                    else
+                        DrawPass(upscaler, picture, now.SceneWidth, now.SceneHeight, now.OutputWidth, now.OutputHeight, now.Sharpness);
+                }
+            }
+            finally
+            {
+                // Whoever had the window bound has it again, at full size now, and whoever had a target of their own has that
+                graphics.BindRenderTarget(bound);
+                RenderState.Restore(before);
             }
         }
-
-        // Whoever had the window bound has it again, at full size now, and whoever had a target of their own has that
-        graphics.BindRenderTarget(bound);
-        RenderState.Restore(before);
     }
 
     /// <summary>What the GPU timings call the bilinear stretch ahead of CAS or FSR 1, inside the upscale's.</summary>
@@ -178,7 +184,8 @@ public sealed partial class FrameScaler
 
     private void DrawCas(Texture picture, uint sceneWidth, uint sceneHeight, uint outputWidth, uint outputHeight, float sharpness)
     {
-        cas ??= new PostTechnique("cas");
+        if (cas is not { IsValid: true }) cas = new PostTechnique("cas");
+        if (!cas.IsValid) return;
         CasConstants constants = CasConstants.For(sharpness, sceneWidth, sceneHeight, outputWidth, outputHeight);
 
         cas.Bind();
@@ -192,11 +199,12 @@ public sealed partial class FrameScaler
 
     private void DrawNearest(Texture picture, uint sceneWidth, uint sceneHeight, uint outputWidth, uint outputHeight)
     {
-        nearest ??= new PostTechnique("upscale_nearest");
+        if (nearest is not { IsValid: true }) nearest = new PostTechnique("upscale_nearest");
+        if (!nearest.IsValid) return;
 
         nearest.Bind();
         picture.Bind(0);
-        nearest.SetUniform("uScale", new Vector2(sceneWidth / (float)outputWidth, sceneHeight / (float)outputHeight));
+        nearest.SetUniform("uScale", new Vector2(sceneWidth / (float)Math.Max(1u, outputWidth), sceneHeight / (float)Math.Max(1u, outputHeight)));
         nearest.SetUniform("uSceneSize", new Vector2(sceneWidth, sceneHeight));
         ScreenTriangle.Draw();
         nearest.Unbind();
@@ -204,7 +212,8 @@ public sealed partial class FrameScaler
 
     private void DrawGsr1(Texture picture, uint sceneWidth, uint sceneHeight, float sharpness)
     {
-        gsr1 ??= new PostTechnique("gsr1");
+        if (gsr1 is not { IsValid: true }) gsr1 = new PostTechnique("gsr1");
+        if (!gsr1.IsValid) return;
 
         gsr1.Bind();
         picture.Bind(0);
@@ -224,7 +233,8 @@ public sealed partial class FrameScaler
         RenderTarget? bound = graphics.BoundRenderTarget;
         bool rcasToo = Fit(ref easuTarget, outputWidth, outputHeight, "fsr1 easu");
 
-        easu ??= new PostTechnique("fsr1_easu");
+        if (easu is not { IsValid: true }) easu = new PostTechnique("fsr1_easu");
+        if (!easu.IsValid) return;
         EasuConstants constants = EasuConstants.For(sceneWidth, sceneHeight, outputWidth, outputHeight);
 
         using (graphics.BeginGpuScope(EASU_SCOPE))
@@ -246,7 +256,8 @@ public sealed partial class FrameScaler
             return;
 
         graphics.BindRenderTarget(bound);
-        rcas ??= new PostTechnique("fsr1_rcas");
+        if (rcas is not { IsValid: true }) rcas = new PostTechnique("fsr1_rcas");
+        if (!rcas.IsValid) return;
         rcas.Bind();
         easuTarget!.Color.Bind(0);
         rcas.SetUniform("uSharpness", SpatialSharpness.RcasAmount(sharpness));
@@ -258,7 +269,8 @@ public sealed partial class FrameScaler
     private void DrawBilinear(Texture picture)
     {
         // The scene's target reads between its pixels by itself, the copy shader is all bilinear takes
-        bilinear ??= new PostTechnique("copy");
+        if (bilinear is not { IsValid: true }) bilinear = new PostTechnique("copy");
+        if (!bilinear.IsValid) return;
 
         bilinear.Bind();
         picture.Bind(0);

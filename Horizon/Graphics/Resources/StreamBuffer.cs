@@ -123,16 +123,46 @@ public sealed unsafe class StreamBuffer<T> : IDisposable where T : unmanaged
         mapped[Offset + index] = item;
     }
 
+    /// <summary>
+    /// Helper method to compute per-region capacity and byte size so every region starts on an offset that is a
+    /// multiple of both <paramref name="alignment"/> and <paramref name="elementSize"/>.
+    /// </summary>
+    internal static (int Capacity, nuint RegionBytes) ComputeRegionLayout(int wanted, int elementSize, uint alignment)
+    {
+        int minItems = Math.Max(1, wanted);
+        int targetItems = Math.Max(minItems, (int)Math.Ceiling(minItems * HEADROOM));
+        uint elem = (uint)Math.Max(1, elementSize);
+        uint align = Math.Max(1u, alignment);
+
+        // Smallest item count whose byte size is a multiple of align: step = align / gcd(elem, align).
+        // That keeps Offset * sizeof(T) == ByteOffset and guarantees every region boundary is aligned.
+        uint step = align / Gcd(elem, align);
+        ulong alignedItems = ((ulong)targetItems + step - 1) / step * step;
+        int capacity = (int)alignedItems;
+        nuint regionBytes = (nuint)(alignedItems * elem);
+        return (capacity, regionBytes);
+    }
+
+    private static uint Gcd(uint a, uint b)
+    {
+        while (b != 0)
+        {
+            uint t = a % b;
+            a = b;
+            b = t;
+        }
+
+        return a;
+    }
+
     private void Resize(int wanted)
     {
         var device = GraphicsDevice.Current;
 
-        // Every region starts on an offset a shader block may be bound at, so the capacity is rounded up to that
+        // Every region starts on an offset a shader block may be bound at, so the capacity is rounded up to a
+        // multiple of items whose byte size divides cleanly by the device alignment
         uint alignment = Math.Max(device.StorageOffsetAlignment, device.UniformOffsetAlignment);
-        int capacity = (int)(wanted * HEADROOM);
-        nuint regionBytes = (nuint)capacity * (nuint)sizeof(T);
-        regionBytes = (regionBytes + alignment - 1) / alignment * alignment;
-        capacity = (int)(regionBytes / (nuint)sizeof(T));
+        (int capacity, nuint regionBytes) = ComputeRegionLayout(wanted, sizeof(T), alignment);
 
         // Nothing is torn out from under the GPU
         for (int i = 0; i < REGIONS; i++)

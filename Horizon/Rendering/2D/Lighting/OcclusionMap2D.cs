@@ -222,7 +222,8 @@ public sealed class OcclusionMap2D : IDisposable
 
         uint groupsX = (width + 7) / 8, groupsY = (height + 7) / 8;
 
-        foreach (Technique pass in new[] { rowsShader!, columnsShader! })
+        ReadOnlySpan<Technique> passes = [rowsShader!, columnsShader!];
+        foreach (Technique pass in passes)
         {
             pass.Bind();
             pass.SetUniform("uSize", FieldSize);
@@ -416,7 +417,7 @@ public sealed class OcclusionMap2D : IDisposable
 
     private static bool EnsureShaders()
     {
-        if (rowsShader is not null && columnsShader is not null) return true;
+        if (rowsShader is { IsValid: true } && columnsShader is { IsValid: true }) return true;
 
         var shaders = GameEngine.Instance.ObjectManager.Shaders;
         if (!shaders.TryCreateOrGet("sdf_rows", ShaderDescription.FromPath("shaders/lighting", "sdf_rows"), out var rows)) return false;

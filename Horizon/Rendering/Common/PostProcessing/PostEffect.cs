@@ -136,6 +136,7 @@ public sealed class PostContext
         }
 
         PostTechnique copy = Processor.CopyTechnique;
+        if (!copy.IsValid) return;
 
         copy.Bind();
         Source.Bind(0);

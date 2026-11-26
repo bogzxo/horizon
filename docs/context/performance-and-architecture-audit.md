@@ -138,3 +138,29 @@
 - **`HexStartup`** (3 cold runs, median):
   - `Dawn`: `396 ms` first frame | WS `171.3 MiB` | Priv `202.6 MiB` | Idle CPU `1.466%`
   - `Dusk`: `312 ms` first frame | WS `120.6 MiB` | Priv `154.5 MiB` | Idle CPU `1.964%` (`-1.469pp`)
+
+### Pass 2 — Vulkan Graphics, 2D/3D Rendering, Shaders & Scaling (`Horizon.Tests`: 2,308 passed / 0 failed)
+- **Changes**: Preserved native `AttachmentLoadOp.Clear` in `GraphicsDevice.EnsureRendering` (`FlushPendingClears` removal); batched `stackalloc ImageMemoryBarrier2` barriers in `EnsureRendering`, `PrepareTextures`, `PrepareImages`, and skipped redundant `PrepareImages` storage re-barriering; transitioned newly created bindless Set 2 textures to `ShaderReadOnlyOptimal` & fixed `BindlessTextures.ComputeCapacity` (`>= 1`); aligned swapchain acquire barrier stage mask; invalidated stale `boundStorage` handles on `GpuBuffer` realloc; GCD-aligned `StreamBuffer<T>.ComputeRegionLayout` (e.g., 24 B `ParticleInstance`); added `Rgba16F`/`Rgba32F` `TexelFormat` fallback support; targeted `BufferBarrier` in `UpdateBuffer`/`FillBuffer`; clamped `ClampScissor`/`ClampReadPixels`; `Technique.Bind`/`LastParamsTechnique` `SequenceEqual` skip, `[InlineArray]` Set 0 descriptor cache, & SPIR-V sampler skip for Slang; separated foreground indirect buffers + `tilemap.slang:119` `NO_TEXTURE` guard (rebuilt + verified 42-module `horizon.hzshaders` pack) + cached `TileMap.PlaceImage` bounds; explicit `ShaderReadOnlyOptimal` transitions on `PathTracedLighting2D.Air`, `TextureAtlas`, `GlyphAtlas`, `DistanceFieldFont`, and `TileMapGeometryOcclusion`; partial texture leak fixes in `SpriteShadows.Fit` & `LightCells.Fit`; volatile `DeferredRenderer2D.Lighting` & `BindLightList`; coalesced `TextureAtlas.Upload`; `SpriteBatch.DisposeOther()` + uninterpolated/static `RenderCaptured` fast paths; locked `CpuParticleSimulator2D.Prepare`; `PrimitiveRenderer.DrawBlended` `to[i]` fix; `Mesh3D.DisposeOther()` + `Mesh3D.Shapes` zero-array index emission; `VoxelRenderer.Grow` tail-only clear + single `filterA` clear + `tonemap` color clear skip + 13-technique validation; uniform `IsValid` checks & `Dispose()` cleanup across `Rendering/{2D,3D,Common,Scaling}`.
+- **Binaries**: `Horizon.Testing.exe` = `24.57 MiB` (`+0.03` vs P1, `-0.05` vs Baseline) | `Hex.exe` = `59.90 MiB` (`+0.01` vs P1, `-0.05` vs Baseline)
+- **Horizon.Testing `--checks`**: `846 / 848` passed (`2 failed`, unchanged vs P1, `+1` vs Baseline), median wall = `37236.1 ms` (`-110.8 ms` vs P1)
+- **`Horizon.Testing` Scenes (`6.5s`, vs Pass 1 / Baseline)**:
+
+| Scene | Startup (ms) | GPU (ms) | WS / Priv (MiB) | Render FPS / Work (ms) / B/turn | Sim Work (ms) / B/turn | Logic Work (ms) / B/turn | Physics Work (ms) / B/turn |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `dungeon` | 669 (`-26` / `+21`) | 2.973 (`+0.330` / `-17.3%`) | 167.4 / 369.1 | 389.0 / 2.600 / 0.5 (`+9.7%` vs B) | 0.133 / 88.8 | 0.030 / 77.2 | 0.010 / 1.7 |
+| `fluid` | 590 (`-14` / `-51`) | 0.067 | 131.6 / 214.3 | 6841.3 (`+18.7%` / `+29.2%`) / 0.147 / 0.0 | 0.963 / 23.6 | 0.023 / 12.8 | 0.863 / 0.0 |
+| `meshes` | 583 (`-2` / `-42`) | 0.090 | 119.6 / 201.8 | 7375.7 (`+4.3%` / `+30.3%`) / 0.140 / 0.0 | 0.090 / 21.3 | 0.020 / 11.2 | 0.000 / 0.0 |
+| `ui-controls` | 592 (`+5` / `-5`) | 0.073 | 133.7 / 218.2 | 8228.0 (`+7.5%` / `+37.5%`) / 0.123 / 0.0 | 0.143 / 4028.8 | 0.023 / 11.2 | 0.000 / 0.0 |
+
+- **`Hex --window --selftest uicost typing garbage --exit`** (`7/7 passed`, `52649.9 ms`):
+  - `uicost idle`: Paint `0.504 ms` (`Layout 0.081`), `2839 KB` up, Draw `0.152 ms` (`-23.6%` vs P1, `-34.2%` vs B), GPU `0.720 ms` (`-7.5%` vs P1, `-23.1%` vs B)
+  - `uicost typing`: Paint `0.581 ms` (`Layout 0.053`), `44825 KB` up, Draw `0.310 ms`, GPU `1.094 ms`
+  - `uicost wheel`: Paint `0.508 ms` (`Layout 0.048`), `89553 KB` up, Draw `0.287 ms` (`-13.8%` vs P1), GPU `1.033 ms`
+  - `uicost drag`: Paint `0.754 ms` (`Layout 0.123`), `22122 KB` up, Draw `0.355 ms` (`-16.3%` vs P1, `-18.4%` vs B), GPU `1.935 ms`
+  - `uicost notebook`: Paint `0.703 ms` (`Layout 0.095`), `57437 KB` up, Draw `0.244 ms` (`-5.1%` vs P1), GPU `1.125 ms`
+  - `typing csharp` (`119` keys): Avg `4.6 ms` | Med `4.2 ms` | P95 `10.1 ms` | Worst `37.4 ms`
+  - `typing hor` (`119` keys): Avg `4.2 ms` | Med `4.2 ms` | P95 `4.3 ms` | Worst `5.0 ms` (`-81.9%` vs P1, `-61.2%` vs B)
+  - `garbage`: designer `98 B/tick` | code `78 B/tick` | layoutCode `98 B/tick`
+- **`HexStartup`** (3 cold runs, median):
+  - `Dawn`: `389 ms` first frame (`-7 ms` vs P1, `0` vs B) | WS `171.2 MiB` | Priv `203.0 MiB` | Idle CPU `2.447%`
+  - `Dusk`: `312 ms` first frame (`0` vs P1, `+3` vs B) | WS `120.7 MiB` | Priv `155.0 MiB` | Idle CPU `8.357%`

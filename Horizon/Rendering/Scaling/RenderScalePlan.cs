@@ -37,11 +37,19 @@ public sealed record RenderScalePlan(
     public float EffectiveScale => OutputWidth == 0 ? 1.0f : SceneWidth / (float)OutputWidth;
 
     /// <summary>How big the window is in dp, its pixels over the density.</summary>
-    public (float Width, float Height) LogicalSize => (OutputWidth / Density, OutputHeight / Density);
+    public (float Width, float Height) LogicalSize
+    {
+        get
+        {
+            float d = float.IsFinite(Density) && Density > 0.0f ? Density : 1.0f;
+            return (OutputWidth / d, OutputHeight / d);
+        }
+    }
 
     /// <summary>Nothing scaled, for a window of a size.</summary>
     public static RenderScalePlan NativeFor(uint width, uint height, float density = 1.0f) =>
-        new(width, height, width, height, density, RenderScalePolicy.Native, 1.0f, Upscaler.Cas, Upscaler.Cas, RenderComposition.NativeOverlay, 0.0f, null);
+        new(width, height, width, height, float.IsFinite(density) && density > 0.0f ? density : 1.0f,
+            RenderScalePolicy.Native, 1.0f, Upscaler.Cas, Upscaler.Cas, RenderComposition.NativeOverlay, 0.0f, null);
 
     /// <summary>
     /// Works out what a frame does. A window of nothing (no surface) has a plan of nothing, which isn't active. The
@@ -54,6 +62,14 @@ public sealed record RenderScalePlan(
         RenderScaleSettings settings = requested.Sanitized();
         if (!float.IsFinite(density) || density <= 0.0f)
             density = 1.0f;
+
+        if (outputWidth == 0 || outputHeight == 0)
+        {
+            return new RenderScalePlan(outputWidth, outputHeight, outputWidth, outputHeight, density, settings.Policy, 1.0f,
+                settings.Upscaler, settings.Upscaler == Upscaler.Custom && settings.Custom is null ? Upscaler.Cas : settings.Upscaler,
+                settings.Composition, settings.Sharpness,
+                settings.Upscaler == Upscaler.Custom && settings.Custom is null ? "no custom upscaler was given, CAS does it" : null);
+        }
 
         uint most = Math.Max(1, maxTextureSize);
         uint sceneWidth, sceneHeight;
@@ -151,8 +167,8 @@ public sealed record RenderScalePlan(
     /// </summary>
     public static (uint Width, uint Height) CasReach(uint outputWidth, uint outputHeight, uint sceneWidth, uint sceneHeight)
     {
-        uint width = Math.Max(sceneWidth, (outputWidth + 1) / 2);
-        uint height = Math.Max(sceneHeight, (outputHeight + 1) / 2);
+        uint width = Math.Max(sceneWidth, (outputWidth / 2) + (outputWidth & 1));
+        uint height = Math.Max(sceneHeight, (outputHeight / 2) + (outputHeight & 1));
         return (Math.Min(width, outputWidth), Math.Min(height, outputHeight));
     }
 

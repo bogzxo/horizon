@@ -29,6 +29,7 @@ public sealed unsafe partial class GraphicsDevice
             if (!inUse && buffer.Capacity >= bytes)
             {
                 buffer.Size = bytes;
+                InvalidateStorageBinding(buffer, handleChanged: false);
                 return;
             }
 
@@ -67,6 +68,7 @@ public sealed unsafe partial class GraphicsDevice
         buffer.Capacity = bytes;
         buffer.Size = bytes;
         buffer.LastUse = 0;
+        InvalidateStorageBinding(buffer, handleChanged: true);
         Statistics.Buffers++;
         LabelBuffer(buffer);
     }
@@ -173,7 +175,7 @@ public sealed unsafe partial class GraphicsDevice
         else if (!pixels.IsEmpty)
         {
             fixed (byte* pointer = pixels)
-                UploadTexels(texture, 0, 0, texture.Width, texture.Height, definition.Format == PixelFormat.R8 ? TexelFormat.R8 : TexelFormat.Rgba8, pointer);
+                UploadTexels(texture, 0, 0, texture.Width, texture.Height, TexelFormatOf(definition.Format), pointer);
 
             if (levels > 1) GenerateMipmaps(texture);
         }
@@ -182,6 +184,11 @@ public sealed unsafe partial class GraphicsDevice
             // A texture that is read before anything was put in it shows nothing rather than whatever was in the memory
             ClearImageNow(texture, System.Numerics.Vector4.Zero);
         }
+
+        // Set 2 bindless descriptors declare ShaderReadOnlyOptimal, so freshly created sampled textures (including
+        // empty/cleared or staging-uploaded ones) must transition out of Undefined/Transfer layouts before use
+        if ((definition.Usage & TextureUsage.Sampled) != 0 && texture.Layout != ImageLayout.ShaderReadOnlyOptimal)
+            Transition(texture, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags2.AllGraphicsBit | PipelineStageFlags2.ComputeShaderBit, AccessFlags2.ShaderSampledReadBit);
     }
 
     /// <summary>
@@ -253,6 +260,16 @@ public sealed unsafe partial class GraphicsDevice
         texture.View = default;
         texture.Memory = default;
     }
+
+    /// <summary>Helper method to map a texture's pixel format to the texel upload format used by staging uploads.</summary>
+    internal static TexelFormat TexelFormatOf(PixelFormat format) => format switch
+    {
+        PixelFormat.R8 => TexelFormat.R8,
+        PixelFormat.R16F => TexelFormat.R16F,
+        PixelFormat.Rgba16F => TexelFormat.Rgba16F,
+        PixelFormat.Rgba32F => TexelFormat.Rgba32F,
+        _ => TexelFormat.Rgba8
+    };
 
     internal Format FormatOf(PixelFormat format) => format switch
     {

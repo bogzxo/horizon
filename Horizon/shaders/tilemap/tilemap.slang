@@ -116,7 +116,7 @@ GBuffer fsMain(Varyings input)
 {
     Layer layer = layers[input.layer];
 
-    float4 albedo = uTextures[NonUniformResourceIndex(input.albedo)].Sample(input.texCoords) * layer.tint;
+    float4 albedo = input.albedo != NO_TEXTURE ? uTextures[NonUniformResourceIndex(input.albedo)].Sample(input.texCoords) * layer.tint : float4(0.0, 0.0, 0.0, 0.0);
     if (albedo.a <= 0.0) discard;
 
     // The way a surface faces turns over along with the tile it is on, or a tile that is mirrored would be lit from

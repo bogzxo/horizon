@@ -171,7 +171,7 @@ public sealed class PostProcessor : IDisposable
         return targets[index] = new PostTarget((uint)size.X, (uint)size.Y);
     }
 
-    internal PostTechnique CopyTechnique => copy ??= new PostTechnique("copy");
+    internal PostTechnique CopyTechnique => copy is { IsValid: true } ? copy : copy = new PostTechnique("copy");
 
     /// <summary>
     /// Puts a picture where it is shown as it is, without any effect having a go at it.
@@ -180,6 +180,7 @@ public sealed class PostProcessor : IDisposable
     internal void Blit(Texture picture, Action bindOutput)
     {
         PostTechnique technique = CopyTechnique;
+        if (!technique.IsValid) return;
 
         technique.Bind();
         picture.Bind(0);
@@ -205,5 +206,9 @@ public sealed class PostProcessor : IDisposable
             targets[i]?.Dispose();
             targets[i] = null;
         }
+
+        copy = null;
+        Array.Clear(active, 0, active.Length);
+        activeCount = 0;
     }
 }

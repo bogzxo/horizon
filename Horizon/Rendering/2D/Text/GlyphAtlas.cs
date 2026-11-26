@@ -333,7 +333,12 @@ public sealed class GlyphAtlas
             Texture = grown;
             ClearTexture(Texture);
             if (!doClear)
+            {
                 GraphicsDevice.Current.CopyTexels(old, Texture);
+                GraphicsDevice.Current.Transition(old, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal,
+                    Silk.NET.Vulkan.PipelineStageFlags2.VertexShaderBit | Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit,
+                    Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
+            }
             retired.Add((old, 0));
         }
         else if (doClear)
@@ -341,18 +346,26 @@ public sealed class GlyphAtlas
             ClearTexture(Texture);
         }
 
-        if (uploadGlyphs.Count == 0)
-            return;
-
-        TexelFormat format = subpixel ? TexelFormat.Rgba8 : TexelFormat.R8;
-        fixed (byte* basePtr = uploadBytes)
+        if (uploadGlyphs.Count > 0)
         {
-            foreach (PendingGlyph g in uploadGlyphs)
-                GraphicsDevice.Current.UploadTexels(Texture, g.X, g.Y, (uint)g.Width, (uint)g.Height, format, basePtr + g.Offset);
+            TexelFormat format = subpixel ? TexelFormat.Rgba8 : TexelFormat.R8;
+            fixed (byte* basePtr = uploadBytes)
+            {
+                foreach (PendingGlyph g in uploadGlyphs)
+                    GraphicsDevice.Current.UploadTexels(Texture, g.X, g.Y, (uint)g.Width, (uint)g.Height, format, basePtr + g.Offset);
+            }
+            uploadGlyphs.Clear();
+            if (uploadBytes.Length > MAX_RETAINED_PENDING_BYTES)
+                uploadBytes = [];
         }
-        uploadGlyphs.Clear();
-        if (uploadBytes.Length > MAX_RETAINED_PENDING_BYTES)
-            uploadBytes = [];
+
+        // The glyph atlas is sampled bindlessly, so leave it in ShaderReadOnlyOptimal after any clear/copy/upload
+        if (Texture.IsValid)
+        {
+            GraphicsDevice.Current.Transition(Texture, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal,
+                Silk.NET.Vulkan.PipelineStageFlags2.VertexShaderBit | Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit,
+                Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
+        }
     }
 
     // Helper method to zero a newly created or reset atlas texture in small pooled strips so no full-atlas CPU mirror is kept

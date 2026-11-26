@@ -1414,7 +1414,50 @@ public sealed class TileMap : GameObject
         // The bottom left corner of the image where the layer has it
         Vector2 corner = TiledToWorld(new Vector2(image.X, image.Y + size.Y)) - Origin;
 
-        int firstX = 0, lastX = 0, firstY = 0, lastY = 0;
+        ComputeImageRange(viewMin, viewMax, corner, size, repeatX, repeatY, out int firstX, out int lastX, out int firstY, out int lastY);
+
+        // Keep the existing instances when the cached bounds still cover the view (and aren't overly huge from a zoom-in),
+        // avoiding per-pan / screen-shake batch rebuilds and full-map GPU repacks
+        if (batch.HasImageBounds && batch.Instances.Count > 0 && batch.ImageCorner == corner && batch.ImageSize == size &&
+            CanKeepImageBounds(batch.ImageFirstX, batch.ImageLastX, batch.ImageFirstY, batch.ImageLastY, firstX, lastX, firstY, lastY))
+        {
+            return;
+        }
+
+        // Pad repeating axes by one tile on each side so panning and camera shake stay inside cached bounds
+        int buildFirstX = repeatX ? firstX - 1 : firstX;
+        int buildLastX = repeatX ? lastX + 1 : lastX;
+        int buildFirstY = repeatY ? firstY - 1 : firstY;
+        int buildLastY = repeatY ? lastY + 1 : lastY;
+
+        batch.Clear();
+        for (int y = buildFirstY; y <= buildLastY; y++)
+        {
+            for (int x = buildFirstX; x <= buildLastX; x++)
+            {
+                batch.Add(new TileInstance
+                {
+                    Position = corner + new Vector2(x, y) * size + size / 2.0f,
+                    Size = size,
+                    Source = new Vector4(0, 0, size.X, size.Y)
+                });
+            }
+        }
+
+        batch.ImageFirstX = buildFirstX;
+        batch.ImageLastX = buildLastX;
+        batch.ImageFirstY = buildFirstY;
+        batch.ImageLastY = buildLastY;
+        batch.ImageCorner = corner;
+        batch.ImageSize = size;
+        batch.HasImageBounds = true;
+    }
+
+    /// <summary>Helper method to compute the inclusive tile index range an image layer needs to cover a view.</summary>
+    internal static void ComputeImageRange(Vector2 viewMin, Vector2 viewMax, Vector2 corner, Vector2 size, bool repeatX, bool repeatY,
+        out int firstX, out int lastX, out int firstY, out int lastY)
+    {
+        firstX = lastX = firstY = lastY = 0;
         if (repeatX)
         {
             firstX = (int)MathF.Floor((viewMin.X - corner.X) / size.X);
@@ -1425,27 +1468,18 @@ public sealed class TileMap : GameObject
             firstY = (int)MathF.Floor((viewMin.Y - corner.Y) / size.Y);
             lastY = (int)MathF.Floor((viewMax.Y - corner.Y) / size.Y);
         }
+    }
 
-        int count = (lastX - firstX + 1) * (lastY - firstY + 1);
-        Vector2 first = corner + new Vector2(firstX, firstY) * size + size / 2.0f;
+    /// <summary>Helper method to decide whether a cached repeating image range still covers the needed view without being overly large.</summary>
+    internal static bool CanKeepImageBounds(int cachedFirstX, int cachedLastX, int cachedFirstY, int cachedLastY,
+        int neededFirstX, int neededLastX, int neededFirstY, int neededLastY)
+    {
+        if (neededFirstX < cachedFirstX || neededLastX > cachedLastX || neededFirstY < cachedFirstY || neededLastY > cachedLastY)
+            return false;
 
-        // Nothing has moved far enough to need another copy
-        if (batch.Instances.Count == count && count > 0 && batch.Instances[0].Position == first)
-            return;
-
-        batch.Clear();
-        for (int y = firstY; y <= lastY; y++)
-        {
-            for (int x = firstX; x <= lastX; x++)
-            {
-                batch.Add(new TileInstance
-                {
-                    Position = corner + new Vector2(x, y) * size + size / 2.0f,
-                    Size = size,
-                    Source = new Vector4(0, 0, size.X, size.Y)
-                });
-            }
-        }
+        long cachedCount = (long)(cachedLastX - cachedFirstX + 1) * (cachedLastY - cachedFirstY + 1);
+        long neededCount = (long)(neededLastX - neededFirstX + 1) * (neededLastY - neededFirstY + 1);
+        return cachedCount <= Math.Max(neededCount * 4, neededCount + 16);
     }
 
     /// <summary>Moves the tiles of a layer that play through frames on to the frame it is time for.</summary>

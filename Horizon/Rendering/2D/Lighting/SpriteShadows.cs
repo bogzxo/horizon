@@ -76,8 +76,9 @@ internal sealed class SpriteShadows : IDisposable
         }
 
         // The flood, from the longest step down to one, back and forth between the two seed textures
+        int maxReach = Math.Min(Math.Max(1, Reach), (int)Math.Max(cells, rows));
         int step = 1;
-        while (step * 2 <= Math.Max(1, Reach)) step *= 2;
+        while (step * 2 <= maxReach) step *= 2;
         float far = step * 2.0f * scale;
 
         Texture from = seedsA!, into = seedsB!;
@@ -134,22 +135,32 @@ internal sealed class SpriteShadows : IDisposable
         rows = (height + (uint)scale - 1) / (uint)scale;
 
         var textures = GameEngine.Instance.ObjectManager.Textures;
-        if (!textures.TryCreate(new TextureDescription { Width = cells, Height = rows, Definition = Seeds }, out var a)) return false;
-        if (!textures.TryCreate(new TextureDescription { Width = cells, Height = rows, Definition = Seeds }, out var b)) return false;
-        if (!textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = Fields }, out var f)) return false;
-        a.Asset.Name = "sprite shadow seeds a";
-        b.Asset.Name = "sprite shadow seeds b";
-        f.Asset.Name = "sprite shadow field";
-
+        if (!textures.TryCreate(new TextureDescription { Width = cells, Height = rows, Definition = Seeds }, out var a))
+            return false;
         seedsA = a.Asset;
+        seedsA.Name = "sprite shadow seeds a";
+
+        if (!textures.TryCreate(new TextureDescription { Width = cells, Height = rows, Definition = Seeds }, out var b))
+        {
+            Release();
+            return false;
+        }
         seedsB = b.Asset;
+        seedsB.Name = "sprite shadow seeds b";
+
+        if (!textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = Fields }, out var f))
+        {
+            Release();
+            return false;
+        }
         result = f.Asset;
+        result.Name = "sprite shadow field";
         return true;
     }
 
     private static bool EnsureShaders()
     {
-        if (seed is not null && flood is not null && field is not null) return true;
+        if (seed is { IsValid: true } && flood is { IsValid: true } && field is { IsValid: true }) return true;
 
         var shaders = GameEngine.Instance.ObjectManager.Shaders;
         if (!shaders.TryCreateOrGet("sprite_seed", ShaderDescription.FromPath("shaders/lighting", "sprite_seed"), out var s)) return false;

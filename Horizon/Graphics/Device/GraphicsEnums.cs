@@ -66,7 +66,13 @@ public enum TexelFormat
     R8,
 
     /// <summary>A half float a texel, two bytes (<see cref="System.Half"/>).</summary>
-    R16F
+    R16F,
+
+    /// <summary>Four half floats a texel, eight bytes.</summary>
+    Rgba16F,
+
+    /// <summary>Four floats a texel, sixteen bytes.</summary>
+    Rgba32F
 }
 
 /// <summary>What a memory barrier has to wait for before the next thing reads it.</summary>

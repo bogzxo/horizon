@@ -110,40 +110,85 @@ public partial class Mesh3D : GameObject
         elementCount = (uint)indices.Length;
     }
 
+    /// <summary>
+    /// Hands over arrays already owned by this mesh (from the built-in shapes) without copying them again before
+    /// <see cref="Initialize"/> runs.
+    /// </summary>
+    internal void UploadOwned(Vertex3D[] vertices, uint[] indices)
+    {
+        if (Buffer is null)
+        {
+            pending = (vertices, indices);
+            return;
+        }
+
+        Buffer.Vertices.Upload(vertices.AsSpan());
+        Buffer.Indices.Upload(indices.AsSpan());
+        elementCount = (uint)indices.Length;
+    }
+
     public override void Render(float dt)
     {
         base.Render(dt);
 
-        if (elementCount < 1)
+        if (elementCount < 1 || Buffer is null)
             return;
 
-        // The engine's shader is one for every mesh, loaded the first time one is drawn
-        Technique? technique = Shader ?? (shared ??= Technique.Load(SHADER_DIRECTORY, SHADER_NAME));
+        // The engine's shader is one for every mesh, loaded the first time one is drawn (or reloaded if invalidated)
+        Technique? technique = Shader;
+        if (technique is null)
+        {
+            if (shared is not { IsValid: true })
+                shared = Technique.Load(SHADER_DIRECTORY, SHADER_NAME);
+            technique = shared;
+        }
+
         if (technique is not { IsValid: true })
             return;
 
         var device = GraphicsDevice.Current;
         var before = RenderState.Save();
 
-        CameraBlock.Use(Engine.ActiveCamera);
-        RenderState.DepthTest = true;
-        RenderState.DepthWrite = true;
-        RenderState.Cull = Cull;
+        try
+        {
+            CameraBlock.Use(Engine.ActiveCamera);
+            RenderState.DepthTest = true;
+            RenderState.DepthWrite = true;
+            RenderState.Cull = Cull;
 
-        technique.Bind();
-        technique.SetUniform("uModel", Transform.Model);
-        technique.SetUniform("uTint", Tint);
-        technique.SetUniform("uSun", Sun);
-        technique.SetUniform("uSunColor", SunColor);
-        technique.SetUniform("uAmbient", Ambient);
-        technique.SetUniform("uEmissive", Math.Clamp(Emissive, 0.0f, 1.0f));
-        technique.SetUniform("uHasTexture", Texture is not null);
-        Texture?.Bind(0);
+            technique.Bind();
+            technique.SetUniform("uModel", Transform.Model);
+            technique.SetUniform("uTint", Tint);
+            technique.SetUniform("uSun", Sun);
+            technique.SetUniform("uSunColor", SunColor);
+            technique.SetUniform("uAmbient", Ambient);
+            technique.SetUniform("uEmissive", Math.Clamp(Emissive, 0.0f, 1.0f));
+            technique.SetUniform("uHasTexture", Texture is not null);
+            Texture?.Bind(0);
 
-        Buffer.Bind();
-        device.DrawIndexed(Topology.Triangles, elementCount);
-        technique.Unbind();
+            Buffer.Bind();
+            device.DrawIndexed(Topology.Triangles, elementCount);
+        }
+        finally
+        {
+            technique.Unbind();
+            RenderState.Restore(before);
+        }
+    }
 
-        RenderState.Restore(before);
+    protected override void DisposeOther()
+    {
+        if (Buffer is { } buffer)
+        {
+            buffer.Vertices.Dispose();
+            buffer.Indices.Dispose();
+            buffer.Instances?.Dispose();
+            buffer.VertexArray.Dispose();
+            Buffer = null!;
+        }
+
+        pending = null;
+        elementCount = 0;
+        base.DisposeOther();
     }
 }

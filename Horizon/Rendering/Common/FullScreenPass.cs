@@ -25,7 +25,7 @@ public class FullScreenPass : GameObject
     {
         base.Render(dt);
 
-        if (!Technique.IsValid) return;
+        if (Technique is not { IsValid: true }) return;
 
         Technique.Bind();
         ScreenTriangle.Draw();

@@ -454,38 +454,33 @@ public class SpriteBatch : GameObject
             }
 
             uint texture = now.Group.Texture.Index;
-            bool casters = false;
+            int baseIndex = now.Masks;
 
             // The masks are drawn as they are now, they only say where the sprites may show
-            for (int i = 0; i < now.Masks; i++)
+            for (int i = 0; i < baseIndex; i++)
             {
                 SpriteItem mask = now.Items[i];
                 mask.Flags = SpriteItem.WithTexture(mask.Flags, texture);
                 items[i] = mask;
             }
 
-            for (int i = 0; i < now.Colors; i++)
+            bool casters;
+            if (before is null || alpha >= 1.0f)
             {
-                ref readonly SpriteItem to = ref now.Items[now.Masks + i];
-                SpriteItem drawn;
-
-                casters |= (to.Flags & SpriteItem.ShadowFlag) != 0;
-
-                if (before is null || i >= before.Colors || before.Sprites[i] != now.Sprites[i])
-                {
-                    // A sprite that wasn't drawn the tick before (or isn't in the same place among the others), as it is
-                    drawn = to;
-                }
-                else
-                {
-                    ref readonly SpriteItem from = ref before.Items[before.Masks + i];
-                    drawn = before.Epochs[i] == now.Epochs[i] && SpriteItem.CanBlend(from, to)
-                        ? SpriteItem.Blend(from, to, alpha)
-                        : alpha >= 1.0f ? to : from;
-                }
-
-                drawn.Flags = SpriteItem.WithTexture(drawn.Flags, texture);
-                items[now.Masks + i] = drawn;
+                casters = WriteCapturedUninterpolated(now.Items.AsSpan(baseIndex, now.Colors), items.Slice(baseIndex, now.Colors), texture);
+            }
+            else
+            {
+                casters = WriteCapturedBlended(
+                    before.Items.AsSpan(before.Masks, before.Colors),
+                    before.Sprites.AsSpan(0, before.Colors),
+                    before.Epochs.AsSpan(0, before.Colors),
+                    now.Items.AsSpan(baseIndex, now.Colors),
+                    now.Sprites.AsSpan(0, now.Colors),
+                    now.Epochs.AsSpan(0, now.Colors),
+                    items.Slice(baseIndex, now.Colors),
+                    alpha,
+                    texture);
             }
 
             // Said once for the group rather than once for every sprite in it that throws a shadow
@@ -494,6 +489,80 @@ public class SpriteBatch : GameObject
             mesh.DrawPasses(now.Masks, now.Colors, current.Model, camera);
             mesh.EndItems();
         }
+    }
+
+    /// <summary>Helper method for the uninterpolated fast path: copies current sprite items and stamps their bindless texture slot.</summary>
+    internal static bool WriteCapturedUninterpolated(ReadOnlySpan<SpriteItem> current, Span<SpriteItem> destination, uint texture)
+    {
+        uint casterBits = 0;
+        for (int i = 0; i < current.Length; i++)
+        {
+            SpriteItem drawn = current[i];
+            casterBits |= drawn.Flags;
+            drawn.Flags = SpriteItem.WithTexture(drawn.Flags, texture);
+            destination[i] = drawn;
+        }
+
+        return (casterBits & SpriteItem.ShadowFlag) != 0;
+    }
+
+    /// <summary>Helper method for the continuous-blend path: skips CanBlend/Blend math for static sprites whose transform, color and ring didn't change.</summary>
+    internal static bool WriteCapturedBlended(
+        ReadOnlySpan<SpriteItem> previousItems,
+        ReadOnlySpan<Sprite> previousSprites,
+        ReadOnlySpan<int> previousEpochs,
+        ReadOnlySpan<SpriteItem> currentItems,
+        ReadOnlySpan<Sprite> currentSprites,
+        ReadOnlySpan<int> currentEpochs,
+        Span<SpriteItem> destination,
+        float alpha,
+        uint texture)
+    {
+        uint casterBits = 0;
+        int shared = Math.Min(previousItems.Length, currentItems.Length);
+
+        for (int i = 0; i < shared; i++)
+        {
+            ref readonly SpriteItem to = ref currentItems[i];
+            casterBits |= to.Flags;
+
+            SpriteItem drawn;
+            if (!ReferenceEquals(previousSprites[i], currentSprites[i]))
+            {
+                // A sprite that wasn't drawn the tick before (or isn't in the same place among the others), as it is
+                drawn = to;
+            }
+            else
+            {
+                ref readonly SpriteItem from = ref previousItems[i];
+                if (previousEpochs[i] != currentEpochs[i])
+                {
+                    drawn = from;
+                }
+                else if (from.Origin == to.Origin && from.AxisX == to.AxisX && from.AxisY == to.AxisY && from.Color == to.Color && from.Ring == to.Ring)
+                {
+                    // Static sprite: Blend(from, to, alpha) with alpha < 1.0f returns from unchanged
+                    drawn = from;
+                }
+                else
+                {
+                    drawn = SpriteItem.CanBlend(from, to) ? SpriteItem.Blend(from, to, alpha) : from;
+                }
+            }
+
+            drawn.Flags = SpriteItem.WithTexture(drawn.Flags, texture);
+            destination[i] = drawn;
+        }
+
+        for (int i = shared; i < currentItems.Length; i++)
+        {
+            SpriteItem drawn = currentItems[i];
+            casterBits |= drawn.Flags;
+            drawn.Flags = SpriteItem.WithTexture(drawn.Flags, texture);
+            destination[i] = drawn;
+        }
+
+        return (casterBits & SpriteItem.ShadowFlag) != 0;
     }
 
     /// <summary>Helper method to get the mesh a group is drawn with, made the first time. Render thread.</summary>
@@ -506,5 +575,17 @@ public class SpriteBatch : GameObject
         }
 
         return mesh;
+    }
+
+    protected override void DisposeOther()
+    {
+        foreach (SpriteBatchMesh mesh in _meshes.Values)
+            mesh.Dispose();
+        _meshes.Clear();
+
+        _itemMesh?.Dispose();
+        _itemMesh = null;
+
+        base.DisposeOther();
     }
 }

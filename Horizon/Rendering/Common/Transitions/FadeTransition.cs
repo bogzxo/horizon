@@ -14,7 +14,7 @@ public sealed class FadeTransition : ScreenTransition
 {
     private const string UNIFORM_COLOR = "uColor";
 
-    private PostTechnique technique = null!;
+    private PostTechnique? technique;
 
     /// <summary>What the scenes fade to and from, black unless told otherwise.</summary>
     public Vector3 Color { get; set; } = Vector3.Zero;
@@ -26,6 +26,9 @@ public sealed class FadeTransition : ScreenTransition
 
     protected override void Draw(float cover, bool arriving, float dt)
     {
+        if (technique is not { IsValid: true }) technique = new PostTechnique("fade");
+        if (!technique.IsValid) return;
+
         Vector4 color = new(Color, Math.Clamp(cover, 0.0f, 1.0f));
 
         technique.Bind();

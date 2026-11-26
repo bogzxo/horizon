@@ -28,7 +28,7 @@ public sealed class BloomEffect : PostEffect
     /// <summary>The most levels there can be, a picture halved this often is a few pixels across.</summary>
     public const int MOST_LEVELS = 8;
 
-    private PostTechnique down = null!, up = null!, mix = null!;
+    private PostTechnique? down, up, mix;
     private readonly PostTarget?[] downs = new PostTarget?[MOST_LEVELS];
     private readonly PostTarget?[] ups = new PostTarget?[MOST_LEVELS];
 
@@ -53,6 +53,22 @@ public sealed class BloomEffect : PostEffect
 
     protected override void Render(PostContext context)
     {
+        float intensity = MathF.Max(Intensity, 0.0f);
+        if (intensity <= 0.0f)
+        {
+            context.Copy();
+            return;
+        }
+
+        if (down is not { IsValid: true }) down = new PostTechnique("bloom_down");
+        if (up is not { IsValid: true }) up = new PostTechnique("bloom_up");
+        if (mix is not { IsValid: true }) mix = new PostTechnique("bloom_mix");
+        if (!down.IsValid || !up.IsValid || !mix.IsValid)
+        {
+            context.Copy();
+            return;
+        }
+
         int levels = Math.Clamp(Levels, 1, MOST_LEVELS);
 
         // The way down, every level half the one before, the first keeping only what is bright
@@ -61,6 +77,7 @@ public sealed class BloomEffect : PostEffect
         uint width = (uint)sourceSize.X, height = (uint)sourceSize.Y;
 
         down.Bind();
+        down.SetUniform(UNIFORM_THRESHOLD, Math.Clamp(Threshold, 0.0f, 1.0f));
         for (int level = 0; level < levels; level++)
         {
             width = Math.Max(1, width / 2);
@@ -69,8 +86,7 @@ public sealed class BloomEffect : PostEffect
 
             Vector2 texel = Vector2.One / sourceSize;
             down.SetUniform(UNIFORM_TEXEL, in texel);
-            down.SetUniform(UNIFORM_THRESHOLD, Math.Clamp(Threshold, 0.0f, 1.0f));
-            down.SetUniform(UNIFORM_FIRST, level == 0);
+            if (level <= 1) down.SetUniform(UNIFORM_FIRST, level == 0);
             source.Bind(0);
             context.Draw(target);
 
@@ -83,6 +99,7 @@ public sealed class BloomEffect : PostEffect
         if (levels > 1)
         {
             up.Bind();
+            up.SetUniform(UNIFORM_RADIUS, MathF.Max(Radius, 0.0f));
             for (int level = levels - 2; level >= 0; level--)
             {
                 PostTarget same = downs[level]!;
@@ -90,7 +107,6 @@ public sealed class BloomEffect : PostEffect
 
                 Vector2 texel = Vector2.One / low.Size;
                 up.SetUniform(UNIFORM_TEXEL, in texel);
-                up.SetUniform(UNIFORM_RADIUS, MathF.Max(Radius, 0.0f));
                 low.Texture.Bind(0);
                 same.Texture.Bind(1);
                 context.Draw(target);
@@ -101,7 +117,7 @@ public sealed class BloomEffect : PostEffect
 
         // Over the picture
         mix.Bind();
-        mix.SetUniform(UNIFORM_INTENSITY, MathF.Max(Intensity, 0.0f));
+        mix.SetUniform(UNIFORM_INTENSITY, intensity);
         context.Source.Bind(0);
         low.Texture.Bind(1);
         context.Draw();
@@ -126,6 +142,7 @@ public sealed class BloomEffect : PostEffect
             downs[i] = ups[i] = null;
         }
 
+        down = up = mix = null;
         base.Dispose();
     }
 }

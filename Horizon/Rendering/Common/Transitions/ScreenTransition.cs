@@ -44,22 +44,26 @@ public abstract class ScreenTransition : SceneTransition, IDisposable
         using var nobody = Horizon.Content.AssetScope.EnterGlobal();
 
         var before = RenderState.Save();
-
-        RenderState.Blend = false;
-        RenderState.DepthTest = false;
-
-        if (!initialized)
+        try
         {
-            initialized = true;
-            Initialize();
+            RenderState.Blend = false;
+            RenderState.DepthTest = false;
+
+            if (!initialized)
+            {
+                initialized = true;
+                Initialize();
+            }
+
+            Draw(cover, arriving, dt);
         }
+        finally
+        {
+            // Back to the window, with everything the way it was found
+            Renderer2D.BindOutput(null);
 
-        Draw(cover, arriving, dt);
-
-        // Back to the window, with everything the way it was found
-        Renderer2D.BindOutput(null);
-
-        RenderState.Restore(before);
+            RenderState.Restore(before);
+        }
     }
 
     /// <summary>

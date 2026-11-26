@@ -155,17 +155,31 @@ public class DeferredRenderer2D : Renderer2D
     /// </summary>
     public Vector3 Ambient { get; set; } = Vector3.One;
 
+    private volatile LightingMode lighting = LightingMode.Direct;
+    private volatile bool showTracedLight;
+
     /// <summary>
     /// How the picture is lit, see <see cref="LightingMode"/>. Direct unless asked, path traced is the fancy one.
     /// From any thread, it takes at the next frame.
     /// </summary>
-    public LightingMode Lighting { get; set; } = LightingMode.Direct;
+    public LightingMode Lighting
+    {
+        get => lighting;
+        set => lighting = value;
+    }
 
     /// <summary>The settings of the path traced lighting, used when <see cref="Lighting"/> says so.</summary>
     public PathTracedLighting2D PathTracing { get; } = new();
 
     /// <summary>Shows what the tracer found instead of the picture, for seeing what it is up to. Only with the path tracing on.</summary>
-    public bool ShowTracedLight { get; set; }
+    public bool ShowTracedLight
+    {
+        get => showTracedLight;
+        set => showTracedLight = value;
+    }
+
+    /// <summary>Whether path tracing ran for the current frame, snapshotted once in <see cref="BeforeResolve"/> so resolve agrees with it.</summary>
+    internal bool FramePathTraced { get; private set; }
 
     /// <summary>
     /// The settings of the ambient occlusion, the corners going darker, off to begin with. See <see cref="AmbientOcclusion2D"/>.
@@ -197,6 +211,9 @@ public class DeferredRenderer2D : Renderer2D
     private GpuBuffer? lightBuffer;
     private int uploadedLights;
     private bool lightsUploaded;
+    private OcclusionMap2D? frameOcclusion;
+    private Texture? frameOcclusionField;
+    private bool occlusionResolved;
 
     // Whether the lamps' glow is the tracer's to put in the air this frame (see PathTracedLighting2D.GlowSpread),
     // in which case the passes that light straight from the lamps leave it out
@@ -408,6 +425,10 @@ public class DeferredRenderer2D : Renderer2D
         }
 
         lightsUploaded = false;
+        occlusionResolved = false;
+        frameOcclusion = null;
+        frameOcclusionField = null;
+        FramePathTraced = false;
         spriteCasters = 0;
         base.Render(dt);
     }
@@ -427,7 +448,24 @@ public class DeferredRenderer2D : Renderer2D
         var device = GraphicsDevice.Current;
         UploadLights(camera);
 
-        bool traced = Lighting == LightingMode.PathTraced && device.Supports(GraphicsFeature.PathTracedLighting);
+        // Read Lighting once for this frame so BeforeResolve and DeferredRenderer2DTechnique stay consistent
+        // even if another thread toggles Lighting mid-frame
+        LightingMode mode = lighting;
+        bool traced = false;
+        if (mode == LightingMode.PathTraced)
+        {
+            if (device.Supports(GraphicsFeature.PathTracedLighting))
+            {
+                traced = true;
+            }
+            else
+            {
+                device.WarnUnsupported(GraphicsFeature.PathTracedLighting, "The lighting is direct instead.");
+                lighting = LightingMode.Direct;
+            }
+        }
+
+        FramePathTraced = traced;
         glowInAir = traced && PathTracing.GlowSpread > 0.0f;
 
         // The shadows of the sprites, out of what they drew this frame. Only when there is something to make them
@@ -447,11 +485,16 @@ public class DeferredRenderer2D : Renderer2D
             spriteField = null;
         }
 
+        // Resolve the occlusion distance field once per frame rather than in every lighting pass's BindLighting
+        frameOcclusion = ShownOcclusion;
+        frameOcclusionField = frameOcclusion?.GetField();
+        occlusionResolved = true;
+
         // Which lights reach which tile of the screen, for the deferred pass and the tracer alike. No lights, no tiles
         if (uploadedLights > 0)
         {
-            using var sorting = device.BeginGpuScope("light tiles");
             CameraBlock.Use(camera);
+            using var sorting = device.BeginGpuScope("light tiles");
             long sorted = Core.Diagnostics.SlowRender.Start();
             tiles.Build(this, camera, ViewportSize);
             Core.Diagnostics.SlowRender.Stop(sorted, "light tiles");
@@ -462,21 +505,13 @@ public class DeferredRenderer2D : Renderer2D
         HasLightCells = false;
         if (uploadedLights > 0 && ShownLightingPixelSize > 0.0f && !cellsOff)
         {
-            using var lighting = device.BeginGpuScope("light cells");
-            CameraBlock.Use(camera);
+            using var lightingScope = device.BeginGpuScope("light cells");
             long celled = Core.Diagnostics.SlowRender.Start();
             HasLightCells = LightCells.Build(this, camera, ShownLightingPixelSize);
             Core.Diagnostics.SlowRender.Stop(celled, "light cells");
         }
 
-        if (Lighting != LightingMode.PathTraced) return;
-
-        if (!device.Supports(GraphicsFeature.PathTracedLighting))
-        {
-            device.WarnUnsupported(GraphicsFeature.PathTracedLighting, "The lighting is direct instead.");
-            Lighting = LightingMode.Direct;
-            return;
-        }
+        if (!traced) return;
 
         long tracing = Core.Diagnostics.SlowRender.Start();
         using (device.BeginGpuScope("path tracing"))
@@ -508,6 +543,21 @@ public class DeferredRenderer2D : Renderer2D
     }
 
     /// <summary>
+    /// Binds only the light list and tile grid dimensions, for <see cref="LightTiles"/> which doesn't sample shadow fields or material params.
+    /// </summary>
+    internal void BindLightList(Technique technique)
+    {
+        UploadLights(Engine.ActiveCamera);
+
+        if (lightBuffer is not null && uploadedLights > 0)
+            technique.BindBuffer(LIGHT_BINDING, lightBuffer);
+
+        technique.SetUniform("uLightCount", uploadedLights);
+        technique.SetUniform("uTileCounts", tiles.Counts);
+        technique.SetUniform("uTileScreen", tiles.Screen);
+    }
+
+    /// <summary>
     /// Sets everything a technique that includes shaders/lighting/direct.slang needs, with the technique bound, the
     /// lights of the frame and their tiles, what blocks them and how shiny things are. Render thread, in or after <see cref="BeforeResolve"/>.
     /// </summary>
@@ -531,8 +581,18 @@ public class DeferredRenderer2D : Renderer2D
         technique.SetUniform("uTileCounts", tiles.Counts);
         technique.SetUniform("uTileScreen", tiles.Screen);
 
-        OcclusionMap2D? occlusion = ShownOcclusion;
-        Texture? field = occlusion?.GetField();
+        OcclusionMap2D? occlusion;
+        Texture? field;
+        if (occlusionResolved)
+        {
+            occlusion = frameOcclusion;
+            field = frameOcclusionField;
+        }
+        else
+        {
+            occlusion = ShownOcclusion;
+            field = occlusion?.GetField();
+        }
 
         technique.SetUniform("uShadows", ShownShadows && (field is not null || spriteField is not null));
         technique.SetUniform("uShadowsInside", ShownShadowsInsideWalls);

@@ -52,42 +52,55 @@ public sealed class BlurredBackdrop : GameObject, IDisposable
         using var nobody = Horizon.Content.AssetScope.EnterGlobal();
 
         var before = RenderState.Save();
-        RenderState.Blend = false;
-        RenderState.DepthTest = false;
-
-        uint width = (uint)size.X, height = (uint)size.Y;
-        if (sharp is null || !sharp.Fits(width, height))
+        try
         {
-            sharp?.Dispose();
-            sharp = new PostTarget(width, height);
+            RenderState.Blend = false;
+            RenderState.DepthTest = false;
+
+            uint width = (uint)size.X, height = (uint)size.Y;
+            if (sharp is null || !sharp.Fits(width, height))
+            {
+                sharp?.Dispose();
+                sharp = new PostTarget(width, height);
+            }
+
+            sharp.CopyFromWindow();
+            PostTarget smear = gaussian.Blur(sharp.Texture, sharp.Size, MathF.Max(Radius, GaussianBlur.FULL_RADIUS), ref smeared);
+
+            if (copy is not { IsValid: true })
+                copy = new PostTechnique("copy");
+            if (copy.IsValid)
+            {
+                copy.Bind();
+                smear.Texture.Bind(0);
+                Renderer2D.BindOutput(null);
+                ScreenTriangle.Draw();
+                copy.Unbind();
+            }
+
+            if (Dim > 0.0f)
+            {
+                if (fade is not { IsValid: true })
+                    fade = new PostTechnique("fade");
+                if (fade.IsValid)
+                {
+                    Vector4 color = new(Tint, Math.Clamp(Dim, 0.0f, 1.0f));
+
+                    // Only the colours, whatever the alpha of the window is stays
+                    RenderState.Blend = true;
+                    RenderState.BlendMode = ColoursOnly;
+
+                    fade.Bind();
+                    fade.SetUniform(UNIFORM_COLOR, in color);
+                    ScreenTriangle.Draw();
+                    fade.Unbind();
+                }
+            }
         }
-
-        sharp.CopyFromWindow();
-        PostTarget smear = gaussian.Blur(sharp.Texture, sharp.Size, MathF.Max(Radius, GaussianBlur.FULL_RADIUS), ref smeared);
-
-        copy ??= new PostTechnique("copy");
-        copy.Bind();
-        smear.Texture.Bind(0);
-        Renderer2D.BindOutput(null);
-        ScreenTriangle.Draw();
-        copy.Unbind();
-
-        if (Dim > 0.0f)
+        finally
         {
-            Vector4 color = new(Tint, Math.Clamp(Dim, 0.0f, 1.0f));
-
-            // Only the colours, whatever the alpha of the window is stays
-            RenderState.Blend = true;
-            RenderState.BlendMode = ColoursOnly;
-
-            fade ??= new PostTechnique("fade");
-            fade.Bind();
-            fade.SetUniform(UNIFORM_COLOR, in color);
-            ScreenTriangle.Draw();
-            fade.Unbind();
+            RenderState.Restore(before);
         }
-
-        RenderState.Restore(before);
 
         base.Render(dt);
     }
@@ -97,7 +110,11 @@ public sealed class BlurredBackdrop : GameObject, IDisposable
     {
         gaussian.Dispose();
         sharp?.Dispose();
+        sharp = null;
         smeared?.Dispose();
+        smeared = null;
+        copy = null;
+        fade = null;
         base.DisposeOther();
     }
 }

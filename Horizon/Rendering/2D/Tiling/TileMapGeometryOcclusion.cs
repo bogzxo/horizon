@@ -47,6 +47,8 @@ internal sealed class TileMapGeometryOcclusion : IDisposable
         if (texture.IsValid) texture.Dispose();
         texture = Texture.FromPixels((uint)picture.Width, (uint)picture.Height, picture.Pixels, new TextureDefinition(PixelFormat.R8, Smooth: true));
         texture.Name = "tile map geometry occlusion";
+        if (texture.IsValid)
+            GraphicsDevice.Current.Transition(texture, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal, Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit, Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
     }
 
     /// <summary>

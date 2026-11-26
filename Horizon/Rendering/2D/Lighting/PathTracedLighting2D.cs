@@ -221,10 +221,10 @@ public sealed class PathTracedLighting2D : IDisposable
     {
         var device = GraphicsDevice.Current;
 
-        radiancePass ??= new Technique(Shader.Load("shaders/lighting", "gi_radiance"));
-        cascadePass ??= new Technique(Shader.Load("shaders/lighting", "gi_cascade"));
-        resolvePass ??= new Technique(Shader.Load("shaders/lighting", "gi_resolve"));
-        airPass ??= new Technique(Shader.Load("shaders/lighting", "gi_air"));
+        if (radiancePass is not { IsValid: true }) radiancePass = new Technique(Shader.Load("shaders/lighting", "gi_radiance"));
+        if (cascadePass is not { IsValid: true }) cascadePass = new Technique(Shader.Load("shaders/lighting", "gi_cascade"));
+        if (resolvePass is not { IsValid: true }) resolvePass = new Technique(Shader.Load("shaders/lighting", "gi_resolve"));
+        if (airPass is not { IsValid: true }) airPass = new Technique(Shader.Load("shaders/lighting", "gi_air"));
         if (!radiancePass.IsValid || !cascadePass.IsValid || !resolvePass.IsValid) return;
 
         float scale = Math.Clamp(Scale, 0.1f, 1.0f);
@@ -266,6 +266,10 @@ public sealed class PathTracedLighting2D : IDisposable
 
             airBlur ??= new PostProcessing.GaussianBlur();
             Air = airBlur.Blur(air, Size, spread / MathF.Max(pixelWorld, 1e-4f), ref airBlurred).Texture;
+            // Air is sampled bindlessly in deferred.slang (not bound to a texture unit), so transition it from
+            // ColorAttachmentOptimal to ShaderReadOnlyOptimal explicitly with a color-write -> shader-read barrier
+            if (Air is { IsValid: true })
+                device.Transition(Air, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal, Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit, Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
         }
 
         // Whether last frame's light is worth anything, it is not the first time, the camera didn't cut, and the
@@ -323,26 +327,37 @@ public sealed class PathTracedLighting2D : IDisposable
         cascadePass.SetUniform("uPixelWorld", pixelWorld);
         cascadePass.SetUniform("uRotation", turn);
 
+        Vector2 upperProbes = default, upperOffset = default;
+        float upperSpacing = 0.0f, upperDirectionsSqrt = 0.0f;
+        Vector2 nearestProbes = default, nearestOffset = default;
+        float nearestSpacing = 0.0f, nearestDirections = 0.0f;
+
         for (int i = cascadeCount - 1; i >= 0; i--)
         {
             Describe(i, out Vector2 probes, out float spacing, out float directions, out float start, out float end);
             bool hasUpper = i + 1 < cascadeCount;
-            Describe(hasUpper ? i + 1 : i, out Vector2 upperProbes, out float upperSpacing, out float upperDirections, out _, out _);
             Vector2 offset = Offset(topLeft, pixelWorld, spacing);
-            Vector2 upperOffset = Offset(topLeft, pixelWorld, upperSpacing);
-            if (!hasUpper) end = MathF.Max(end, diagonal);
+            float directionsSqrt = MathF.ScaleB(2.0f, i);
+            if (!hasUpper)
+            {
+                end = MathF.Max(end, diagonal);
+                upperProbes = probes;
+                upperSpacing = spacing;
+                upperOffset = offset;
+                upperDirectionsSqrt = directionsSqrt;
+            }
 
             cascadePass.SetUniform("uProbeCount", in probes);
             cascadePass.SetUniform("uProbeSpacing", spacing);
             cascadePass.SetUniform("uProbeOffset", in offset);
             cascadePass.SetUniform("uDirections", directions);
-            cascadePass.SetUniform("uDirectionsSqrt", MathF.Sqrt(directions));
+            cascadePass.SetUniform("uDirectionsSqrt", directionsSqrt);
             cascadePass.SetUniform("uIntervalStart", start);
             cascadePass.SetUniform("uIntervalEnd", end);
             cascadePass.SetUniform("uUpperProbeCount", in upperProbes);
             cascadePass.SetUniform("uUpperSpacing", upperSpacing);
             cascadePass.SetUniform("uUpperOffset", in upperOffset);
-            cascadePass.SetUniform("uUpperDirectionsSqrt", MathF.Sqrt(upperDirections));
+            cascadePass.SetUniform("uUpperDirectionsSqrt", upperDirectionsSqrt);
             cascadePass.SetUniform("uHasUpper", hasUpper);
 
             // The top cascade has nothing above it, it is given something harmless to read
@@ -350,14 +365,24 @@ public sealed class PathTracedLighting2D : IDisposable
             device.BindStorageImage(0, cascades[i]);
             device.Dispatch((cascadeWidth + 7) / 8, (cascadeHeight + 7) / 8);
             device.Barrier(BarrierTargets.ShaderImages);
+
+            upperProbes = probes;
+            upperSpacing = spacing;
+            upperOffset = offset;
+            upperDirectionsSqrt = directionsSqrt;
+
+            if (i == 0)
+            {
+                nearestProbes = probes;
+                nearestSpacing = spacing;
+                nearestOffset = offset;
+                nearestDirections = directions;
+            }
         }
 
         tracing.Dispose();
 
         // And what every pixel sees out of the nearest one
-        Describe(0, out Vector2 nearestProbes, out float nearestSpacing, out float nearestDirections, out _, out _);
-        Vector2 nearestOffset = Offset(topLeft, pixelWorld, nearestSpacing);
-
         using var resolving = device.BeginGpuScope("gi resolve");
         resolvePass.Bind();
         cascades[0].Bind(0);
@@ -377,7 +402,7 @@ public sealed class PathTracedLighting2D : IDisposable
         resolvePass.SetUniform("uProbeSpacing", nearestSpacing);
         resolvePass.SetUniform("uProbeOffset", in nearestOffset);
         resolvePass.SetUniform("uDirections", nearestDirections);
-        resolvePass.SetUniform("uDirectionsSqrt", MathF.Sqrt(nearestDirections));
+        resolvePass.SetUniform("uDirectionsSqrt", 2.0f);
         resolvePass.SetUniform("uCascadeSize", new Vector2(cascadeWidth, cascadeHeight));
         device.BindStorageImage(0, result);
         device.BindStorageImage(1, moments);

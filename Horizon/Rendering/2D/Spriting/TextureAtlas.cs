@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -96,7 +97,7 @@ public sealed class TextureAtlas : IDisposable
 
     // A piece of art cut out of its picture and given a place, waiting to go up. Only its own pixels, RGBA from the
     // top left, nothing between the rows
-    private readonly record struct Cut(int X, int Y, int Width, int Height, byte[] Pixels);
+    internal readonly record struct Cut(int X, int Y, int Width, int Height, byte[] Pixels);
 
     private readonly int _width;
     private int _height;
@@ -577,6 +578,7 @@ public sealed class TextureAtlas : IDisposable
     private void Upload(bool grown)
     {
         var engine = GameEngine.Instance;
+        var device = GraphicsDevice.Current;
 
         if (Texture.Handle == 0 || grown)
         {
@@ -616,14 +618,93 @@ public sealed class TextureAtlas : IDisposable
 
             // Everything that was up stays where it is, the new rows under it are clear. Before the pieces go up,
             // a piece can land in a hole the skyline left among the old rows
-            if (old.Handle != 0) GraphicsDevice.Current.CopyTexels(old, Texture);
+            if (old.Handle != 0)
+            {
+                device.CopyTexels(old, Texture);
+                // Retired textures may still be sampled bindlessly by in-flight captured UI lists
+                device.Transition(old, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal,
+                    Silk.NET.Vulkan.PipelineStageFlags2.VertexShaderBit | Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit,
+                    Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
+            }
         }
 
-        // Each piece to its place, a staging strip of its own size and no more
-        foreach (Cut cut in _cuts)
-            GraphicsDevice.Current.UploadTexels(Texture, cut.X, cut.Y, (uint)cut.Width, (uint)cut.Height, TexelFormat.Rgba8, cut.Pixels);
+        // Coalesce horizontally adjacent cuts on the same shelf (separated only by newly reserved padding) into a
+        // single strip upload, turning a whole row of same-height sprites into one CmdCopyBufferToImage
+        ReadOnlySpan<Cut> cuts = CollectionsMarshal.AsSpan(_cuts);
+        for (int i = 0; i < cuts.Length;)
+        {
+            int end = FindCoalescedRunEnd(cuts, i, PADDING, out int stripWidth);
+            Cut first = cuts[i];
+
+            if (end == i + 1)
+            {
+                device.UploadTexels(Texture, first.X, first.Y, (uint)first.Width, (uint)first.Height, TexelFormat.Rgba8, first.Pixels);
+            }
+            else
+            {
+                int stripHeight = first.Height;
+                int stripBytes = stripWidth * stripHeight * 4;
+                byte[] staged = ArrayPool<byte>.Shared.Rent(stripBytes);
+                try
+                {
+                    Array.Clear(staged, 0, stripBytes);
+                    for (int k = i; k < end; k++)
+                    {
+                        Cut cut = cuts[k];
+                        int dstX = cut.X - first.X;
+                        int rowBytes = cut.Width * 4;
+                        for (int row = 0; row < stripHeight; row++)
+                        {
+                            cut.Pixels.AsSpan(row * rowBytes, rowBytes)
+                                .CopyTo(staged.AsSpan((row * stripWidth + dstX) * 4, rowBytes));
+                        }
+                    }
+
+                    device.UploadTexels(Texture, first.X, first.Y, (uint)stripWidth, (uint)stripHeight, TexelFormat.Rgba8, staged.AsSpan(0, stripBytes));
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(staged);
+                }
+            }
+
+            i = end;
+        }
 
         _cuts.Clear();
+
+        // The atlas is sampled bindlessly (never bound to a texture unit), so transition it from TransferDstOptimal
+        // to ShaderReadOnlyOptimal explicitly with a transfer-write -> shader-read barrier
+        if (Texture.IsValid)
+        {
+            device.Transition(Texture, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal,
+                Silk.NET.Vulkan.PipelineStageFlags2.VertexShaderBit | Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit,
+                Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
+        }
+    }
+
+    /// <summary>
+    /// Helper method to find the exclusive end index of a contiguous horizontal run of cuts starting at
+    /// <paramref name="start"/> that share Y and Height and are separated by at most <paramref name="maxGap"/> pixels.
+    /// </summary>
+    internal static int FindCoalescedRunEnd(ReadOnlySpan<Cut> cuts, int start, int maxGap, out int totalWidth)
+    {
+        Cut first = cuts[start];
+        int right = first.X + first.Width;
+        int end = start + 1;
+
+        while (end < cuts.Length)
+        {
+            Cut next = cuts[end];
+            if (next.Y != first.Y || next.Height != first.Height || next.X < right || next.X > right + maxGap)
+                break;
+
+            right = next.X + next.Width;
+            end++;
+        }
+
+        totalWidth = right - first.X;
+        return end;
     }
 
     public void Dispose()
