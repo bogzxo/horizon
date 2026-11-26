@@ -68,7 +68,7 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
             SetUniform(UNIFORM_CELL_ORIGIN, in origin);
         }
 
-        bool traced = renderer.Lighting == LightingMode.PathTraced && renderer.PathTracing.Result is { } found;
+        bool traced = renderer.FramePathTraced && renderer.PathTracing.Result is { } found;
         int mode = traced ? renderer.ShowTracedLight ? 2 : 1 : 0;
         if (traced)
         {

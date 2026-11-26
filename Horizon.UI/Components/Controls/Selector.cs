@@ -28,7 +28,11 @@ public class Selector : UIComponent
         get => style;
         set
         {
-            style = StyleStem(value, "_hover");
+            string stem = StyleStem(value, "_hover");
+            if (stem == style)
+                return;
+
+            style = stem;
             hoverStyle = style + "_hover";
         }
     }
@@ -118,6 +122,21 @@ public class Selector : UIComponent
         float height = skin.Font.LineHeight * scale + skin.ButtonPadding.Total.Y;
 
         return new Vector2(DEFAULT_WIDTH, skin.TryGetRegion(style, out var region) ? MathF.Max(height, region.Size.Y * 0.6f) : height);
+    }
+
+    protected override long PaintVersion
+    {
+        get
+        {
+            var hash = new HashCode();
+            hash.Add(style);
+            hash.Add(TextScale);
+            hash.Add(IsSelected);
+            hash.Add(index);
+            hash.Add(options.Length);
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(Value)));
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
     }
 
     protected override void Paint(UIDrawList list)

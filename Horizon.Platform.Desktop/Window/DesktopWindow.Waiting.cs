@@ -12,16 +12,23 @@ namespace Horizon.Platform.Desktop;
 // an event pushed at it. Every kind of input is told to the engine too, which is what wakes an application gone quiet.
 public sealed partial class DesktopWindow
 {
-    // How long (in milliseconds) the thread of the window waits between two looks at what the system has to say
+    // How long (in milliseconds) the window's thread waits during manual drag/slide polling
     private const int EVENT_POLL = 1;
 
-    // How long the window's thread waits for the system while active in an application (woken immediately by OS input or WakeWindow)
+    // Fallback poll interval (in milliseconds) when neither GLFW nor SDL event waiting is available
+    private const int FALLBACK_POLL = 4;
+
+    // Bounded wait (in milliseconds) in WaitForWork while draining teardown tasks (woken immediately by WakeWindow)
+    private const int WORK_WAIT_MS = 16;
+
+    // How long the window's thread waits for the system while active (woken immediately by OS input or WakeWindow)
     private const double ACTIVE_WAIT = 0.004;
 
     // How long the window's thread waits for the system while idle; WakeWindow (PostEmptyEvent/WakeSdl) wakes it immediately on close/post
     private const double EVENT_WAIT = 0.5;
 
     private readonly AutoResetEvent windowWake = new(false);
+    private readonly WindowWakeGate wakeGate = new();
 
     // GLFW, to wait for its events and to wake the wait from another thread. Null on a Mac, whose window is SDL's
     private Glfw? glfw;
@@ -109,16 +116,26 @@ public sealed partial class DesktopWindow
     /// </summary>
     private void WaitForEvents()
     {
-        bool canWait = (behaviour & ApplicationBehaviour.WaitForEvents) != 0 && (glfw is not null || sdlWaiting) && drag == Drag.None && !sliding && !closing;
-        if (!canWait)
+        if (closing)
+            return;
+
+        // Reset the coalescing flag BEFORE entering any wait so a concurrent WakeWindow() always signals the OS/event.
+        if (wakeGate.TryConsume())
+            return;
+
+        bool canOsWait = (glfw is not null || sdlWaiting) && drag == Drag.None && !sliding;
+        if (!canOsWait)
         {
-            windowWake.WaitOne(EVENT_POLL);
+            int pollMs = drag != Drag.None || sliding ? EVENT_POLL : FALLBACK_POLL;
+            windowWake.WaitOne(pollMs);
             return;
         }
 
         // Wait on the OS event queue both while active (short timeout, woken with 0 ms latency by input/WakeWindow
         // without needing timeBeginPeriod(1)) and while idle/dormant (long timeout to avoid needless wakeups).
-        double wait = !Events.MayWaitForEvents ? ACTIVE_WAIT : Events.Dormant ? DORMANT_WAIT : EVENT_WAIT;
+        double wait = (behaviour & ApplicationBehaviour.WaitForEvents) == 0 || !Events.MayWaitForEvents
+            ? ACTIVE_WAIT
+            : Events.Dormant ? DORMANT_WAIT : EVENT_WAIT;
         if (sdlWaiting)
             WaitForSdl(Math.Max(1, (int)(wait * 1000.0)));
         else
@@ -130,12 +147,25 @@ public sealed partial class DesktopWindow
 
     public void WakeWindowThread() => WakeWindow();
 
+    /// <summary>Consumes any pending wake signal at the start of a work/event pump pass.</summary>
+    internal void ConsumeWake() => wakeGate.TryConsume();
+
     /// <summary>Helper method to wait for work for the window's thread and nothing else, for a moment. Thread of the window.</summary>
-    internal void WaitForWork() => windowWake.WaitOne(EVENT_POLL);
+    internal void WaitForWork()
+    {
+        if (wakeGate.TryConsume())
+            return;
+
+        windowWake.WaitOne(WORK_WAIT_MS);
+    }
 
     /// <summary>Wakes the window's thread, whichever way it is waiting. From any thread.</summary>
     internal void WakeWindow()
     {
+        // Coalesce redundant wake calls from high-frequency producers until the window thread consumes the signal.
+        if (!wakeGate.TrySignal())
+            return;
+
         try
         {
             windowWake.Set();
@@ -146,7 +176,7 @@ public sealed partial class DesktopWindow
             return;
         }
 
-        if (glfw is not null && (behaviour & ApplicationBehaviour.WaitForEvents) != 0)
+        if (glfw is not null)
             glfw.PostEmptyEvent();
         else if (sdlWaiting)
             WakeSdl();
@@ -155,9 +185,6 @@ public sealed partial class DesktopWindow
     /// <summary>Helper method to get hold of GLFW for waiting on its events, where the window is GLFW's. Thread of the window.</summary>
     private void SetUpWaiting()
     {
-        if ((behaviour & ApplicationBehaviour.WaitForEvents) == 0)
-            return;
-
         // SDL's window waits on SDL, which a Mac's had nothing to wait on and asked the system every millisecond
         if (UsesSdl)
         {
@@ -171,8 +198,32 @@ public sealed partial class DesktopWindow
         }
         catch (Exception)
         {
-            // No GLFW to wait on, the window asks the system every millisecond the way a game's does
+            // No GLFW to wait on, fall back to the bounded wait handle
             glfw = null;
         }
     }
+}
+
+/// <summary>
+/// Coalesces cross-thread wake requests so high-frequency producers only trigger the underlying OS/event wakeup once
+/// per wait cycle while guaranteeing zero lost wakeups.
+/// </summary>
+internal sealed class WindowWakeGate
+{
+    private int pending;
+
+    /// <summary>True when a wake signal is currently pending and not yet consumed by the waiting thread.</summary>
+    public bool IsPending => Volatile.Read(ref pending) != 0;
+
+    /// <summary>
+    /// Marks a wake as pending. Returns true only on the 0 -> 1 transition, meaning the caller should perform the
+    /// underlying OS or event wakeup; subsequent calls coalesce and return false until consumed.
+    /// </summary>
+    public bool TrySignal() => Interlocked.Exchange(ref pending, 1) == 0;
+
+    /// <summary>
+    /// Consumes any pending wake signal before entering a wait. Returns true if a wake was pending (the caller must
+    /// skip blocking and re-check work/events); returns false if none was pending (safe to enter the wait).
+    /// </summary>
+    public bool TryConsume() => Interlocked.Exchange(ref pending, 0) != 0;
 }

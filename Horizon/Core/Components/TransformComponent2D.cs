@@ -10,8 +10,9 @@ namespace Horizon.Core.Components;
 /// something about a few times in an update costs nothing more than moving it once.
 /// </para>
 /// </summary>
-public class TransformComponent2D : GameComponent
+public sealed class TransformComponent2D : GameComponent
 {
+    public override ComponentCapabilities Capabilities => ComponentCapabilities.None;
     private Vector2 pos;
 
     // In degrees

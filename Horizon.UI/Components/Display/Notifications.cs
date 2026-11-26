@@ -494,8 +494,25 @@ public class Notifications : UIComponent
         if (skin.Font.Measure("\u2026", scale, markup: false).X > width)
             return string.Empty;
         int keep = line.Length;
-        while (keep > 0 && skin.Font.Measure(string.Concat(line.AsSpan(0, keep), "\u2026"), scale, markup: false).X > width)
-            keep = keep * 3 / 4;
+        char[]? rented = null;
+        int needed = line.Length + 1;
+        Span<char> buffer = needed <= 256 ? stackalloc char[needed] : rented = System.Buffers.ArrayPool<char>.Shared.Rent(needed);
+        try
+        {
+            line.CopyTo(buffer);
+            while (keep > 0)
+            {
+                buffer[keep] = '\u2026';
+                if (skin.Font.Measure(buffer[..(keep + 1)], scale, markup: false).X <= width)
+                    break;
+                keep = keep * 3 / 4;
+            }
+        }
+        finally
+        {
+            if (rented is not null)
+                System.Buffers.ArrayPool<char>.Shared.Return(rented);
+        }
         return string.Concat(line.AsSpan(0, keep), "\u2026");
     }
 

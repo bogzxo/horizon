@@ -133,7 +133,10 @@ public static class RenderScaleEnvironment
 
     /// <summary>Whether any of the settings is in this process's environment, which wins over anything kept in a file.</summary>
     public static bool InEnvironment =>
-        new[] { SCALE, UPSCALER, SHARPNESS, COMPOSITION }.Any(name => Environment.GetEnvironmentVariable(name) is { Length: > 0 });
+        Environment.GetEnvironmentVariable(SCALE) is { Length: > 0 }
+        || Environment.GetEnvironmentVariable(UPSCALER) is { Length: > 0 }
+        || Environment.GetEnvironmentVariable(SHARPNESS) is { Length: > 0 }
+        || Environment.GetEnvironmentVariable(COMPOSITION) is { Length: > 0 };
 
     /// <summary>Reads a scale the way the setting takes one, true if it is one.</summary>
     public static bool TryScale(string text, out RenderScaleSettings settings)

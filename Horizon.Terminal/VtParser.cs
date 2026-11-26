@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Horizon.UI.Components;
@@ -104,11 +105,12 @@ public sealed class VtParser
     private byte prefix;
     private byte dcsFinal;
 
-    // A UTF-8 character on its way in, how many bytes it still wants and what it is so far
+    // A UTF-8 character on its way in, how many bytes it still wants, what it is so far, and valid next-byte bounds
     private int pendingBytes, pending;
+    private byte utf8Lower = 0x80, utf8Upper = 0xBF;
 
-    // The last byte of an OSC that may be the ESC of an ESC \ string terminator
-    private bool oscEscape;
+    // Whether the previous byte in an OSC/DCS/SOS/PM/APC string was ESC (0x1B), which may be followed by '\' (ST)
+    private bool stringEscape;
 
     public VtParser(IVtHandler handler)
     {
@@ -125,14 +127,17 @@ public sealed class VtParser
             // Fast path for contiguous printable ASCII runs in Ground state with no pending UTF-8 bytes
             if (state == State.Ground && pendingBytes == 0)
             {
-                int start = i;
-                while (i < length && (uint)(bytes[i] - 0x20) <= (0x7E - 0x20))
-                    i++;
-                if (i > start)
+                ReadOnlySpan<byte> remaining = bytes.Slice(i);
+                int run = remaining.IndexOfAnyExceptInRange((byte)0x20, (byte)0x7E);
+                if (run < 0)
                 {
-                    handler.PrintAscii(bytes.Slice(start, i - start));
-                    if (i >= length)
-                        return;
+                    handler.PrintAscii(remaining);
+                    return;
+                }
+                if (run > 0)
+                {
+                    handler.PrintAscii(remaining.Slice(0, run));
+                    i += run;
                 }
             }
 
@@ -142,27 +147,53 @@ public sealed class VtParser
 
     public void Feed(byte b)
     {
-        // UTF-8 is only text, it goes together in the ground state and in a string
+        // UTF-8 is only text, it goes together in the ground state and in an OSC string
         if (pendingBytes > 0)
         {
-            if ((b & 0xC0) == 0x80)
+            if (b >= utf8Lower && b <= utf8Upper)
             {
                 pending = (pending << 6) | (b & 0x3F);
+                utf8Lower = 0x80;
+                utf8Upper = 0xBF;
                 if (--pendingBytes == 0)
                     Character(pending);
                 return;
             }
 
-            // Not a continuation after all, what there was is a mistake and this byte is read anew
+            // Not a valid continuation after all: reset decoder, emit U+FFFD, and reprocess this byte anew
             pendingBytes = 0;
+            pending = 0;
+            utf8Lower = 0x80;
+            utf8Upper = 0xBF;
             Character(0xFFFD);
         }
 
-        if (b >= 0x80 && (state is State.Ground or State.OscString or State.DcsPassthrough or State.SosPmApcString))
+        // Complete a 7-bit String Terminator (ESC \) or transition to Escape if ESC was followed by anything else
+        if (stringEscape)
         {
-            if ((b & 0xE0) == 0xC0) { pending = b & 0x1F; pendingBytes = 1; }
-            else if ((b & 0xF0) == 0xE0) { pending = b & 0x0F; pendingBytes = 2; }
-            else if ((b & 0xF8) == 0xF0) { pending = b & 0x07; pendingBytes = 3; }
+            stringEscape = false;
+            FinishString();
+            if (b == 0x5C)
+                return;
+            Enter(State.Escape);
+        }
+
+        // C1 String Terminator (0x9C) terminates strings and aborts in-flight escape/CSI sequences
+        if (b == 0x9C && state != State.Ground)
+        {
+            FinishString();
+            return;
+        }
+
+        if (b >= 0x80 && state is State.Ground or State.OscString)
+        {
+            if (b is >= 0xC2 and <= 0xDF) { pending = b & 0x1F; pendingBytes = 1; utf8Lower = 0x80; utf8Upper = 0xBF; }
+            else if (b == 0xE0) { pending = 0; pendingBytes = 2; utf8Lower = 0xA0; utf8Upper = 0xBF; }
+            else if (b is (>= 0xE1 and <= 0xEC) or (>= 0xEE and <= 0xEF)) { pending = b & 0x0F; pendingBytes = 2; utf8Lower = 0x80; utf8Upper = 0xBF; }
+            else if (b == 0xED) { pending = b & 0x0F; pendingBytes = 2; utf8Lower = 0x80; utf8Upper = 0x9F; }
+            else if (b == 0xF0) { pending = 0; pendingBytes = 3; utf8Lower = 0x90; utf8Upper = 0xBF; }
+            else if (b is >= 0xF1 and <= 0xF3) { pending = b & 0x07; pendingBytes = 3; utf8Lower = 0x80; utf8Upper = 0xBF; }
+            else if (b == 0xF4) { pending = b & 0x07; pendingBytes = 3; utf8Lower = 0x80; utf8Upper = 0x8F; }
             else Character(0xFFFD);
             return;
         }
@@ -171,22 +202,15 @@ public sealed class VtParser
         switch (b)
         {
             case 0x1B:
-                if (state == State.OscString)
+                if (state is State.OscString or State.DcsEntry or State.DcsParam or State.DcsIntermediate or State.DcsPassthrough or State.DcsIgnore or State.SosPmApcString)
                 {
-                    oscEscape = true;
+                    stringEscape = true;
                     return;
-                }
-                if (state is State.DcsPassthrough)
-                {
-                    EndDcs();
                 }
                 Enter(State.Escape);
                 return;
             case 0x18 or 0x1A:
                 handler.Execute(b);
-                Enter(State.Ground);
-                return;
-            case 0x9C:
                 Enter(State.Ground);
                 return;
         }
@@ -259,17 +283,6 @@ public sealed class VtParser
                 break;
 
             case State.OscString:
-                if (oscEscape)
-                {
-                    oscEscape = false;
-                    EndOsc();
-                    if (b != 0x5C)
-                    {
-                        Enter(State.Escape);
-                        Feed(b);
-                    }
-                    break;
-                }
                 if (b == 0x07) { EndOsc(); break; }
                 if (b >= 0x20 && osc.Length < MAX_OSC) osc.Append((char)b);
                 break;
@@ -350,7 +363,28 @@ public sealed class VtParser
             prefix = 0;
             osc.Clear();
             dcs.Clear();
-            oscEscape = false;
+            stringEscape = false;
+            pendingBytes = 0;
+            pending = 0;
+            utf8Lower = 0x80;
+            utf8Upper = 0xBF;
+        }
+    }
+
+    private void FinishString()
+    {
+        if (state == State.OscString)
+        {
+            EndOsc();
+        }
+        else if (state == State.DcsPassthrough)
+        {
+            EndDcs();
+            Enter(State.Ground);
+        }
+        else
+        {
+            Enter(State.Ground);
         }
     }
 
@@ -377,7 +411,7 @@ public sealed class VtParser
 
     private void EndDcs()
     {
-        handler.Dcs(parameters, intermediates.AsSpan(0, intermediateCount), dcsFinal, dcs.ToArray());
+        handler.Dcs(parameters, intermediates.AsSpan(0, intermediateCount), dcsFinal, CollectionsMarshal.AsSpan(dcs));
         dcs.Clear();
     }
 }

@@ -34,27 +34,18 @@ struct Layer
     float padding2;
 };
 
-// Must match TileMapGpu.Tile in TileMapBatch.cs (80 bytes, a whole number of 16, the stride a block's layout
-// rounds a struct up to, or the tiles read as a shifted mess). Where its middle is and how big it is, the part of the
-// image it is cut out of (in pixels, left, top, right, bottom), how it is turned (radians) and turned over (a TileFlip),
-// which layer it is on and the bindless slots of its image, normal map, specular map and ambient occlusion map
-// (NO_TEXTURE for none).
+// Must match TileMapGpu.Tile in TileMapBatch.cs (48 bytes, a whole number of 16).
+// uvRect is pre-normalized on CPU (source * texelSize); layerAndFlip packs layer in low 24 bits and flip in high 8;
+// albedoNormal packs albedo (low 16) and normal (high 16); specularOcclusion packs specular (low 16) and occlusion (high 16).
 struct Tile
 {
     float2 position;
     float2 size;
-    float4 source;
+    float4 uvRect;
     float rotation;
-    float flip;
-    uint layer;
-    uint albedo;
-    uint normal;
-    uint specular;
-    float2 texelSize;
-    uint occlusion;
-    uint padding0;
-    uint padding1;
-    uint padding2;
+    uint layerAndFlip;
+    uint albedoNormal;
+    uint specularOcclusion;
 };
 
 BIND_BUFFER(2) StructuredBuffer<Layer> layers;
@@ -82,7 +73,9 @@ struct Varyings
 Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, uint baseInstance : SV_StartInstanceLocation)
 {
     Tile tile = tiles[quadInstance(instanceId, baseInstance)];
-    Layer layer = layers[tile.layer];
+    uint layerIndex = tile.layerAndFlip & 0xFFFFFFu;
+    int flip = int(tile.layerAndFlip >> 24);
+    Layer layer = layers[layerIndex];
     uint cornerIndex = quadCorner(vertexId);
 
     float c = cos(tile.rotation);
@@ -92,7 +85,6 @@ Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, ui
 
     // Tiled turns a tile over along its diagonal first, then sideways, then upside down. Finding the part of the image
     // that ends up at a corner is the same thing backwards
-    int flip = int(tile.flip + 0.5);
     float2 at = QUAD_TEXCOORDS[cornerIndex];
     if ((flip & FLIP_VERTICAL) != 0) at.y = 1.0 - at.y;
     if ((flip & FLIP_HORIZONTAL) != 0) at.x = 1.0 - at.x;
@@ -100,12 +92,12 @@ Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, ui
 
     Varyings output;
     output.flip = flip;
-    output.layer = tile.layer;
-    output.albedo = tile.albedo;
-    output.normal = tile.normal;
-    output.specular = tile.specular;
-    output.occlusion = tile.occlusion;
-    output.texCoords = lerp(tile.source.xy, tile.source.zw, at) * tile.texelSize;
+    output.layer = layerIndex;
+    output.albedo = tile.albedoNormal & 0xFFFFu;
+    output.normal = tile.albedoNormal >> 16;
+    output.specular = tile.specularOcclusion & 0xFFFFu;
+    output.occlusion = tile.specularOcclusion >> 16;
+    output.texCoords = lerp(tile.uvRect.xy, tile.uvRect.zw, at);
     output.world = world;
     output.position = toClip(float4(world, 0.0, 1.0));
     return output;
@@ -116,7 +108,7 @@ GBuffer fsMain(Varyings input)
 {
     Layer layer = layers[input.layer];
 
-    float4 albedo = uTextures[NonUniformResourceIndex(input.albedo)].Sample(input.texCoords) * layer.tint;
+    float4 albedo = input.albedo != NO_TEXTURE ? uTextures[NonUniformResourceIndex(input.albedo)].Sample(input.texCoords) * layer.tint : float4(0.0, 0.0, 0.0, 0.0);
     if (albedo.a <= 0.0) discard;
 
     // The way a surface faces turns over along with the tile it is on, or a tile that is mirrored would be lit from

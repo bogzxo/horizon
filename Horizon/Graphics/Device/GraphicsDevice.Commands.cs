@@ -60,6 +60,54 @@ public sealed unsafe partial class GraphicsDevice
         Statistics.Counting.Instances += (int)instanceCount;
     }
 
+    /// <summary>Draws <paramref name="instanceCount"/> instanced quads using the shared 12-byte quad index buffer (0,1,2,0,2,3).</summary>
+    public void DrawQuadInstanced(uint instanceCount, uint firstInstance = 0)
+    {
+        if (instanceCount == 0 || !PrepareDraw(Topology.Triangles)) return;
+
+        Vk.CmdBindIndexBuffer(cmd, quadIndexBuffer, 0, IndexType.Uint16);
+        Vk.CmdDrawIndexed(cmd, 6, instanceCount, 0, 0, firstInstance);
+        Statistics.Counting.DrawCalls++;
+        Statistics.Counting.Instances += (int)instanceCount;
+    }
+
+    /// <summary>Draws one <c>VkDrawIndexedIndirectCommand</c> (20 bytes) of instanced quads using the shared quad index buffer.</summary>
+    public void DrawQuadIndirect(GpuBuffer command, nint offset = 0)
+    {
+        if (!command.IsValid || command.Buffer.Handle == 0) return;
+        if (!PrepareDraw(Topology.Triangles)) return;
+
+        Vk.CmdBindIndexBuffer(cmd, quadIndexBuffer, 0, IndexType.Uint16);
+        Vk.CmdDrawIndexedIndirect(cmd, command.Buffer, (ulong)offset, 1, 20);
+        command.LastUse = NextSubmission;
+        Statistics.Counting.DrawCalls++;
+    }
+
+    /// <summary>Draws <c>VkDrawIndexedIndirectCommand</c> entries (20 bytes each) of instanced quads using the shared quad index buffer.</summary>
+    public void DrawQuadIndirectCount(GpuBuffer commands, nint commandsOffset, GpuBuffer count, nint countOffset, uint maxDraws)
+    {
+        if (maxDraws == 0 || !commands.IsValid || !count.IsValid || commands.Buffer.Handle == 0 || count.Buffer.Handle == 0) return;
+        if (!PrepareDraw(Topology.Triangles)) return;
+
+        Vk.CmdBindIndexBuffer(cmd, quadIndexBuffer, 0, IndexType.Uint16);
+        if (Context.HasDrawIndirectCount)
+        {
+            Vk.CmdDrawIndexedIndirectCount(cmd, commands.Buffer, (ulong)commandsOffset, count.Buffer, (ulong)countOffset, maxDraws, 20);
+        }
+        else if (Context.HasMultiDrawIndirect || maxDraws == 1)
+        {
+            Vk.CmdDrawIndexedIndirect(cmd, commands.Buffer, (ulong)commandsOffset, maxDraws, 20);
+        }
+        else
+        {
+            for (uint draw = 0; draw < maxDraws; draw++)
+                Vk.CmdDrawIndexedIndirect(cmd, commands.Buffer, (ulong)commandsOffset + draw * 20, 1, 20);
+        }
+
+        commands.LastUse = count.LastUse = NextSubmission;
+        Statistics.Counting.DrawCalls++;
+    }
+
     /// <summary>
     /// Draws whatever the commands in a buffer say (VkDrawIndirectCommand, 16 bytes each), as many of them as another
     /// buffer says there are. For draws a compute pass worked out, see tilemap_cull.slang.
@@ -153,26 +201,135 @@ public sealed unsafe partial class GraphicsDevice
         Statistics.Counting.Dispatches++;
     }
 
+    /// <summary>Maps engine <see cref="BarrierTargets"/> to narrow Vulkan Synchronization2 stage and access masks.</summary>
+    internal static (PipelineStageFlags2 SrcStage, AccessFlags2 SrcAccess, PipelineStageFlags2 DstStage, AccessFlags2 DstAccess) BarrierMasks(BarrierTargets targets)
+    {
+        PipelineStageFlags2 srcStage = PipelineStageFlags2.None;
+        AccessFlags2 srcAccess = AccessFlags2.None;
+        PipelineStageFlags2 dstStage = PipelineStageFlags2.None;
+        AccessFlags2 dstAccess = AccessFlags2.None;
+
+        if ((targets & (BarrierTargets.ShaderImages | BarrierTargets.ShaderStorage)) != 0)
+        {
+            srcStage |= PipelineStageFlags2.ComputeShaderBit;
+            srcAccess |= AccessFlags2.ShaderWriteBit | AccessFlags2.ShaderStorageWriteBit;
+            dstStage |= PipelineStageFlags2.ComputeShaderBit | PipelineStageFlags2.FragmentShaderBit | PipelineStageFlags2.VertexShaderBit;
+            dstAccess |= AccessFlags2.ShaderReadBit | AccessFlags2.ShaderSampledReadBit | AccessFlags2.ShaderStorageReadBit | AccessFlags2.ShaderStorageWriteBit;
+        }
+
+        if ((targets & BarrierTargets.BufferUpdate) != 0)
+        {
+            srcStage |= PipelineStageFlags2.TransferBit;
+            srcAccess |= AccessFlags2.TransferWriteBit;
+            dstStage |= PipelineStageFlags2.ComputeShaderBit | PipelineStageFlags2.FragmentShaderBit | PipelineStageFlags2.VertexShaderBit;
+            dstAccess |= AccessFlags2.ShaderReadBit | AccessFlags2.ShaderStorageReadBit | AccessFlags2.UniformReadBit;
+        }
+
+        if ((targets & BarrierTargets.VertexAttributes) != 0)
+        {
+            if (srcStage == PipelineStageFlags2.None)
+            {
+                srcStage = PipelineStageFlags2.ComputeShaderBit;
+                srcAccess = AccessFlags2.ShaderWriteBit | AccessFlags2.ShaderStorageWriteBit;
+            }
+
+            dstStage |= PipelineStageFlags2.DrawIndirectBit | PipelineStageFlags2.VertexInputBit;
+            dstAccess |= AccessFlags2.VertexAttributeReadBit | AccessFlags2.IndexReadBit | AccessFlags2.IndirectCommandReadBit;
+        }
+
+        if (srcStage == PipelineStageFlags2.None)
+        {
+            srcStage = PipelineStageFlags2.AllCommandsBit;
+            srcAccess = AccessFlags2.MemoryWriteBit;
+            dstStage = PipelineStageFlags2.AllCommandsBit;
+            dstAccess = AccessFlags2.MemoryReadBit | AccessFlags2.MemoryWriteBit;
+        }
+
+        return (srcStage, srcAccess, dstStage, dstAccess);
+    }
+
     /// <summary>Has what shaders wrote be there for whoever reads it next.</summary>
     public void Barrier(BarrierTargets targets)
     {
         EndRendering();
 
-        PipelineStageFlags2 dstStage = PipelineStageFlags2.AllCommandsBit;
-        AccessFlags2 dstAccess = AccessFlags2.MemoryReadBit | AccessFlags2.MemoryWriteBit;
-        if ((targets & BarrierTargets.VertexAttributes) != 0) dstAccess |= AccessFlags2.VertexAttributeReadBit | AccessFlags2.IndexReadBit | AccessFlags2.IndirectCommandReadBit;
+        var (srcStage, srcAccess, dstStage, dstAccess) = BarrierMasks(targets);
+        GlobalBarrier(srcStage, srcAccess, dstStage, dstAccess);
 
-        GlobalBarrier(PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryWriteBit, dstStage, dstAccess);
-
-        // What a compute shader wrote to an image is read as a texture next, which wants another layout
+        // The barrier above already made compute image writes visible; clear LastAccess so a subsequent
+        // compute dispatch in General layout skips a redundant image barrier, while sampling as a texture still
+        // transitions General -> ShaderReadOnlyOptimal.
         foreach (Texture? image in boundImages)
         {
             if (image is { IsValid: true })
             {
                 image.LastStage = PipelineStageFlags2.ComputeShaderBit;
-                image.LastAccess = AccessFlags2.ShaderStorageWriteBit;
+                image.LastAccess = AccessFlags2.None;
             }
         }
+    }
+
+    private void BufferBarrier(Buffer buffer, ulong offset, ulong size, PipelineStageFlags2 srcStage, AccessFlags2 srcAccess, PipelineStageFlags2 dstStage, AccessFlags2 dstAccess)
+    {
+        var barrier = new BufferMemoryBarrier2
+        {
+            SType = StructureType.BufferMemoryBarrier2,
+            SrcStageMask = srcStage,
+            SrcAccessMask = srcAccess,
+            DstStageMask = dstStage,
+            DstAccessMask = dstAccess,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            Buffer = buffer,
+            Offset = offset,
+            Size = size
+        };
+
+        var dependency = new DependencyInfo
+        {
+            SType = StructureType.DependencyInfo,
+            BufferMemoryBarrierCount = 1,
+            PBufferMemoryBarriers = &barrier
+        };
+
+        Vk.CmdPipelineBarrier2(cmd, in dependency);
+        Statistics.Counting.Barriers++;
+    }
+
+    private static (PipelineStageFlags2 Stages, AccessFlags2 ReadWriteAccess, AccessFlags2 WriteAccessOnly) BufferStageAndAccess(BufferUsage usage)
+    {
+        PipelineStageFlags2 stages = PipelineStageFlags2.TransferBit;
+        AccessFlags2 access = AccessFlags2.TransferReadBit | AccessFlags2.TransferWriteBit;
+        AccessFlags2 writeOnly = AccessFlags2.TransferWriteBit;
+
+        if ((usage & BufferUsage.Vertex) != 0)
+        {
+            stages |= PipelineStageFlags2.VertexInputBit;
+            access |= AccessFlags2.VertexAttributeReadBit;
+        }
+        if ((usage & BufferUsage.Index) != 0)
+        {
+            stages |= PipelineStageFlags2.VertexInputBit;
+            access |= AccessFlags2.IndexReadBit;
+        }
+        if ((usage & BufferUsage.Indirect) != 0)
+        {
+            stages |= PipelineStageFlags2.DrawIndirectBit;
+            access |= AccessFlags2.IndirectCommandReadBit;
+        }
+        if ((usage & BufferUsage.Uniform) != 0)
+        {
+            stages |= PipelineStageFlags2.AllGraphicsBit | PipelineStageFlags2.ComputeShaderBit;
+            access |= AccessFlags2.UniformReadBit;
+        }
+        if ((usage & BufferUsage.Storage) != 0)
+        {
+            stages |= PipelineStageFlags2.AllGraphicsBit | PipelineStageFlags2.ComputeShaderBit;
+            access |= AccessFlags2.ShaderStorageReadBit | AccessFlags2.ShaderStorageWriteBit;
+            writeOnly |= AccessFlags2.ShaderStorageWriteBit;
+        }
+
+        return (stages, access, writeOnly);
     }
 
     private void GlobalBarrier(PipelineStageFlags2 srcStage, AccessFlags2 srcAccess, PipelineStageFlags2 dstStage, AccessFlags2 dstAccess)
@@ -199,6 +356,34 @@ public sealed unsafe partial class GraphicsDevice
 
     /* Layouts and rendering instances */
 
+    private static ImageMemoryBarrier2 BuildImageBarrier(Texture texture, ImageLayout layout, PipelineStageFlags2 stage, AccessFlags2 access) => new()
+    {
+        SType = StructureType.ImageMemoryBarrier2,
+        SrcStageMask = texture.LastStage,
+        SrcAccessMask = texture.LastAccess,
+        DstStageMask = stage,
+        DstAccessMask = access,
+        OldLayout = texture.Layout,
+        NewLayout = layout,
+        SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+        DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+        Image = texture.Image,
+        SubresourceRange = new ImageSubresourceRange(texture.Aspect, 0, texture.MipLevels, 0, 1)
+    };
+
+    private void EmitImageBarriers(ImageMemoryBarrier2* barriers, uint count)
+    {
+        var dependency = new DependencyInfo
+        {
+            SType = StructureType.DependencyInfo,
+            ImageMemoryBarrierCount = count,
+            PImageMemoryBarriers = barriers
+        };
+
+        Vk.CmdPipelineBarrier2(cmd, in dependency);
+        Statistics.Counting.Barriers++;
+    }
+
     /// <summary>
     /// Moves an image to a layout, with a barrier from whatever last touched it. Ends the rendering instance if one
     /// is on, barriers can't go inside one. For whoever records their own commands.
@@ -219,30 +404,8 @@ public sealed unsafe partial class GraphicsDevice
         EndRendering();
         texture.Owner?.FlushPendingClears(this, texture);
 
-        var barrier = new ImageMemoryBarrier2
-        {
-            SType = StructureType.ImageMemoryBarrier2,
-            SrcStageMask = texture.LastStage,
-            SrcAccessMask = texture.LastAccess,
-            DstStageMask = stage,
-            DstAccessMask = access,
-            OldLayout = texture.Layout,
-            NewLayout = layout,
-            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            Image = texture.Image,
-            SubresourceRange = new ImageSubresourceRange(texture.Aspect, 0, texture.MipLevels, 0, 1)
-        };
-
-        var dependency = new DependencyInfo
-        {
-            SType = StructureType.DependencyInfo,
-            ImageMemoryBarrierCount = 1,
-            PImageMemoryBarriers = &barrier
-        };
-
-        Vk.CmdPipelineBarrier2(cmd, in dependency);
-        Statistics.Counting.Barriers++;
+        ImageMemoryBarrier2 barrier = BuildImageBarrier(texture, layout, stage, access);
+        EmitImageBarriers(&barrier, 1);
 
         texture.Layout = layout;
         texture.LastStage = stage;
@@ -256,11 +419,14 @@ public sealed unsafe partial class GraphicsDevice
 
         EndRendering();
 
+        // ImageAvailable is waited on at ColorAttachmentOutputBit | TransferBit; the first transition after acquire
+        // must use that same stage mask as SrcStageMask (never TopOfPipeBit) so the layout transition waits on acquire
+        bool fromAcquire = old is ImageLayout.Undefined or ImageLayout.PresentSrcKhr;
         var barrier = new ImageMemoryBarrier2
         {
             SType = StructureType.ImageMemoryBarrier2,
-            SrcStageMask = old == ImageLayout.Undefined ? PipelineStageFlags2.TopOfPipeBit : PipelineStageFlags2.AllCommandsBit,
-            SrcAccessMask = old == ImageLayout.Undefined ? AccessFlags2.None : AccessFlags2.MemoryWriteBit | AccessFlags2.MemoryReadBit,
+            SrcStageMask = fromAcquire ? PipelineStageFlags2.ColorAttachmentOutputBit | PipelineStageFlags2.TransferBit : PipelineStageFlags2.AllCommandsBit,
+            SrcAccessMask = fromAcquire ? AccessFlags2.None : AccessFlags2.MemoryWriteBit | AccessFlags2.MemoryReadBit,
             DstStageMask = stage,
             DstAccessMask = access,
             OldLayout = old,
@@ -308,6 +474,14 @@ public sealed unsafe partial class GraphicsDevice
         {
             RenderTarget target = boundTarget!;
             colorCount = (uint)target.ColorFormats.Length;
+
+            // Batch all attachment transitions into one barrier without flushing pending clears, so vkCmdBeginRendering
+            // executes deferred clears natively via AttachmentLoadOp.Clear instead of extra transfer clears + Load
+            var barriers = stackalloc ImageMemoryBarrier2[ShaderPreprocessor.TEXTURE_BINDINGS + 1];
+            uint barrierCount = 0;
+
+            const PipelineStageFlags2 colorStage = PipelineStageFlags2.ColorAttachmentOutputBit;
+            const AccessFlags2 colorAccess = AccessFlags2.ColorAttachmentWriteBit | AccessFlags2.ColorAttachmentReadBit;
             for (int i = 0; i < colorCount; i++)
             {
                 Texture? texture = target.ColorTextures[i];
@@ -317,14 +491,30 @@ public sealed unsafe partial class GraphicsDevice
                     continue;
                 }
 
-                Transition(texture, ImageLayout.ColorAttachmentOptimal, PipelineStageFlags2.ColorAttachmentOutputBit, AccessFlags2.ColorAttachmentWriteBit | AccessFlags2.ColorAttachmentReadBit);
-                colors[i] = Attachment(texture.View, target.PendingColor[i]);
+                if (texture.IsValid && texture.Image.Handle != 0)
+                {
+                    barriers[barrierCount++] = BuildImageBarrier(texture, ImageLayout.ColorAttachmentOptimal, colorStage, colorAccess);
+                    texture.Layout = ImageLayout.ColorAttachmentOptimal;
+                    texture.LastStage = colorStage;
+                    texture.LastAccess = colorAccess;
+                }
+
+                colors[i] = Attachment(texture.View, target.PendingColor[i], target.PendingDiscard[i]);
                 target.PendingColor[i] = null;
+                target.PendingDiscard[i] = false;
             }
 
             if (target.DepthTexture is { } depthTexture)
             {
-                Transition(depthTexture, ImageLayout.DepthStencilAttachmentOptimal, PipelineStageFlags2.EarlyFragmentTestsBit | PipelineStageFlags2.LateFragmentTestsBit, AccessFlags2.DepthStencilAttachmentWriteBit | AccessFlags2.DepthStencilAttachmentReadBit);
+                const PipelineStageFlags2 depthStage = PipelineStageFlags2.EarlyFragmentTestsBit | PipelineStageFlags2.LateFragmentTestsBit;
+                const AccessFlags2 depthAccess = AccessFlags2.DepthStencilAttachmentWriteBit | AccessFlags2.DepthStencilAttachmentReadBit;
+                if (depthTexture.IsValid && depthTexture.Image.Handle != 0)
+                {
+                    barriers[barrierCount++] = BuildImageBarrier(depthTexture, ImageLayout.DepthStencilAttachmentOptimal, depthStage, depthAccess);
+                    depthTexture.Layout = ImageLayout.DepthStencilAttachmentOptimal;
+                    depthTexture.LastStage = depthStage;
+                    depthTexture.LastAccess = depthAccess;
+                }
 
                 depth = new RenderingAttachmentInfo
                 {
@@ -345,6 +535,9 @@ public sealed unsafe partial class GraphicsDevice
 
                 target.PendingDepth = false;
             }
+
+            if (barrierCount > 0)
+                EmitImageBarriers(barriers, barrierCount);
 
             extent = new Extent2D(target.Width, target.Height);
         }
@@ -367,15 +560,31 @@ public sealed unsafe partial class GraphicsDevice
         viewportDirty = dynamicDirty = true;
     }
 
-    private static RenderingAttachmentInfo Attachment(ImageView view, Vector4? clear) => new()
+    private static RenderingAttachmentInfo Attachment(ImageView view, Vector4? clear, bool discard = false) => new()
     {
         SType = StructureType.RenderingAttachmentInfo,
         ImageView = view,
         ImageLayout = ImageLayout.ColorAttachmentOptimal,
-        LoadOp = clear.HasValue ? AttachmentLoadOp.Clear : AttachmentLoadOp.Load,
+        LoadOp = clear.HasValue ? AttachmentLoadOp.Clear : discard ? AttachmentLoadOp.DontCare : AttachmentLoadOp.Load,
         StoreOp = AttachmentStoreOp.Store,
         ClearValue = clear.HasValue ? new ClearValue { Color = new ClearColorValue(clear.Value.X, clear.Value.Y, clear.Value.Z, clear.Value.W) } : default
     };
+
+    /// <summary>
+    /// Marks the bound offscreen render target's colour attachments as <see cref="AttachmentLoadOp.DontCare"/> for the
+    /// next rendering instance, avoiding an unnecessary attachment load before an opaque full-screen overwrite.
+    /// </summary>
+    public void DiscardBoundTarget()
+    {
+        if (renderingActive || targetIsWindow || boundTarget is not { } target) return;
+
+        for (int i = 0; i < target.ColorTextures.Length; i++)
+        {
+            if (target.ColorTextures[i] is null) continue;
+            target.PendingColor[i] = null;
+            target.PendingDiscard[i] = true;
+        }
+    }
 
     /// <summary>
     /// Ends the rendering instance, if one is on. Everything that isn't a draw does this itself, it is here for
@@ -426,7 +635,17 @@ public sealed unsafe partial class GraphicsDevice
             return;
         }
 
-        if (color) for (int i = 0; i < target.ColorTextures.Length; i++) if (target.ColorTextures[i] is not null) target.PendingColor[i] = clearColor;
+        if (color)
+        {
+            for (int i = 0; i < target.ColorTextures.Length; i++)
+            {
+                if (target.ColorTextures[i] is not null)
+                {
+                    target.PendingColor[i] = clearColor;
+                    target.PendingDiscard[i] = false;
+                }
+            }
+        }
         if (depth || stencil)
         {
             target.PendingDepth = true;
@@ -443,7 +662,11 @@ public sealed unsafe partial class GraphicsDevice
         if (!targetIsWindow && ReferenceEquals(boundTarget, target))
         {
             if (renderingActive && ReferenceEquals(renderingTarget, target)) ClearAttachmentsNow([attachment], color, false, false, 1.0f, 0);
-            else target.PendingColor[attachment] = color;
+            else
+            {
+                target.PendingColor[attachment] = color;
+                target.PendingDiscard[attachment] = false;
+            }
             return;
         }
 
@@ -656,10 +879,12 @@ public sealed unsafe partial class GraphicsDevice
             UploadTexels(texture, x, y, width, height, format, pointer);
     }
 
-    private static int BytesPerTexel(TexelFormat format) => format switch
+    internal static int BytesPerTexel(TexelFormat format) => format switch
     {
         TexelFormat.R8 => 1,
         TexelFormat.R16F => 2,
+        TexelFormat.Rgba16F => 8,
+        TexelFormat.Rgba32F => 16,
         _ => 4
     };
 
@@ -741,8 +966,10 @@ public sealed unsafe partial class GraphicsDevice
 
         EndRendering();
 
-        // Whoever read it before has to be done before it is written over
-        GlobalBarrier(PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryReadBit | AccessFlags2.MemoryWriteBit, PipelineStageFlags2.TransferBit, AccessFlags2.TransferWriteBit);
+        var (stages, rwAccess, writeAccess) = BufferStageAndAccess(buffer.Usage);
+
+        // Whoever read or wrote this range before has to finish before the transfer writes over it
+        BufferBarrier(buffer.Buffer, (ulong)byteOffset, bytes, stages, writeAccess, PipelineStageFlags2.TransferBit, AccessFlags2.TransferWriteBit);
 
         if (bytes <= 65536 && bytes % 4 == 0 && byteOffset % 4 == 0)
         {
@@ -758,7 +985,7 @@ public sealed unsafe partial class GraphicsDevice
             Vk.CmdCopyBuffer(cmd, staging.Buffer, buffer.Buffer, 1, in region);
         }
 
-        GlobalBarrier(PipelineStageFlags2.TransferBit, AccessFlags2.TransferWriteBit, PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryReadBit | AccessFlags2.MemoryWriteBit);
+        BufferBarrier(buffer.Buffer, (ulong)byteOffset, bytes, PipelineStageFlags2.TransferBit, AccessFlags2.TransferWriteBit, stages, rwAccess);
         Statistics.Counting.BytesUploaded += (long)bytes;
         buffer.LastUse = NextSubmission;
     }
@@ -780,12 +1007,28 @@ public sealed unsafe partial class GraphicsDevice
 
         var region = new BufferCopy(offset, 0, bytes);
         Vk.CmdCopyBuffer(cmd, staging.Buffer, buffer.Buffer, 1, in region);
-        GlobalBarrier(PipelineStageFlags2.TransferBit, AccessFlags2.TransferWriteBit, PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryReadBit | AccessFlags2.MemoryWriteBit);
+        var (stages, rwAccess, _) = BufferStageAndAccess(buffer.Usage);
+        BufferBarrier(buffer.Buffer, 0, bytes, PipelineStageFlags2.TransferBit, AccessFlags2.TransferWriteBit, stages, rwAccess);
         Statistics.Counting.BytesUploaded += (long)bytes;
         buffer.LastUse = NextSubmission;
     }
 
     /* Read backs */
+
+    /// <summary>
+    /// Helper method to clamp a bottom-up ReadPixels rectangle into top-down image bounds so Vulkan never copies
+    /// outside the image or with negative offsets.
+    /// </summary>
+    internal static (int X, int Top, uint Width, uint Height) ClampReadPixels(int x, int y, uint width, uint height, uint imageWidth, uint imageHeight)
+    {
+        long maxW = imageWidth;
+        long maxH = imageHeight;
+        long x0 = Math.Clamp((long)x, 0L, maxW);
+        long x1 = Math.Clamp((long)x + width, x0, maxW);
+        long top = Math.Clamp(maxH - y - height, 0L, maxH);
+        long bottom = Math.Clamp(maxH - y, top, maxH);
+        return ((int)x0, (int)top, (uint)(x1 - x0), (uint)(bottom - top));
+    }
 
     /// <summary>
     /// Reads the colours of the window as it is right now (or the bound render target's first attachment), four bytes a
@@ -803,11 +1046,16 @@ public sealed unsafe partial class GraphicsDevice
         Format format;
         ImageLayout restore;
         Texture? texture = null;
-        uint imageHeight;
+        uint imageWidth, imageHeight;
 
         if (targetIsWindow)
         {
             if (!Frame.HasImage || swapchain.Current < 0) return;
+
+            imageWidth = swapchain.Width;
+            imageHeight = swapchain.Height;
+            var (previewX, previewTop, previewW, previewH) = ClampReadPixels(x, y, width, height, imageWidth, imageHeight);
+            if (previewW == 0 || previewH == 0) return;
 
             if (windowPendingClear is { } pending)
             {
@@ -822,28 +1070,31 @@ public sealed unsafe partial class GraphicsDevice
             image = swapchain.Images[swapchain.Current];
             format = swapchain.Format;
             restore = ImageLayout.ColorAttachmentOptimal;
-            imageHeight = swapchain.Height;
+            (x, y, width, height) = (previewX, previewTop, previewW, previewH);
         }
         else
         {
             if (boundTarget!.ColorTextures.Length == 0 || boundTarget.ColorTextures[0] is not { } first) return;
             texture = first;
+            imageWidth = texture.Width;
+            imageHeight = texture.Height;
+            var (previewX, previewTop, previewW, previewH) = ClampReadPixels(x, y, width, height, imageWidth, imageHeight);
+            if (previewW == 0 || previewH == 0) return;
+
             Transition(texture, ImageLayout.TransferSrcOptimal, PipelineStageFlags2.TransferBit, AccessFlags2.TransferReadBit);
             image = texture.Image;
             format = texture.VkFormat;
             restore = ImageLayout.TransferSrcOptimal;
-            imageHeight = texture.Height;
+            (x, y, width, height) = (previewX, previewTop, previewW, previewH);
         }
 
         ulong bytes = (ulong)width * height * 4;
         var (staging, memory) = MakeHostBuffer(bytes, BufferUsageFlags.TransferDstBit);
 
-        // Rows are counted from the top here and from the bottom by whoever asked
-        int top = (int)imageHeight - y - (int)height;
         var region = new BufferImageCopy
         {
             ImageSubresource = new ImageSubresourceLayers(ImageAspectFlags.ColorBit, 0, 0, 1),
-            ImageOffset = new Offset3D(x, Math.Max(0, top), 0),
+            ImageOffset = new Offset3D(x, y, 0),
             ImageExtent = new Extent3D(width, height, 1)
         };
         Vk.CmdCopyImageToBuffer(cmd, image, ImageLayout.TransferSrcOptimal, staging, 1, in region);

@@ -18,8 +18,9 @@ components, driven by three cooperating threads and a snapshot hand-off between 
 - `Scene : GameObject` (`Engine/Scenes/Scene.cs:34`): one screen (menu, level). Owns an `AssetScope` so GPU stuff
   made while it is set up is freed when it is left.
 - `SceneManager : Entity` (`Engine/Scenes/SceneManager.cs:43`; namespace is `Horizon.Engine.Components`, folder is
-  `Engine/Scenes`): swaps/pushes/pops scenes.
-- `WindowManager : GameComponent` (`Core/Windowing/WindowManager.cs:49`, partial across 6 files): owns the render
+  `Engine/Scenes`): swaps/pushes/pops scenes, handles `Preload`, `Cover`, and `CollectAfterChange`.
+- `WindowManager : GameComponent` (`Core/Windowing/WindowManager.cs:52`, partial across 9 files: `.cs`, `.Application.cs`,
+  `.Device.cs`, `.FileDrop.cs`, `.Frame.cs`, `.Latency.cs`, `.Platform.cs`, `.Sleep.cs`, `.Surface.cs`): owns the render
   thread and simulation loop; the engine's real "main loop".
 - `IPlatformHost` (`Platform/IPlatformHost.cs`): everything native (window, surface, input, audio, platform thread).
   Implemented in sibling projects (`Horizon.Platform.Desktop`, `.Android`, `.iOS`). Core has "no native types".
@@ -28,12 +29,12 @@ components, driven by three cooperating threads and a snapshot hand-off between 
 
 1. **Platform thread** = the thread that called `Run()`/`Start()` (Main thread on desktop). Pumps the OS window/input
    events. Only thread allowed to change the window. `host.Post/Invoke` marshal work onto it.
-2. **Render thread** ("Render", `WindowManager.DrawFrames`, `Core/Windowing/WindowManager.cs:689`). Only thread that
-   may touch the GPU. Runs `Initialize()` of everything, flushes pending adds, swaps scenes, draws frames.
-3. **Simulation thread** ("Simulation", `Core/Threading/SimulationLoop.cs`). Runs `UpdateState` (logic) and
+2. **Render thread** ("Render", `WindowManager.DrawFrames`, `Core/Windowing/WindowManager.cs:720`). Only thread that
+   may touch the GPU (`EntityLifecycle.ClaimRenderThread()`). Runs `Initialize()` of everything, flushes pending adds, swaps scenes, draws frames.
+3. **Simulation thread** ("Simulation", `Core/Threading/SimulationLoop.cs`). Runs `SimulationContext.RunPending()` (async continuations), `UpdateState` (logic), and
    `UpdatePhysics` per tick at independent rates (default 120/120, `WindowManagerConfiguration.UpdatesPerSecond`
    / `PhysicsUpdatesPerSecond`, `Core/Windowing/WindowManagerConfiguration.cs:124-130`). Starts only after the first
-   frame has been drawn (`WindowManager.cs:~765`: `if (simulation is null) StartSimulation();`).
+   frame has been drawn (`WindowManager.cs:773`: `if (simulation is null) StartSimulation();`).
 
 Rendering is decoupled from simulation: at the end of each tick the sim thread calls `Entity.Capture()` over the whole
 tree, publishing structs into `Snapshot<T>` slots (`Core/Threading/Snapshot.cs`) of a 4-slot `SnapshotClock`
@@ -298,7 +299,7 @@ pitch, pan, loop)` returns `SoundHandle(slot,id)`, `PlayMusic(IAudioStream, fade
 Self-contained, deterministic-step, runs in `UpdatePhysics` (sim thread). Not a general engine; built for the 2D fighter plus voxel 3D.
 - 2D: `PhysicsWorld : GameComponent` (`Physics/2D/PhysicsWorld.cs:24`), `Gravity`, static vs dynamic body lists (`PhysicsBodyComponent2D`,
   `Static/Dynamic/Kinematic` via `PhysicsBodySimulationType`), fixtures (`RectanglePhysicsFixture`, `CirclePhysicsFixture`, `OutlinePhysicsFixture`),
-  `PhysicsStaticGrid` spatial grid for static tiles, particles/fluids (CPU `PhysicsParticleGroup`, GPU feed `PhysicsParticleFeed`), radial forces,
+  `PhysicsStaticGrid` spatial grid (`AllRectangles` + stamp-deduped queries) for static tiles, particles/fluids (CPU `PhysicsParticleGroup` / `PhysicsFluidParticleGroup` occupied-cell spatial table, 4-neighbor `FindPairsDense`, close/spread partitioning, `_nearMask`, pre-sized `_denseCellStart`; GPU feed `PhysicsParticleFeed`), radial forces,
   `RenderDebug` overlay drawn via `PrimitiveRenderer` through `Capture/Render`. `CharacterController2D` (coyote time, jump buffer, short hop) pushes with forces.
 - 3D: `CollisionWorld3D` (boxes + `ICollisionField` e.g. voxel tree from Rendering, raycast), `CharacterController3D(world, feet)`; `Box3`.
 - Rough edge (explicit TODO, `PhysicsBodyComponent2D.cs:22`): `Position` is publicly settable; teleporting through it is everywhere.
@@ -327,7 +328,8 @@ Self-contained, deterministic-step, runs in `UpdatePhysics` (sim thread). Not a 
   `InvalidOperationException` with prose explanations. Render-thread exceptions are captured (`ExceptionDispatchInfo`) and rethrown on the platform thread (`WindowManager.renderFailure`).
 - Threading: shared mutable state uses `lock`/`Lock`, `Volatile`, `Interlocked`, `ConcurrentQueue`; immutable-array swap for tree; records replaced whole (`DisplayState`, `PlatformDisplay`).
 - Environment variables (diagnostics/overrides): `HORIZON_LOG_LOOPS=<sec>`, `HORIZON_LOG_ALLOCATIONS`, `HORIZON_LOG_STARTUP`, `HORIZON_LOG_SLOW=<ms>`,
-  `HORIZON_SCREENSHOT=file.png@3[+8x0.5]`, `HORIZON_AUDIO=off`, `HORIZON_INPUT_LOG=keys`, `HORIZON_WINDOWING` (GLFW vs SDL), plus rendering ones (`HORIZON_RENDER_SCALE`, `HORIZON_SHADER_CACHE`, `HORIZON_VULKAN_*`, `HORIZON_UPSCALER`).
+  `HORIZON_LOG_TRANSITIONS`, `HORIZON_SCREENSHOT=file.png@3[+8x0.5]`, `HORIZON_AUDIO=off`, `HORIZON_INPUT_LOG=keys`, `HORIZON_INPUT_SCRIPT`,
+  `HORIZON_WINDOWING` (GLFW vs SDL), `HORIZON_VSYNC=off|on`, `HORIZON_SCALE_TO_DISPLAY`, `HORIZON_SHELL_ENVIRONMENT`, plus rendering ones (`HORIZON_RENDER_SCALE`, `HORIZON_SHADER_CACHE`, `HORIZON_VULKAN_*`, `HORIZON_UPSCALER`).
 - `F12` saves a screenshot to `screenshots/` (`GameEngine.ScreenshotKey`, null disables). `GameEngine.CapturePixels()` returns the frame in memory (Hex's MCP uses it).
 
 ## 11. Dependencies and build
@@ -363,6 +365,7 @@ Self-contained, deterministic-step, runs in `UpdatePhysics` (sim thread). Not a 
 16. `FilesBesideProgram`/`PlatformPaths.BesideProgram` must be set before anything asks for a folder, or caches land in the user dir.
 17. Stray TODO count is very low in this scope (one TODO found: `PhysicsBodyComponent2D.Position` mutability). Comments contain some profanity and casual tone; keep to house voice.
 18. `Horizon.Tests` may contain a `~syncthing~*.tmp` leftover file (sync artifact, ignore).
+19. Pass 7 startup and runtime paths: `PreparedDevice` (`Horizon/Graphics/Vulkan`) prepares Vulkan/instance initialization ahead of device creation (`WindowManager.Device.cs`); `AudioDevice` opens asynchronously (`openAsync: true`) with a 48 kHz `AudioMixer` rescaled via `AudioMixer.SetSampleRate(int)` if the backend negotiates another rate (`AudioMixer.MixFloatStereo1To1Simd` handles 1:1 stereo float SIMD mixing); `SceneManager.SetUp` runs update, physics, and `EntityLifecycle.Flush()` before `Render(dt)` on warm-up turns and exits as soon as `!_unfinished`; and hot simulation/windowing types (`WindowManager`, `SceneManager`, `PhysicsWorld`, `PhysicsBodyComponent2D`, `TransformComponent2D`, `TransformComponent3D`, `IntervalRunnerFixedStep`, `IntervalRunnerSubStep`) are `sealed`.
 
 ## 13. Where to look for X
 

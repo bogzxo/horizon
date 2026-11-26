@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 using Horizon.Graphics.Vulkan;
 
@@ -25,11 +26,42 @@ public sealed unsafe partial class GraphicsDevice
     private bool boundIsWindow = true;
 
     internal Technique? BoundTechnique;
+    internal Technique? LastParamsTechnique;
 
     private readonly Texture?[] boundTextures = new Texture?[ShaderPreprocessor.TEXTURE_BINDINGS];
     private readonly uint[] boundSamplers = new uint[ShaderPreprocessor.TEXTURE_BINDINGS];
     private readonly Texture?[] boundImages = new Texture?[ShaderPreprocessor.IMAGE_BINDINGS];
-    private readonly (GpuBuffer? Buffer, ulong Offset, ulong Size)[] boundStorage = new (GpuBuffer?, ulong, ulong)[ShaderPreprocessor.STORAGE_BINDINGS];
+    private readonly (GpuBuffer? Buffer, ulong VkHandle, ulong Offset, ulong Size)[] boundStorage = new (GpuBuffer?, ulong, ulong, ulong)[ShaderPreprocessor.STORAGE_BINDINGS];
+
+    // Per-frame cache of set 0 (uniform + storage buffer) descriptor sets so alternating between unchanged storage
+    // buffer configurations reuses an already-written DescriptorSet instead of allocating and updating anew
+    private const int BUFFER_SET_CACHE_CAPACITY = 32;
+
+    private readonly record struct StorageSlot(ulong Handle, ulong Offset, ulong Size);
+
+    [InlineArray(ShaderPreprocessor.STORAGE_BINDINGS)]
+    private struct StorageBindingSlots
+    {
+        private StorageSlot element;
+    }
+
+    private struct BufferSetKey
+    {
+        public ulong UniformsHandle;
+        public StorageBindingSlots Storage;
+        public ulong Hash;
+    }
+
+    private struct BufferSetCacheEntry
+    {
+        public BufferSetKey Key;
+        public DescriptorSet Set;
+    }
+
+    private readonly BufferSetCacheEntry[] bufferSetCache = new BufferSetCacheEntry[BUFFER_SET_CACHE_CAPACITY];
+    private int bufferSetCacheCount;
+    private BufferSetKey lastBufferSetKey;
+    private bool hasLastBufferSetKey;
 
     // Where in the frame's uniform arena the camera block and the params of the draw are
     private ulong cameraOffset, paramsOffset;
@@ -37,6 +69,7 @@ public sealed unsafe partial class GraphicsDevice
 
     private bool buffersDirty = true, imagesDirty = true, offsetsDirty = true;
     private DescriptorSet bufferSet, imageSet;
+    private bool imageSetHasSamplers;
     private PipelineBindPoint setsBoundFor = (PipelineBindPoint)(-1);
 
     // Where descriptors are pushed (VulkanContext.HasPushDescriptors), which textures and images set 1 holds now (a count
@@ -44,6 +77,7 @@ public sealed unsafe partial class GraphicsDevice
     // its own that stays through the other's, so going between them only pushes what changed, not set 1 every time
     private int imagesVersion;
     private readonly int[] imagesPushedVersion = [-1, -1];
+    private readonly bool[] imagesPushedSamplers = [false, false];
 
     // The pipeline state that isn't dynamic, see PipelineCache
     private bool blend, colorWrite = true;
@@ -68,9 +102,19 @@ public sealed unsafe partial class GraphicsDevice
     private bool scissorDirty = true;
 
     private Pipeline currentPipeline;
+    private PipelineCache.GraphicsKey lastGraphicsKey;
+    private Pipeline lastGraphicsPipeline;
+    private bool hasLastGraphicsPipeline;
     private bool renderingActive;
     private RenderTarget? renderingTarget;
     private bool renderingWindow;
+
+    /// <summary>Helper method to clear the per-frame set 0 descriptor cache when the frame's descriptor pool resets.</summary>
+    private void ResetFrameDescriptorCache()
+    {
+        bufferSetCacheCount = 0;
+        hasLastBufferSetKey = false;
+    }
 
     /// <summary>Helper method to forget everything a command buffer knew, for a fresh one.</summary>
     private void ResetRecordingState()
@@ -78,9 +122,13 @@ public sealed unsafe partial class GraphicsDevice
         currentPipeline = default;
         renderingActive = false;
         renderingTarget = null;
+        LastParamsTechnique = null;
         buffersDirty = imagesDirty = offsetsDirty = true;
+        hasLastBufferSetKey = false;
+        imageSetHasSamplers = false;
         setsBoundFor = (PipelineBindPoint)(-1);
         imagesPushedVersion[0] = imagesPushedVersion[1] = -1;
+        imagesPushedSamplers[0] = imagesPushedSamplers[1] = false;
         dynamicDirty = viewportDirty = scissorDirty = true;
     }
 
@@ -157,13 +205,32 @@ public sealed unsafe partial class GraphicsDevice
         if (slot >= boundStorage.Length) return;
 
         GpuBuffer? valid = buffer is { IsValid: true } ? buffer : null;
+        ulong handle = valid?.Buffer.Handle ?? 0;
         ulong bytes = valid is null ? 0 : size == 0 ? (ulong)valid.Size - (ulong)offset : size;
 
-        var wanted = (valid, (ulong)offset, bytes);
+        var wanted = (valid, handle, (ulong)offset, bytes);
         if (boundStorage[slot] == wanted) return;
 
         boundStorage[slot] = wanted;
         buffersDirty = true;
+    }
+
+    /// <summary>Helper method to refresh bound storage slots when a buffer's backing VkBuffer is reallocated or resized.</summary>
+    internal void InvalidateStorageBinding(GpuBuffer buffer, bool handleChanged)
+    {
+        ulong newHandle = buffer.Buffer.Handle;
+        for (int i = 0; i < boundStorage.Length; i++)
+        {
+            if (!ReferenceEquals(boundStorage[i].Buffer, buffer)) continue;
+
+            var (_, oldHandle, offset, size) = boundStorage[i];
+            ulong clampedSize = offset < buffer.Size ? Math.Min(size, buffer.Size - offset) : 0;
+            if (handleChanged || oldHandle != newHandle || clampedSize != size)
+            {
+                boundStorage[i] = (buffer, newHandle, offset, clampedSize);
+                buffersDirty = true;
+            }
+        }
     }
 
     /// <summary>
@@ -183,6 +250,7 @@ public sealed unsafe partial class GraphicsDevice
     public void SetParams(ReadOnlySpan<byte> block)
     {
         paramsOffset = WriteUniform(block);
+        LastParamsTechnique = null;
         offsetsDirty = true;
     }
 
@@ -418,16 +486,27 @@ public sealed unsafe partial class GraphicsDevice
             boundVertexArray?.LayoutKey ?? 0,
             targetIsWindow ? WindowFormatKey : boundTarget!.FormatKey);
 
-        Pipeline pipeline = targetIsWindow
-            ? Pipelines.GetGraphics(key, boundShader, boundVertexArray, [swapchain.Format], Format.Undefined, false)
-            : Pipelines.GetGraphics(key, boundShader, boundVertexArray, boundTarget!.ColorFormats, boundTarget.DepthFormat, boundTarget.HasStencil);
+        Pipeline pipeline;
+        if (hasLastGraphicsPipeline && key == lastGraphicsKey)
+        {
+            pipeline = lastGraphicsPipeline;
+        }
+        else
+        {
+            Format swapFormat = swapchain.Format;
+            pipeline = targetIsWindow
+                ? Pipelines.GetGraphics(key, boundShader, boundVertexArray, new ReadOnlySpan<Format>(in swapFormat), Format.Undefined, false)
+                : Pipelines.GetGraphics(key, boundShader, boundVertexArray, boundTarget!.ColorFormats, boundTarget.DepthFormat, boundTarget.HasStencil);
+            lastGraphicsKey = key;
+            lastGraphicsPipeline = pipeline;
+            hasLastGraphicsPipeline = true;
+        }
 
         if (pipeline.Handle != currentPipeline.Handle)
         {
             Vk.CmdBindPipeline(cmd, PipelineBindPoint.Graphics, pipeline);
             currentPipeline = pipeline;
             Statistics.Counting.PipelineBinds++;
-            dynamicDirty = viewportDirty = scissorDirty = true;
         }
 
         if (viewportDirty)
@@ -440,19 +519,10 @@ public sealed unsafe partial class GraphicsDevice
 
         if (scissorDirty)
         {
-            Rect2D scissor;
-            if (!customScissor)
-            {
-                scissor = new Rect2D(new Offset2D(viewportX, viewportY), new Extent2D(viewportWidth, viewportHeight));
-            }
-            else
-            {
-                int x0 = Math.Clamp(scissorX, viewportX, viewportX + (int)viewportWidth);
-                int y0 = Math.Clamp(scissorY, viewportY, viewportY + (int)viewportHeight);
-                int x1 = (int)Math.Clamp((long)scissorX + scissorWidth, x0, (long)viewportX + viewportWidth);
-                int y1 = (int)Math.Clamp((long)scissorY + scissorHeight, y0, (long)viewportY + viewportHeight);
-                scissor = new Rect2D(new Offset2D(x0, y0), new Extent2D((uint)(x1 - x0), (uint)(y1 - y0)));
-            }
+            uint targetW = targetIsWindow ? swapchain.Width : boundTarget!.Width;
+            uint targetH = targetIsWindow ? swapchain.Height : boundTarget!.Height;
+            var (sx, sy, sw, sh) = ClampScissor(customScissor, scissorX, scissorY, scissorWidth, scissorHeight, viewportX, viewportY, viewportWidth, viewportHeight, targetW, targetH);
+            var scissor = new Rect2D(new Offset2D(sx, sy), new Extent2D(sw, sh));
             Vk.CmdSetScissor(cmd, 0, 1, in scissor);
             scissorDirty = false;
         }
@@ -504,7 +574,13 @@ public sealed unsafe partial class GraphicsDevice
         PrepareTextures(drawing: false);
         PrepareImages();
 
-        Pipeline pipeline = Pipelines.GetCompute(boundShader);
+        Pipeline pipeline = boundShader.ComputePipeline;
+        if (pipeline.Handle == 0)
+        {
+            pipeline = Pipelines.GetCompute(boundShader);
+            boundShader.ComputePipeline = pipeline;
+        }
+
         if (pipeline.Handle != currentPipeline.Handle)
         {
             Vk.CmdBindPipeline(cmd, PipelineBindPoint.Compute, pipeline);
@@ -517,33 +593,110 @@ public sealed unsafe partial class GraphicsDevice
     }
 
     /// <summary>
+    /// Helper method to clamp a scissor rectangle (or the viewport itself when no custom scissor is set) to the bound
+    /// target's non-negative bounds so Vulkan never receives a negative offset or an out-of-bounds extent.
+    /// </summary>
+    internal static (int X, int Y, uint Width, uint Height) ClampScissor(
+        bool customScissor,
+        int scissorX, int scissorY, uint scissorWidth, uint scissorHeight,
+        int viewportX, int viewportY, uint viewportWidth, uint viewportHeight,
+        uint targetWidth, uint targetHeight)
+    {
+        long maxW = targetWidth;
+        long maxH = targetHeight;
+        long vx0 = Math.Clamp((long)viewportX, 0L, maxW);
+        long vy0 = Math.Clamp((long)viewportY, 0L, maxH);
+        long vx1 = Math.Clamp((long)viewportX + viewportWidth, vx0, maxW);
+        long vy1 = Math.Clamp((long)viewportY + viewportHeight, vy0, maxH);
+
+        if (!customScissor)
+            return ((int)vx0, (int)vy0, (uint)(vx1 - vx0), (uint)(vy1 - vy0));
+
+        long x0 = Math.Clamp((long)scissorX, vx0, vx1);
+        long y0 = Math.Clamp((long)scissorY, vy0, vy1);
+        long x1 = Math.Clamp((long)scissorX + scissorWidth, x0, vx1);
+        long y1 = Math.Clamp((long)scissorY + scissorHeight, y0, vy1);
+        return ((int)x0, (int)y0, (uint)(x1 - x0), (uint)(y1 - y0));
+    }
+
+    /// <summary>
     /// Helper method to have every bound texture in a layout a shader can read it in. For a draw, an attachment of
     /// the target that is drawn into is left alone, reading that is a feedback loop, undefined on every API there is.
     /// A compute pass is outside of any rendering and may read what was drawn so far.
     /// </summary>
     private void PrepareTextures(bool drawing)
     {
-        foreach (Texture? texture in boundTextures)
-        {
-            if (texture is null || !texture.IsValid) continue;
+        var barriers = stackalloc ImageMemoryBarrier2[ShaderPreprocessor.TEXTURE_BINDINGS];
+        uint count = 0;
+        const PipelineStageFlags2 dstStage = PipelineStageFlags2.AllGraphicsBit | PipelineStageFlags2.ComputeShaderBit;
+        const AccessFlags2 dstAccess = AccessFlags2.ShaderSampledReadBit;
 
+        for (int i = 0; i < boundTextures.Length; i++)
+        {
+            Texture? texture = boundTextures[i];
+            if (texture is null || !texture.IsValid || texture.Image.Handle == 0) continue;
             if (drawing && !targetIsWindow && boundTarget!.Owns(texture)) continue;
 
-            if (texture.Layout != ImageLayout.ShaderReadOnlyOptimal || (texture.LastAccess & WriteAccess) != 0)
-                Transition(texture, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags2.AllGraphicsBit | PipelineStageFlags2.ComputeShaderBit, AccessFlags2.ShaderSampledReadBit);
+            if (texture.Layout == ImageLayout.ShaderReadOnlyOptimal && (texture.LastAccess & WriteAccess) == 0)
+                continue;
+
+            EndRendering();
+            texture.Owner?.FlushPendingClears(this, texture);
+
+            barriers[count++] = BuildImageBarrier(texture, ImageLayout.ShaderReadOnlyOptimal, dstStage, dstAccess);
+            texture.Layout = ImageLayout.ShaderReadOnlyOptimal;
+            texture.LastStage = dstStage;
+            texture.LastAccess = dstAccess;
         }
+
+        if (count > 0)
+            EmitImageBarriers(barriers, count);
     }
 
     private void PrepareImages()
     {
-        foreach (Texture? image in boundImages)
+        var barriers = stackalloc ImageMemoryBarrier2[ShaderPreprocessor.IMAGE_BINDINGS];
+        uint count = 0;
+        const PipelineStageFlags2 dstStage = PipelineStageFlags2.ComputeShaderBit;
+        const AccessFlags2 dstAccess = AccessFlags2.ShaderStorageReadBit | AccessFlags2.ShaderStorageWriteBit;
+
+        for (int i = 0; i < boundImages.Length; i++)
         {
-            if (image is null || !image.IsValid) continue;
-            Transition(image, ImageLayout.General, PipelineStageFlags2.ComputeShaderBit, AccessFlags2.ShaderStorageReadBit | AccessFlags2.ShaderStorageWriteBit);
+            Texture? image = boundImages[i];
+            if (image is null || !image.IsValid || image.Image.Handle == 0) continue;
+
+            // Right after Barrier(ShaderImages), writes are already visible and the image is in General; skip re-barriering
+            if (image.Layout == ImageLayout.General && image.LastAccess == AccessFlags2.None)
+            {
+                image.LastStage = dstStage;
+                image.LastAccess = dstAccess;
+                continue;
+            }
+
+            EndRendering();
+            image.Owner?.FlushPendingClears(this, image);
+
+            barriers[count++] = BuildImageBarrier(image, ImageLayout.General, dstStage, dstAccess);
+            image.Layout = ImageLayout.General;
+            image.LastStage = dstStage;
+            image.LastAccess = dstAccess;
         }
+
+        if (count > 0)
+            EmitImageBarriers(barriers, count);
     }
 
     private const AccessFlags2 WriteAccess = AccessFlags2.ShaderWriteBit | AccessFlags2.ShaderStorageWriteBit | AccessFlags2.ColorAttachmentWriteBit | AccessFlags2.DepthStencilAttachmentWriteBit | AccessFlags2.TransferWriteBit | AccessFlags2.MemoryWriteBit;
+
+    private static bool SameBufferSetKey(ref BufferSetKey a, ref BufferSetKey b)
+    {
+        if (a.Hash != b.Hash || a.UniformsHandle != b.UniformsHandle) return false;
+        for (int i = 0; i < ShaderPreprocessor.STORAGE_BINDINGS; i++)
+        {
+            if (a.Storage[i] != b.Storage[i]) return false;
+        }
+        return true;
+    }
 
     /// <summary>Helper method to make the descriptor sets for what is bound, when anything of it changed, and bind them.</summary>
     private void BindDescriptors(PipelineBindPoint bindPoint)
@@ -552,35 +705,84 @@ public sealed unsafe partial class GraphicsDevice
 
         if (buffersDirty)
         {
-            bufferSet = frame.Descriptors.Allocate(Layouts.Buffers);
-            Statistics.Counting.DescriptorSets++;
+            BufferSetKey key = default;
+            key.UniformsHandle = frame.Uniforms.Buffer.Handle;
+            ulong hash = 14695981039346656037UL ^ key.UniformsHandle;
+            hash *= 1099511628211UL;
 
-            var infos = stackalloc DescriptorBufferInfo[2 + ShaderPreprocessor.STORAGE_BINDINGS];
-            var writes = stackalloc WriteDescriptorSet[2 + ShaderPreprocessor.STORAGE_BINDINGS];
-            uint count = 0;
-
-            infos[0] = new DescriptorBufferInfo(frame.Uniforms.Buffer, 0, UNIFORM_RANGE);
-            writes[count++] = Write(bufferSet, DescriptorLayouts.CAMERA_BINDING, DescriptorType.UniformBufferDynamic, &infos[0]);
-            infos[1] = new DescriptorBufferInfo(frame.Uniforms.Buffer, 0, UNIFORM_RANGE);
-            writes[count++] = Write(bufferSet, DescriptorLayouts.PARAMS_BINDING, DescriptorType.UniformBufferDynamic, &infos[1]);
-
-            for (uint i = 0; i < ShaderPreprocessor.STORAGE_BINDINGS; i++)
+            for (int i = 0; i < ShaderPreprocessor.STORAGE_BINDINGS; i++)
             {
-                var (buffer, offset, size) = boundStorage[i];
-                if (buffer is not { IsValid: true } || buffer.Buffer.Handle == 0 || size == 0) continue;
-
-                infos[2 + i] = new DescriptorBufferInfo(buffer.Buffer, offset, size);
-                writes[count++] = Write(bufferSet, DescriptorLayouts.FIRST_STORAGE_BINDING + i, DescriptorType.StorageBuffer, &infos[2 + i]);
-                buffer.LastUse = NextSubmission;
+                var (buffer, _, offset, size) = boundStorage[i];
+                if (buffer is { IsValid: true } && buffer.Buffer.Handle != 0 && size > 0)
+                {
+                    ulong handle = buffer.Buffer.Handle;
+                    key.Storage[i] = new StorageSlot(handle, offset, size);
+                    hash = (hash ^ handle) * 1099511628211UL;
+                    hash = (hash ^ offset) * 1099511628211UL;
+                    hash = (hash ^ size) * 1099511628211UL;
+                    buffer.LastUse = NextSubmission;
+                }
             }
+            key.Hash = hash;
 
-            Vk.UpdateDescriptorSets(Device, count, writes, 0, null);
-            buffersDirty = false;
-            offsetsDirty = true;
-            setsBoundFor = (PipelineBindPoint)(-1);
+            if (hasLastBufferSetKey && bufferSet.Handle != 0 && SameBufferSetKey(ref key, ref lastBufferSetKey))
+            {
+                buffersDirty = false;
+            }
+            else
+            {
+                bool found = false;
+                for (int i = 0; i < bufferSetCacheCount; i++)
+                {
+                    if (SameBufferSetKey(ref bufferSetCache[i].Key, ref key))
+                    {
+                        bufferSet = bufferSetCache[i].Set;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    bufferSet = frame.Descriptors.Allocate(Layouts.Buffers);
+                    Statistics.Counting.DescriptorSets++;
+
+                    var infos = stackalloc DescriptorBufferInfo[2 + ShaderPreprocessor.STORAGE_BINDINGS];
+                    var writes = stackalloc WriteDescriptorSet[2 + ShaderPreprocessor.STORAGE_BINDINGS];
+                    uint count = 0;
+
+                    infos[0] = new DescriptorBufferInfo(frame.Uniforms.Buffer, 0, UNIFORM_RANGE);
+                    writes[count++] = Write(bufferSet, DescriptorLayouts.CAMERA_BINDING, DescriptorType.UniformBufferDynamic, &infos[0]);
+                    infos[1] = new DescriptorBufferInfo(frame.Uniforms.Buffer, 0, UNIFORM_RANGE);
+                    writes[count++] = Write(bufferSet, DescriptorLayouts.PARAMS_BINDING, DescriptorType.UniformBufferDynamic, &infos[1]);
+
+                    for (uint i = 0; i < ShaderPreprocessor.STORAGE_BINDINGS; i++)
+                    {
+                        var (buffer, _, offset, size) = boundStorage[i];
+                        if (buffer is not { IsValid: true } || buffer.Buffer.Handle == 0 || size == 0) continue;
+
+                        infos[2 + i] = new DescriptorBufferInfo(buffer.Buffer, offset, size);
+                        writes[count++] = Write(bufferSet, DescriptorLayouts.FIRST_STORAGE_BINDING + i, DescriptorType.StorageBuffer, &infos[2 + i]);
+                    }
+
+                    Vk.UpdateDescriptorSets(Device, count, writes, 0, null);
+
+                    int slotIndex = bufferSetCacheCount < BUFFER_SET_CACHE_CAPACITY
+                        ? bufferSetCacheCount++
+                        : (int)(key.Hash & (BUFFER_SET_CACHE_CAPACITY - 1));
+                    bufferSetCache[slotIndex] = new BufferSetCacheEntry { Key = key, Set = bufferSet };
+                }
+
+                lastBufferSetKey = key;
+                hasLastBufferSetKey = true;
+                buffersDirty = false;
+                offsetsDirty = true;
+                setsBoundFor = (PipelineBindPoint)(-1);
+            }
         }
 
         bool push = Context.HasPushDescriptors;
+        bool needSamplers = boundShader?.UsesSeparateSamplers ?? false;
         int pushSlot = bindPoint == PipelineBindPoint.Compute ? 1 : 0;
         if (push && imagesDirty)
         {
@@ -588,7 +790,11 @@ public sealed unsafe partial class GraphicsDevice
             imagesDirty = false;
         }
 
-        if (push ? imagesPushedVersion[pushSlot] != imagesVersion : imagesDirty)
+        bool needImageUpdate = push
+            ? imagesPushedVersion[pushSlot] != imagesVersion || (needSamplers && !imagesPushedSamplers[pushSlot])
+            : imagesDirty || (needSamplers && !imageSetHasSamplers);
+
+        if (needImageUpdate)
         {
             // Pushed, the writes go straight into the command buffer and there's no set to allocate
             if (!push)
@@ -612,10 +818,13 @@ public sealed unsafe partial class GraphicsDevice
                 writes[count++] = WriteImage(push ? default : imageSet, i, DescriptorType.CombinedImageSampler, &infos[i]);
                 texture.LastUse = NextSubmission;
 
-                // The same sampler on its own, for an HLSL shader that keeps its textures and samplers apart
-                int at = ShaderPreprocessor.TEXTURE_BINDINGS + ShaderPreprocessor.IMAGE_BINDINGS + (int)i;
-                infos[at] = new DescriptorImageInfo(sampler, default, ImageLayout.Undefined);
-                writes[count++] = WriteImage(push ? default : imageSet, DescriptorLayouts.FIRST_SAMPLER_BINDING + i, DescriptorType.Sampler, &infos[at]);
+                // Only write standalone sampler bindings (12..19) when the shader actually declares them (legacy HLSL)
+                if (needSamplers)
+                {
+                    int at = ShaderPreprocessor.TEXTURE_BINDINGS + ShaderPreprocessor.IMAGE_BINDINGS + (int)i;
+                    infos[at] = new DescriptorImageInfo(sampler, default, ImageLayout.Undefined);
+                    writes[count++] = WriteImage(push ? default : imageSet, DescriptorLayouts.FIRST_SAMPLER_BINDING + i, DescriptorType.Sampler, &infos[at]);
+                }
             }
 
             for (uint i = 0; i < ShaderPreprocessor.IMAGE_BINDINGS; i++)
@@ -637,10 +846,12 @@ public sealed unsafe partial class GraphicsDevice
                     Statistics.Counting.DescriptorPushes++;
                 }
                 imagesPushedVersion[pushSlot] = imagesVersion;
+                imagesPushedSamplers[pushSlot] = needSamplers;
             }
             else
             {
                 if (count > 0) Vk.UpdateDescriptorSets(Device, count, writes, 0, null);
+                imageSetHasSamplers = needSamplers;
                 setsBoundFor = (PipelineBindPoint)(-1);
             }
             imagesDirty = false;

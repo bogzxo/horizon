@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -48,10 +49,29 @@ public static partial class ShaderCompiler
 
     private static void Append(IncrementalHash hash, string part)
     {
-        byte[] bytes = Encoding.UTF8.GetBytes(part);
+        int maxBytes = Encoding.UTF8.GetMaxByteCount(part.Length);
         Span<byte> length = stackalloc byte[8];
-        BinaryPrimitives.WriteInt64LittleEndian(length, bytes.LongLength);
-        hash.AppendData(length);
-        hash.AppendData(bytes);
+        if (maxBytes <= 256)
+        {
+            Span<byte> small = stackalloc byte[256];
+            int written = Encoding.UTF8.GetBytes(part, small);
+            BinaryPrimitives.WriteInt64LittleEndian(length, written);
+            hash.AppendData(length);
+            hash.AppendData(small[..written]);
+            return;
+        }
+
+        byte[] rented = ArrayPool<byte>.Shared.Rent(maxBytes);
+        try
+        {
+            int written = Encoding.UTF8.GetBytes(part, rented);
+            BinaryPrimitives.WriteInt64LittleEndian(length, written);
+            hash.AppendData(length);
+            hash.AppendData(rented.AsSpan(0, written));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 }

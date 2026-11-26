@@ -16,7 +16,6 @@ struct Params
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
 
 BIND_TEXTURE(0) Sampler2D uMaterial;
-BIND_TEXTURE(1) Sampler2D uSurface;
 
 BIND_IMAGE(0) [[vk::image_format("rg32ui")]] RWTexture2D<uint2> uSeeds;
 
@@ -28,8 +27,9 @@ static const float GLOWS_FROM = 0.2;
 bool2 at(int2 texel, int2 size)
 {
     texel = clamp(texel, int2(0, 0), size - 1);
-    bool blocks = uMaterial.Load(int3(texel, 0)).g > 0.5;
-    bool glows = (blocks && params.uSpritesBlock != 0) || uMaterial.Load(int3(texel, 0)).b > GLOWS_FROM;
+    float4 mat = uMaterial.Load(int3(texel, 0));
+    bool blocks = mat.g > 0.5;
+    bool glows = (blocks && params.uSpritesBlock != 0) || mat.b > GLOWS_FROM;
     return bool2(blocks, glows);
 }
 

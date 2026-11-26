@@ -18,9 +18,11 @@ public partial class TreeView
                 return -1;
             if (ease.Goal is not null || ease.Over.Active || revealSelected || revealOnly is not null || dragging || draggingBar || edited is not null)
                 return -1;
-            // Paint calls ShowingFocus() when keyboard focus ring is visible; keep painting while that flag is active.
-            if (IsFocused && TakesKeys && EnabledInHierarchy && Module?.Compositor.FocusVisible == true)
-                return -1;
+
+            bool keyed = IsFocused && TakesKeys && EnabledInHierarchy;
+            bool ringed = keyed && Module?.Compositor.FocusVisible == true;
+            if (ringed)
+                ShowingFocus();
 
             var hash = new HashCode();
 
@@ -33,10 +35,11 @@ public partial class TreeView
             hash.Add(Guides);
             hash.Add(TakesKeys);
             hash.Add(FocusLine);
-            hash.Add(IsFocused);
-            hash.Add(IsHovered);
+            hash.Add(keyed);
+            hash.Add(ringed);
             hash.Add(TypeToFind);
-            hash.Add(FindNothingText);
+            if (findShown.Length > 0 && findMissed)
+                hash.Add(FindNothingText);
             hash.Add(findShown);
             hash.Add(findMissed);
             hash.Add(scroll);
@@ -101,7 +104,7 @@ public partial class TreeView
                 hash.Add(item.Pip);
                 hash.Add(item.Icon);
                 hash.Add(item.IconColor);
-                hash.Add(item.Text);
+                hash.Add(item.wrapLine ?? item.Text);
                 hash.Add(item.Color);
                 hash.Add(item.Bold);
                 hash.Add(item.Mark);

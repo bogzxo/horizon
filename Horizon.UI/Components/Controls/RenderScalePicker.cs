@@ -122,7 +122,10 @@ public sealed class RenderScalePicker : StackPanel
 
         // The custom one is offered only when the settings have one to run
         upscalers = now.Custom is null ? BuiltIn : [.. BuiltIn, Upscaler.Custom];
-        upscaler.Options = [.. upscalers.Select(RenderScalePlan.NameOf)];
+        var names = new string[upscalers.Length];
+        for (int i = 0; i < upscalers.Length; i++)
+            names[i] = RenderScalePlan.NameOf(upscalers[i]);
+        upscaler.Options = names;
         upscaler.Index = Math.Max(0, Array.IndexOf(upscalers, now.Upscaler));
         sharpness.Index = Nearest(SharpnessValues, now.Sharpness, from: 0);
         composition.Index = now.Composition == RenderComposition.WholeFrame ? 1 : 0;

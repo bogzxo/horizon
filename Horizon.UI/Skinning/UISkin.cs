@@ -67,7 +67,17 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     // components ask for art a skin might not have on every single frame.
     private readonly ConcurrentDictionary<string, Art?> arts = new();
     private readonly ConcurrentDictionary<string, IconArt?> iconArts = new();
-    private readonly ConcurrentDictionary<string, UIRegion> regions = new();
+    private readonly ConcurrentDictionary<string, UIRegion?> regions = new();
+    private int regionLookupMissComputes;
+
+    // Bumped whenever any skin's atlas updates its texture so glass backdrop caches invalidate on atlas growth.
+    private static long atlasGeneration = 1;
+
+    /// <summary>Monotonically incremented whenever a skin atlas updates its GPU texture.</summary>
+    internal static long AtlasGeneration => Volatile.Read(ref atlasGeneration);
+
+    /// <summary>How many times <see cref="Lookup"/> ran for a missing region name, for unit tests.</summary>
+    internal int RegionLookupMissComputes => Volatile.Read(ref regionLookupMissComputes);
 
     /// <summary>The texture the art of the skin is stitched into.</summary>
     public TextureAtlas Atlas { get; } = new();
@@ -233,7 +243,10 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
         // The atlas belongs to nobody, least of all to the scene that happened to be drawing when it grew
         using var nobody = Horizon.Content.AssetScope.EnterGlobal();
-        return Atlas.Update();
+        bool updated = Atlas.Update();
+        if (updated)
+            Interlocked.Increment(ref atlasGeneration);
+        return updated;
     }
 
     /// <summary>
@@ -291,11 +304,28 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     /// </summary>
     public bool TryGetRegion(string name, out UIRegion region)
     {
-        if (regions.TryGetValue(name, out region))
-            return true;
+        if (regions.TryGetValue(name, out UIRegion? cached))
+        {
+            if (cached is { } found)
+            {
+                region = found;
+                return true;
+            }
 
-        if (name.Length == 0 || Describe(name) is not { } art)
+            region = default;
             return false;
+        }
+
+        region = default;
+        if (name.Length == 0)
+            return false;
+
+        if (Describe(name) is not { } art)
+        {
+            // Negative-cache permanent misses directly in regions so repeated optional-art queries hit one lookup.
+            regions[name] = null;
+            return false;
+        }
 
         Atlas.Request(art.Key, art.Source.File ?? ContentFiles.Find(art.Source.Path), art.Source.X, art.Source.Y, art.Source.Width, art.Source.Height, art.Source.Layer);
         if (!Atlas.TryGet(art.Key, out var placed))
@@ -548,6 +578,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         }
         else if (Sheet is null || !Sheet.TryGetSprite(name + frame, ArtLayer, out source))
         {
+            Interlocked.Increment(ref regionLookupMissComputes);
             return null;
         }
 
@@ -620,11 +651,10 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         try
         {
             var properties = ReadProperties(directory, file, 0);
-            List<UITheme> themes = ReadThemes(directory, properties);
-            UITheme? worn = ApplyTheme(properties, themes, theme);
+            var (themeNames, worn) = ReadAndApplyThemeLazy(directory, properties, theme);
 
             UISkin skin = Read(directory, file, properties, worn);
-            skin.Themes = [.. themes.Select(found => found.Name)];
+            skin.Themes = themeNames;
             return skin;
         }
         catch (Exception e)

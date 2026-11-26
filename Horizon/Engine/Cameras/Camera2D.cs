@@ -53,7 +53,11 @@ public class Camera2D : Camera
     /// </summary>
     private void UpdateLens()
     {
-        Projection = Matrix4x4.CreateOrthographic(Size.X * Zoom, Size.Y * Zoom, 0.1f, 1000.0f);
+        float width = Size.X * Zoom;
+        float height = Size.Y * Zoom;
+        Projection = width > 0.0f && height > 0.0f
+            ? Matrix4x4.CreateOrthographic(width, height, 0.1f, 1000.0f)
+            : Matrix4x4.Identity;
         UpdateMatrices();
     }
 

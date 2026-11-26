@@ -89,9 +89,10 @@ public sealed class ArtPicker : Panel
     public static ArtPicker Show(UIModule module, UISkin art, string current, Action<string> picked)
     {
         // Only one at a time
-        foreach (var other in module.Root.Children)
+        IReadOnlyList<UIComponent> rootChildren = module.Root.Children;
+        for (int i = 0; i < rootChildren.Count; i++)
         {
-            if (other is ArtPicker open)
+            if (rootChildren[i] is ArtPicker open)
             {
                 open.Close();
                 break;
@@ -125,8 +126,8 @@ public sealed class ArtPicker : Panel
     /// <summary>Helper method to list the art whose name has what was typed in it.</summary>
     private void List()
     {
-        foreach (var tile in grid.Children.ToArray())
-            grid.Remove(tile);
+        for (int i = grid.Children.Count - 1; i >= 0; i--)
+            grid.Remove(grid.Children[i]);
 
         string wanted = filter.Text.Trim();
         int shown = 0;

@@ -1,4 +1,9 @@
 using System;
+using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Threading;
 
 namespace Horizon.Audio;
 
@@ -57,25 +62,55 @@ public sealed class AudioMixer
     private readonly Voice[] voices = new Voice[MAX_VOICES];
     private readonly float[] buses = [1.0f, 1.0f, 1.0f];
     private readonly object gate = new();
+    private float masterVolume = 1.0f;
+    private int _activeVoices;
     private int nextId = 1;
     private long started;
     private SoundHandle music;
 
+    // Stream currently being decoded outside gate, so Release defers disposal until decode finishes
+    private IAudioStream? decodingStream;
+    private bool disposeDecodingStream;
+    private int sampleRate;
+
     /// <summary>The frames a second it mixes at, the device's.</summary>
-    public int SampleRate { get; }
+    public int SampleRate => Volatile.Read(ref sampleRate);
 
     /// <summary>The volume of everything, 0 to 1.</summary>
-    public float MasterVolume { get; set; } = 1.0f;
+    public float MasterVolume
+    {
+        get => Volatile.Read(ref masterVolume);
+        set => Volatile.Write(ref masterVolume, value);
+    }
 
     public AudioMixer(int sampleRate)
     {
-        SampleRate = Math.Max(1, sampleRate);
+        this.sampleRate = Math.Max(1, sampleRate);
+    }
+
+    /// <summary>Updates the output sample rate under the mixer lock if the opened device negotiates a different rate.</summary>
+    internal void SetSampleRate(int newSampleRate)
+    {
+        int clamped = Math.Max(1, newSampleRate);
+        lock (gate)
+        {
+            int oldRate = sampleRate;
+            if (clamped == oldRate) return;
+            Volatile.Write(ref sampleRate, clamped);
+
+            float ratio = (float)oldRate / clamped;
+            for (int i = 0; i < voices.Length; i++)
+            {
+                if (voices[i].IsPlaying && voices[i].FadeStep > 0.0f)
+                    voices[i].FadeStep *= ratio;
+            }
+        }
     }
 
     /// <summary>The volume of a bus, 0 to 1.</summary>
-    public float VolumeOf(AudioBus bus) => buses[(int)bus];
+    public float VolumeOf(AudioBus bus) => Volatile.Read(ref buses[(int)bus]);
 
-    public void SetVolume(AudioBus bus, float volume) => buses[(int)bus] = Math.Clamp(volume, 0.0f, 1.0f);
+    public void SetVolume(AudioBus bus, float volume) => Volatile.Write(ref buses[(int)bus], Math.Clamp(volume, 0.0f, 1.0f));
 
     /// <summary>How many voices are playing, for a test or the debugger.</summary>
     public int Playing
@@ -109,7 +144,7 @@ public sealed class AudioMixer
             {
                 Sound = sound,
                 Volume = volume,
-                Pitch = Math.Max(0.01f, pitch),
+                Pitch = float.IsFinite(pitch) ? Math.Max(0.01f, pitch) : 1.0f,
                 Pan = Math.Clamp(pan, -1.0f, 1.0f),
                 Bus = bus,
                 Loop = loop,
@@ -118,6 +153,7 @@ public sealed class AudioMixer
                 Fade = 1.0f,
                 FadeTarget = 1.0f
             };
+            Volatile.Write(ref _activeVoices, _activeVoices + 1);
             return new SoundHandle(slot, voice.Id);
         }
     }
@@ -148,6 +184,7 @@ public sealed class AudioMixer
                 FadeTarget = 1.0f,
                 FadeStep = fade > 0.0f ? 1.0f / (fade * SampleRate) : 0.0f
             };
+            Volatile.Write(ref _activeVoices, _activeVoices + 1);
             return music = new SoundHandle(slot, voice.Id);
         }
     }
@@ -190,27 +227,67 @@ public sealed class AudioMixer
 
     /// <summary>
     /// Mixes the next stretch of everything that plays into a span, two floats (left, right) a frame, as many frames as
-    /// fit. What was in it is written over.
+    /// fit. What was in it is written over. Returns whether any voice was active.
     /// </summary>
-    public void Mix(Span<float> output)
+    public bool Mix(Span<float> output)
     {
         output.Clear();
-        int frames = output.Length / 2;
+        if (Volatile.Read(ref _activeVoices) == 0) return false;
 
-        lock (gate)
+        int frames = output.Length / 2;
+        bool active = false;
+        bool lockTaken = false;
+
+        try
         {
+            Monitor.Enter(gate, ref lockTaken);
             for (int i = 0; i < voices.Length; i++)
             {
                 ref Voice voice = ref voices[i];
                 if (!voice.IsPlaying) continue;
+                active = true;
 
-                if (voice.Stream is not null) MixStream(ref voice, output, frames);
+                if (voice.Stream is not null) MixStream(i, output, frames, ref lockTaken);
                 else MixSound(ref voice, output, frames);
             }
         }
+        finally
+        {
+            if (lockTaken) Monitor.Exit(gate);
+        }
+
+        if (!active) return false;
 
         // Too many loud things at once is clipped rather than wrapped round into a crack
-        for (int i = 0; i < output.Length; i++) output[i] = Math.Clamp(output[i], -1.0f, 1.0f);
+        ClampOutput(output);
+        return true;
+    }
+
+    internal static void ClampOutput(Span<float> output)
+    {
+        int i = 0;
+        if (Vector.IsHardwareAccelerated && output.Length >= Vector<float>.Count)
+        {
+            int width = Vector<float>.Count;
+            int limit = output.Length - width;
+            var min = new Vector<float>(-1.0f);
+            var max = new Vector<float>(1.0f);
+
+            for (; i <= limit; i += width)
+            {
+                var samples = new Vector<float>(output.Slice(i));
+                // Replace NaN lanes with silence deterministically across x86 and ARM
+                samples = Vector.ConditionalSelect(Vector.Equals(samples, samples), samples, Vector<float>.Zero);
+                samples = Vector.Min(Vector.Max(samples, min), max);
+                samples.CopyTo(output.Slice(i));
+            }
+        }
+
+        for (; i < output.Length; i++)
+        {
+            float sample = output[i];
+            output[i] = float.IsNaN(sample) ? 0.0f : Math.Clamp(sample, -1.0f, 1.0f);
+        }
     }
 
     private void MixSound(ref Voice voice, Span<float> output, int frames)
@@ -225,10 +302,47 @@ public sealed class AudioMixer
         left *= Sound.SCALE;
         right *= Sound.SCALE;
 
+        // Segment-clamped SIMD 1:1 stereo fast path when pitch/sample-rate match, not fading, and frame-aligned
+        if (step == 1.0 && voice.FadeStep == 0.0f && voice.Position == Math.Truncate(voice.Position))
+        {
+            if (voice.StopWhenSilent && voice.Fade <= 0.0f)
+            {
+                if (frames > 0) Release(ref voice);
+                return;
+            }
+
+            float gainL = left * voice.Fade;
+            float gainR = right * voice.Fade;
+            int frame = 0;
+
+            while (frame < frames)
+            {
+                if (voice.Position >= length || voice.Position < 0.0)
+                {
+                    if (!voice.Loop)
+                    {
+                        Release(ref voice);
+                        return;
+                    }
+
+                    voice.Position %= length;
+                    if (voice.Position < 0.0) voice.Position += length;
+                    if (voice.Position >= length) voice.Position = 0.0;
+                }
+
+                int at = (int)voice.Position;
+                int chunk = Math.Min(frames - frame, length - at);
+                MixStereo1To1Simd(samples.AsSpan(at * 2, chunk * 2), output.Slice(frame * 2, chunk * 2), gainL, gainR);
+                frame += chunk;
+                voice.Position += chunk;
+            }
+
+            return;
+        }
+
         for (int frame = 0; frame < frames; frame++)
         {
-            int at = (int)voice.Position;
-            if (at >= length)
+            if (voice.Position >= length || voice.Position < 0.0)
             {
                 if (!voice.Loop)
                 {
@@ -236,10 +350,12 @@ public sealed class AudioMixer
                     return;
                 }
 
-                voice.Position -= length;
-                at = (int)voice.Position;
+                voice.Position %= length;
+                if (voice.Position < 0.0) voice.Position += length;
+                if (voice.Position >= length) voice.Position = 0.0;
             }
 
+            int at = (int)voice.Position;
             float t = (float)(voice.Position - at);
             int next = at + 1 < length ? at + 1 : voice.Loop ? 0 : at;
             float fade = StepFade(ref voice);
@@ -256,33 +372,97 @@ public sealed class AudioMixer
         }
     }
 
-    private void MixStream(ref Voice voice, Span<float> output, int frames)
+    private void MixStream(int slot, Span<float> output, int frames, ref bool lockTaken)
     {
+        ref Voice voice = ref voices[slot];
+        int id = voice.Id;
         IAudioStream stream = voice.Stream!;
         float[] buffer = voice.Buffer!;
         double step = voice.Pitch * stream.SampleRate / SampleRate;
         Gains(in voice, out float left, out float right);
 
-        for (int frame = 0; frame < frames; frame++)
-        {
-            int at = (int)voice.Position;
+        int frame = 0;
 
-            // Running out of what was decoded, what's left is moved to the front and more read in after it
-            if (at + 1 >= voice.Buffered)
+        // Segment-clamped SIMD 1:1 stereo fast path when pitch/sample-rate match, not fading, and frame-aligned
+        if (step == 1.0 && voice.FadeStep == 0.0f && voice.Position == Math.Truncate(voice.Position))
+        {
+            if (voice.StopWhenSilent && voice.Fade <= 0.0f)
             {
-                Refill(ref voice);
-                at = (int)voice.Position;
-                if (at + 1 >= voice.Buffered && voice.Ended)
+                if (frames > 0) Release(ref voice);
+                return;
+            }
+
+            float gainL = left * voice.Fade;
+            float gainR = right * voice.Fade;
+
+            while (frame < frames)
+            {
+                int at = (int)voice.Position;
+                if (at >= voice.Buffered && !voice.Ended)
+                {
+                    if (!RefillUnlocked(slot, id, ref lockTaken))
+                        return;
+
+                    voice = ref voices[slot];
+                    step = voice.Pitch * stream.SampleRate / SampleRate;
+                    Gains(in voice, out left, out right);
+                    if (step != 1.0 || voice.FadeStep != 0.0f || voice.Position != Math.Truncate(voice.Position))
+                        break;
+
+                    if (voice.StopWhenSilent && voice.Fade <= 0.0f)
+                    {
+                        Release(ref voice);
+                        return;
+                    }
+
+                    gainL = left * voice.Fade;
+                    gainR = right * voice.Fade;
+                    at = (int)voice.Position;
+                }
+
+                if (at >= voice.Buffered)
                 {
                     Release(ref voice);
                     return;
                 }
+
+                int chunk = Math.Min(frames - frame, voice.Buffered - at);
+                MixFloatStereo1To1Simd(buffer.AsSpan(at * 2, chunk * 2), output.Slice(frame * 2, chunk * 2), gainL, gainR);
+                frame += chunk;
+                voice.Position += chunk;
             }
 
+            if (frame >= frames)
+                return;
+        }
+
+        for (; frame < frames; frame++)
+        {
+            int at = (int)voice.Position;
+
+            // Running out of what was decoded, what's left is moved to the front and more read in after it
+            if (at + 1 >= voice.Buffered && !voice.Ended)
+            {
+                if (!RefillUnlocked(slot, id, ref lockTaken))
+                    return;
+
+                voice = ref voices[slot];
+                step = voice.Pitch * stream.SampleRate / SampleRate;
+                Gains(in voice, out left, out right);
+                at = (int)voice.Position;
+            }
+
+            if (at >= voice.Buffered)
+            {
+                Release(ref voice);
+                return;
+            }
+
+            int next = at + 1 < voice.Buffered ? at + 1 : at;
             float t = (float)(voice.Position - at);
             float fade = StepFade(ref voice);
-            output[frame * 2] += (buffer[at * 2] + (buffer[at * 2 + 2] - buffer[at * 2]) * t) * left * fade;
-            output[frame * 2 + 1] += (buffer[at * 2 + 1] + (buffer[at * 2 + 3] - buffer[at * 2 + 1]) * t) * right * fade;
+            output[frame * 2] += (buffer[at * 2] + (buffer[next * 2] - buffer[at * 2]) * t) * left * fade;
+            output[frame * 2 + 1] += (buffer[at * 2 + 1] + (buffer[next * 2 + 1] - buffer[at * 2 + 1]) * t) * right * fade;
             voice.Position += step;
 
             if (voice.StopWhenSilent && voice.Fade <= 0.0f)
@@ -293,30 +473,95 @@ public sealed class AudioMixer
         }
     }
 
-    private static void Refill(ref Voice voice)
+    // Decodes the next chunk of a stream with gate released so Play/Stop/SetVolume on the simulation thread never stall
+    private bool RefillUnlocked(int slot, int id, ref bool lockTaken)
     {
+        ref Voice voice = ref voices[slot];
+        IAudioStream stream = voice.Stream!;
         float[] buffer = voice.Buffer!;
-        int keep = Math.Max(0, voice.Buffered - (int)voice.Position);
-        int from = (int)voice.Position;
-        Array.Copy(buffer, from * 2, buffer, 0, keep * 2);
+        int from = Math.Max(0, (int)voice.Position);
+        int keep = Math.Max(0, voice.Buffered - from);
+        if (keep > 0 && from > 0)
+            Array.Copy(buffer, from * 2, buffer, 0, keep * 2);
         voice.Position -= from;
         voice.Buffered = keep;
 
-        int room = buffer.Length / 2 - voice.Buffered;
-        while (room > 0 && !voice.Ended)
+        int start = voice.Buffered;
+        int room = buffer.Length / 2 - start;
+        bool loop = voice.Loop;
+        bool ended = voice.Ended;
+
+        decodingStream = stream;
+        disposeDecodingStream = false;
+
+        int added = 0;
+        bool threw = false;
+
+        Monitor.Exit(gate);
+        lockTaken = false;
+        try
         {
-            int got = voice.Stream!.Read(buffer.AsSpan(voice.Buffered * 2, room * 2));
-            if (got > 0)
+            bool rewoundEmpty = false;
+            while (room > 0 && !ended)
             {
-                voice.Buffered += got;
-                room -= got;
+                int got = stream.Read(buffer.AsSpan((start + added) * 2, room * 2));
+                if (got > 0)
+                {
+                    added += got;
+                    room -= got;
+                    rewoundEmpty = false;
+                }
+                else if (loop && !rewoundEmpty)
+                {
+                    stream.Rewind();
+                    rewoundEmpty = true;
+                }
+                else
+                {
+                    ended = true;
+                }
             }
-            else if (voice.Loop) voice.Stream.Rewind();
-            else voice.Ended = true;
         }
+        catch
+        {
+            threw = true;
+            throw;
+        }
+        finally
+        {
+            Monitor.Enter(gate, ref lockTaken);
+            decodingStream = null;
+            bool shouldDispose = disposeDecodingStream;
+            disposeDecodingStream = false;
+
+            if (shouldDispose)
+            {
+                Monitor.Exit(gate);
+                lockTaken = false;
+                try
+                {
+                    stream.Dispose();
+                }
+                finally
+                {
+                    Monitor.Enter(gate, ref lockTaken);
+                }
+            }
+            else if (threw && voices[slot].Id == id && ReferenceEquals(voices[slot].Stream, stream))
+            {
+                Release(ref voices[slot]);
+            }
+        }
+
+        if (voices[slot].Id != id || !ReferenceEquals(voices[slot].Stream, stream))
+            return false;
+
+        voices[slot].Buffered += added;
+        voices[slot].Ended = ended;
+        return true;
     }
 
-    private float VolumeOf(in Voice voice) => voice.Volume * buses[(int)voice.Bus] * MasterVolume;
+    private float VolumeOf(in Voice voice) => voice.Volume * Volatile.Read(ref buses[(int)voice.Bus]) * Volatile.Read(ref masterVolume);
 
     private void Gains(in Voice voice, out float left, out float right)
     {
@@ -385,9 +630,96 @@ public sealed class AudioMixer
         return chosen;
     }
 
-    private static void Release(ref Voice voice)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void MixStereo1To1Simd(ReadOnlySpan<short> src, Span<float> dst, float gainL, float gainR)
     {
-        voice.Stream?.Dispose();
+        int count = src.Length;
+        int i = 0;
+
+        if (Vector128.IsHardwareAccelerated && count >= 8)
+        {
+            Vector128<float> gains = Vector128.Create(gainL, gainR, gainL, gainR);
+            ref short srcRef = ref MemoryMarshal.GetReference(src);
+            ref float dstRef = ref MemoryMarshal.GetReference(dst);
+            int limit = count - 8;
+
+            for (; i <= limit; i += 8)
+            {
+                Vector128<short> s16 = Vector128.LoadUnsafe(ref srcRef, (nuint)i);
+                (Vector128<int> lo32, Vector128<int> hi32) = Vector128.Widen(s16);
+                Vector128<float> loF = Vector128.ConvertToSingle(lo32);
+                Vector128<float> hiF = Vector128.ConvertToSingle(hi32);
+
+                Vector128<float> outLo = Vector128.LoadUnsafe(ref dstRef, (nuint)i);
+                Vector128<float> outHi = Vector128.LoadUnsafe(ref dstRef, (nuint)(i + 4));
+
+                Vector128.StoreUnsafe(outLo + loF * gains, ref dstRef, (nuint)i);
+                Vector128.StoreUnsafe(outHi + hiF * gains, ref dstRef, (nuint)(i + 4));
+            }
+        }
+
+        for (; i < count; i += 2)
+        {
+            dst[i] += src[i] * gainL;
+            dst[i + 1] += src[i + 1] * gainR;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static void MixFloatStereo1To1Simd(ReadOnlySpan<float> src, Span<float> dst, float gainL, float gainR)
+    {
+        int count = src.Length;
+        int i = 0;
+
+        if (Vector256.IsHardwareAccelerated && count >= 8)
+        {
+            Vector256<float> gains = Vector256.Create(gainL, gainR, gainL, gainR, gainL, gainR, gainL, gainR);
+            ref float srcRef = ref MemoryMarshal.GetReference(src);
+            ref float dstRef = ref MemoryMarshal.GetReference(dst);
+            int limit = count - 8;
+
+            for (; i <= limit; i += 8)
+            {
+                Vector256<float> samples = Vector256.LoadUnsafe(ref srcRef, (nuint)i);
+                Vector256<float> acc = Vector256.LoadUnsafe(ref dstRef, (nuint)i);
+                Vector256.StoreUnsafe(acc + samples * gains, ref dstRef, (nuint)i);
+            }
+        }
+
+        if (Vector128.IsHardwareAccelerated && i <= count - 4)
+        {
+            Vector128<float> gains = Vector128.Create(gainL, gainR, gainL, gainR);
+            ref float srcRef = ref MemoryMarshal.GetReference(src);
+            ref float dstRef = ref MemoryMarshal.GetReference(dst);
+            int limit = count - 4;
+
+            for (; i <= limit; i += 4)
+            {
+                Vector128<float> samples = Vector128.LoadUnsafe(ref srcRef, (nuint)i);
+                Vector128<float> acc = Vector128.LoadUnsafe(ref dstRef, (nuint)i);
+                Vector128.StoreUnsafe(acc + samples * gains, ref dstRef, (nuint)i);
+            }
+        }
+
+        for (; i < count; i += 2)
+        {
+            dst[i] += src[i] * gainL;
+            dst[i + 1] += src[i + 1] * gainR;
+        }
+    }
+
+    private void Release(ref Voice voice)
+    {
+        if (!voice.IsPlaying) return;
+
+        if (voice.Stream is { } stream)
+        {
+            if (ReferenceEquals(stream, decodingStream))
+                disposeDecodingStream = true;
+            else
+                stream.Dispose();
+        }
         voice = default;
+        Volatile.Write(ref _activeVoices, _activeVoices - 1);
     }
 }

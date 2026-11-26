@@ -28,7 +28,7 @@ public sealed class DebugAdapterConnection : IDisposable
     private readonly Lock writing = new();
     private readonly ConcurrentDictionary<int, (string Command, TaskCompletionSource<JsonNode?> Waiting)> pending = new();
     private int nextSeq;
-    private volatile bool closed;
+    private int closedState;
 
     /// <summary>An event, its name and body, on the reading thread.</summary>
     public Action<string, JsonNode?>? OnEvent { get; set; }
@@ -37,7 +37,7 @@ public sealed class DebugAdapterConnection : IDisposable
     public Action<Exception?>? Closed { get; set; }
 
     /// <summary>Whether the adapter has gone.</summary>
-    public bool IsClosed => closed;
+    public bool IsClosed => Volatile.Read(ref closedState) != 0;
 
     public DebugAdapterConnection(Stream input, Stream output)
     {
@@ -75,13 +75,16 @@ public sealed class DebugAdapterConnection : IDisposable
 
     private void Send(JsonObject message)
     {
-        if (closed)
+        if (IsClosed)
             throw new InvalidOperationException("The debugger has gone.");
 
         // Node by node (the serializer proper wants reflection a trimmed application hasn't got) into a buffer the
         // writer keeps, so it's made under the lock that writes it
         lock (writing)
         {
+            if (IsClosed)
+                throw new InvalidOperationException("The debugger has gone.");
+
             try
             {
                 writer.Make(message);
@@ -99,7 +102,7 @@ public sealed class DebugAdapterConnection : IDisposable
         Exception? broke = null;
         try
         {
-            while (!closed)
+            while (!IsClosed)
             {
                 if (ReadMessage() is not { } body)
                     break;
@@ -129,7 +132,7 @@ public sealed class DebugAdapterConnection : IDisposable
         }
         catch (Exception e) when (e is IOException or ObjectDisposedException or OperationCanceledException)
         {
-            broke = closed ? null : e;
+            broke = IsClosed ? null : e;
         }
         catch (Exception e)
         {
@@ -149,8 +152,12 @@ public sealed class DebugAdapterConnection : IDisposable
 
     // One framed message, null at the end of the stream, good until the next is read. A debugger that writes a line of
     // its own before the first header (netcoredbg can) is let say it
-    private ReadOnlyMemory<byte>? ReadMessage() =>
-        framing.ReadHeaders(overBlankLinesFirst: true) is int length ? framing.ReadBody(length) : null;
+    private ReadOnlyMemory<byte>? ReadMessage()
+    {
+        if (framing.ReadHeaders(overBlankLinesFirst: true) is not int length)
+            return null;
+        return length < 0 ? ReadOnlyMemory<byte>.Empty : framing.ReadBody(length);
+    }
 
     private void Dispatch(JsonObject message)
     {
@@ -172,14 +179,16 @@ public sealed class DebugAdapterConnection : IDisposable
 
             case "request":
                 // The adapter asking for something of ours (runInTerminal), which this side doesn't do
+                message.Remove("seq", out JsonNode? requestSeq);
+                message.Remove("command", out JsonNode? requestCommand);
                 try
                 {
                     Send(new JsonObject
                     {
                         ["seq"] = Interlocked.Increment(ref nextSeq),
                         ["type"] = "response",
-                        ["request_seq"] = message["seq"]?.DeepClone(),
-                        ["command"] = message["command"]?.DeepClone(),
+                        ["request_seq"] = requestSeq,
+                        ["command"] = requestCommand,
                         ["success"] = false,
                         ["message"] = "not done here"
                     });
@@ -192,30 +201,32 @@ public sealed class DebugAdapterConnection : IDisposable
         }
     }
 
-    private void Close(Exception? why)
+    private void DrainPending(Exception error)
     {
-        if (closed && pending.IsEmpty)
-        {
-            Closed?.Invoke(why);
-            Closed = null;
-            return;
-        }
-
-        closed = true;
         foreach (var (seq, waiting) in pending)
         {
-            pending.TryRemove(seq, out _);
-            waiting.Waiting.TrySetException(why ?? new IOException("The debugger has gone."));
+            if (pending.TryRemove(seq, out _))
+                waiting.Waiting.TrySetException(error);
         }
+    }
 
+    private void Close(Exception? why)
+    {
+        if (Interlocked.Exchange(ref closedState, 1) != 0)
+            return;
+
+        DrainPending(why ?? new IOException("The debugger has gone."));
         Closed?.Invoke(why);
         Closed = null;
     }
 
     public void Dispose()
     {
-        closed = true;
-        try { output.Dispose(); } catch (Exception) { }
+        bool firstClose = Interlocked.Exchange(ref closedState, 1) == 0;
+        lock (writing)
+        {
+            try { output.Dispose(); } catch (Exception) { }
+        }
 
         // On Linux and macOS letting go of a pipe waits for a read of it on another thread to return, the reading
         // thread's, which is when the debugger goes, so it's let go of off the caller's thread (JsonRpcConnection too)
@@ -223,6 +234,12 @@ public sealed class DebugAdapterConnection : IDisposable
         {
             try { input.Dispose(); } catch (Exception) { }
         });
-        Close(null);
+
+        DrainPending(new IOException("The debugger has gone."));
+        if (firstClose)
+        {
+            Closed?.Invoke(null);
+            Closed = null;
+        }
     }
 }

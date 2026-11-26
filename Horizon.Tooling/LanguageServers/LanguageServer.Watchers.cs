@@ -9,7 +9,7 @@ namespace Horizon.UI.Scripting;
 // csharp-ls asks for **/*.{cs,cshtml,csproj,sln,slnx}, and was told of every chat Hex saved as it streamed.
 public sealed partial class LanguageServer
 {
-    private sealed record Watcher(string Id, Regex Glob, string? Under, int Kinds);
+    private sealed record Watcher(string Id, Regex? Glob, string[]? Suffixes, string? Under, int Kinds);
 
     private readonly Lock watching = new();
     private readonly List<Watcher> watchers = [];
@@ -43,15 +43,22 @@ public sealed partial class LanguageServer
                     continue;
 
                 // A pattern under a folder of its own goes by the path from there, a bare one by the whole path
-                string against = full;
+                ReadOnlySpan<char> against = full.AsSpan();
                 if (watcher.Under is { } under)
                 {
-                    if (!full.StartsWith(under, StringComparison.OrdinalIgnoreCase))
+                    if (!against.StartsWith(under.AsSpan(), StringComparison.OrdinalIgnoreCase))
                         continue;
-                    against = full[under.Length..];
+                    against = against[under.Length..];
                 }
-                if (watcher.Glob.IsMatch(against))
+                if (watcher.Suffixes is { } suffixes)
+                {
+                    if (MatchesSuffixes(against, suffixes))
+                        return true;
+                }
+                else if (watcher.Glob!.IsMatch(against))
+                {
                     return true;
+                }
             }
             return false;
         }
@@ -115,14 +122,98 @@ public sealed partial class LanguageServer
 
         if (string.IsNullOrEmpty(pattern))
             return null;
+        if (TryParseSuffixGlob(pattern, under is null, out string[]? suffixes))
+            return new Watcher(id, null, suffixes, under, kinds);
         try
         {
-            return new Watcher(id, GlobRegex(pattern, under is null), under, kinds);
+            return new Watcher(id, GlobRegex(pattern, under is null), null, under, kinds);
         }
         catch (ArgumentException)
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Parses simple extension globs (<c>**/*.ext</c>, <c>**/*.{a,b,c}</c>, and when <paramref name="anywhere"/> is true
+    /// bare <c>*.ext</c> / <c>*.{a,b,c}</c>) into a zero-alloc suffix list so <see cref="Watches"/> avoids Regex overhead.
+    /// </summary>
+    internal static bool TryParseSuffixGlob(string glob, bool anywhere, out string[]? suffixes)
+    {
+        suffixes = null;
+        ReadOnlySpan<char> span = glob.AsSpan();
+        if (span.StartsWith("**/", StringComparison.Ordinal))
+            span = span[3..];
+        else if (!anywhere)
+            return false;
+
+        if (!span.StartsWith("*.", StringComparison.Ordinal) || span.Length <= 2)
+            return false;
+
+        ReadOnlySpan<char> ext = span[2..];
+        if (ext[0] == '{' && ext[^1] == '}')
+        {
+            ReadOnlySpan<char> inner = ext[1..^1];
+            if (inner.IsEmpty || HasGlobMeta(inner))
+                return false;
+
+            int count = 1;
+            for (int i = 0; i < inner.Length; i++)
+                if (inner[i] == ',') count++;
+
+            var list = new string[count];
+            int idx = 0;
+            int start = 0;
+            for (int i = 0; i <= inner.Length; i++)
+            {
+                if (i == inner.Length || inner[i] == ',')
+                {
+                    ReadOnlySpan<char> part = inner[start..i];
+                    if (part.IsEmpty)
+                        return false;
+                    list[idx++] = "." + part.ToString();
+                    start = i + 1;
+                }
+            }
+            suffixes = list;
+            return true;
+        }
+
+        if (HasGlobMeta(ext) || ext.Contains(','))
+            return false;
+
+        suffixes = ["." + ext.ToString()];
+        return true;
+    }
+
+    private static bool HasGlobMeta(ReadOnlySpan<char> span)
+    {
+        for (int i = 0; i < span.Length; i++)
+        {
+            switch (span[i])
+            {
+                case '*':
+                case '?':
+                case '{':
+                case '}':
+                case '[':
+                case ']':
+                case '/':
+                case '\\':
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    internal static bool MatchesSuffixes(ReadOnlySpan<char> path, string[] suffixes)
+    {
+        for (int i = 0; i < suffixes.Length; i++)
+        {
+            if (path.EndsWith(suffixes[i].AsSpan(), StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>

@@ -44,7 +44,7 @@ public sealed unsafe partial class GraphicsDevice
     /// <summary>Helper method for <see cref="CopyWindow"/> while the scene stands in for the window, a blit of its colours.</summary>
     private void CopySceneTarget(RenderTarget scene, RenderTarget into, uint width, uint height)
     {
-        if (scene.ColorTextures.Length == 0 || scene.ColorTextures[0] is not { } source || into.ColorTextures[0] is not { } destination)
+        if (scene.ColorTextures.Length == 0 || into.ColorTextures.Length == 0 || scene.ColorTextures[0] is not { } source || into.ColorTextures[0] is not { } destination)
             return;
 
         EndRendering();

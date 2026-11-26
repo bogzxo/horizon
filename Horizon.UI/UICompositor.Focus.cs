@@ -44,7 +44,7 @@ public partial class UICompositor
     {
         for (int i = snapshot.Length - 1; i >= 0; i--)
         {
-            if (snapshot[i].Enabled && snapshot[i].Popup is { TakesPopupKeys: true } popup)
+            if (snapshot[i].Enabled && snapshot[i].ActivePopup is { TakesPopupKeys: true } popup)
                 return popup;
         }
 
@@ -75,7 +75,7 @@ public partial class UICompositor
         UIComponent? before = window.KeyboardBefore;
         for (int depth = 0; depth < 8 && before is not null; depth++)
         {
-            if (before.IsShownInHierarchy && !leaving.Holds(before))
+            if (before.IsShownInHierarchy && before.EnabledInHierarchy && !leaving.Holds(before))
                 return before;
 
             if (WindowOf(before) is not { } around)
@@ -111,19 +111,19 @@ public partial class UICompositor
         if (focus is not { } lost)
             return;
 
-        bool left = lost.Module is not { Enabled: true };
+        if (lost.IsShownInHierarchy && lost.EnabledInHierarchy)
+            return;
+
         WindowPanel? window = WindowOf(lost);
         if (window is null)
         {
-            if (left)
-                Focus = null;
+            Focus = null;
             return;
         }
 
-        if (window.IsShownInHierarchy)
+        if (window != lost && window.IsShownInHierarchy && window.EnabledInHierarchy)
         {
-            if (left)
-                Focus = window;
+            Focus = window;
             return;
         }
 

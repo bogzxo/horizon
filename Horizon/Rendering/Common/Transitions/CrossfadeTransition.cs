@@ -17,7 +17,7 @@ public sealed class CrossfadeTransition : ScreenTransition
 {
     private const string UNIFORM_AMOUNT = "uAmount";
 
-    private PostTechnique mix = null!;
+    private PostTechnique? mix;
 
     // The old scene's last frame, and the new one as it's drawn
     private PostTarget? outgoing, current;
@@ -51,6 +51,9 @@ public sealed class CrossfadeTransition : ScreenTransition
 
         if (!kept || outgoing is null)
             return;
+
+        if (mix is not { IsValid: true }) mix = new PostTechnique("mix");
+        if (!mix.IsValid) return;
 
         PostTarget now = Grab(ref current);
         mix.Bind();

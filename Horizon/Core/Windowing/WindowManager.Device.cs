@@ -14,8 +14,8 @@ namespace Horizon.Core;
 // always was.
 public partial class WindowManager
 {
-    // The instance and the device, being made ahead of the window. Null where they aren't
-    private Task<VulkanContext?>? deviceAhead;
+    // The instance, device and subsystems being made ahead of the window. Null where they aren't
+    private Task<PreparedDevice?>? deviceAhead;
 
     /// <summary>Helper method to start making the device ahead of the window, see above. Once, as the window manager is made.</summary>
     private void StartDeviceAhead()
@@ -24,9 +24,9 @@ public partial class WindowManager
             deviceAhead = Task.Factory.StartNew(() => PrepareAhead(ahead), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
-    private static VulkanContext? PrepareAhead(IPlatformSurfaceAhead ahead)
+    private static PreparedDevice? PrepareAhead(IPlatformSurfaceAhead ahead)
     {
-        VulkanContext? made = VulkanContext.Prepare(ahead);
+        PreparedDevice? made = PreparedDevice.Prepare(ahead);
         StartupTrace.Mark("device made ahead of the window");
         return made;
     }
@@ -38,7 +38,7 @@ public partial class WindowManager
     private GraphicsDevice MakeDevice(IPlatformSurface surface)
     {
         uint width = (uint)ViewportSize.X, height = (uint)ViewportSize.Y;
-        VulkanContext? ahead = TakeDeviceAhead();
+        PreparedDevice? ahead = TakeDeviceAhead();
         if (ahead is not null)
         {
             try
@@ -64,9 +64,9 @@ public partial class WindowManager
     }
 
     /// <summary>Helper method to wait for the device being made ahead and take it, null if there's none.</summary>
-    private VulkanContext? TakeDeviceAhead()
+    private PreparedDevice? TakeDeviceAhead()
     {
-        Task<VulkanContext?>? making = Interlocked.Exchange(ref deviceAhead, null);
+        Task<PreparedDevice?>? making = Interlocked.Exchange(ref deviceAhead, null);
         return making?.GetAwaiter().GetResult();
     }
 }

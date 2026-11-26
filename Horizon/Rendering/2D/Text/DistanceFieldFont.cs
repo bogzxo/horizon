@@ -117,6 +117,10 @@ public sealed class DistanceFieldFont
             if (field.Length == 0) return font;
 
             font.Texture = Texture.FromPixels((uint)width, (uint)height, field, new TextureDefinition(PixelFormat.R8, Smooth: true));
+            if (font.Texture.IsValid)
+                GraphicsDevice.Current.Transition(font.Texture, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal,
+                    Silk.NET.Vulkan.PipelineStageFlags2.VertexShaderBit | Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit,
+                    Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
             font.KeepCached(path, width, height, field);
         }
         catch (Exception e)
@@ -557,6 +561,10 @@ public sealed class DistanceFieldFont
                 if (read != byteCount) return false;
 
                 Texture = Texture.FromPixels((uint)width, (uint)height, rented.AsSpan(0, byteCount), new TextureDefinition(PixelFormat.R8, Smooth: true));
+                if (Texture.IsValid)
+                    GraphicsDevice.Current.Transition(Texture, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal,
+                        Silk.NET.Vulkan.PipelineStageFlags2.VertexShaderBit | Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit,
+                        Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
                 return true;
             }
             finally

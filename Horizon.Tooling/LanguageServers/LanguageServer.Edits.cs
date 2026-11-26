@@ -150,15 +150,16 @@ public sealed partial class LanguageServer
             return [];
 
         var actions = new List<LanguageServerAction>();
-        foreach (JsonObject action in offered.OfType<JsonObject>())
+        bool resolves = serverCapabilities?["codeActionProvider"] is JsonObject provider && provider["resolveProvider"]?.GetValue<bool>() == true;
+        for (int i = 0; i < offered.Count; i++)
         {
+            if (offered[i] is not JsonObject action) continue;
             if (ActionOf(action) is not { } parsed) continue;
             if (only is not null && parsed.Kind != only && !parsed.Kind.StartsWith(only + ".", StringComparison.Ordinal)) continue;
-            if (action["command"] is not JsonValue && action["edit"] is null
-                && serverCapabilities?["codeActionProvider"] is JsonObject provider && provider["resolveProvider"]?.GetValue<bool>() == true)
+            if (action["command"] is not JsonValue && action["edit"] is null && resolves)
             {
-                var raw = action.DeepClone();
-                var resolved = new Lazy<Task<LanguageServerAction?>>(() => ResolveAction(raw));
+                offered[i] = null;
+                var resolved = new Lazy<Task<LanguageServerAction?>>(() => ResolveAction(action));
                 parsed = parsed with { Resolve = () => resolved.Value };
             }
             if (parsed.Edits.Count > 0 || parsed.Command is not null || parsed.Resolve is not null) actions.Add(parsed);
@@ -178,7 +179,7 @@ public sealed partial class LanguageServer
 
     private async Task<LanguageServerAction?> ResolveAction(JsonNode action)
     {
-        var response = await Ask("codeAction/resolve", action.DeepClone(), propagateErrors: true).ConfigureAwait(false);
+        var response = await Ask("codeAction/resolve", action, propagateErrors: true).ConfigureAwait(false);
         return response is JsonObject resolved && ActionOf(resolved) is { } parsed
             && (parsed.Edits.Count > 0 || parsed.Command is not null) ? parsed : null;
     }
@@ -323,6 +324,6 @@ public sealed partial class LanguageServer
             return versions.TryGetValue(Path.GetFullPath(path), out int version) ? version : null;
     }
 
-    // What was said wrong with a file, kept as the server said it for its fixes
-    private void KeepDiagnostics(string path, JsonArray? diagnostics) => rawDiagnostics[Path.GetFullPath(path)] = (JsonArray?)diagnostics?.DeepClone() ?? [];
+    // What was said wrong with a file, kept as the server said it for its fixes (ownership transferred by Published)
+    private void KeepDiagnostics(string path, JsonArray? diagnostics) => rawDiagnostics[Path.GetFullPath(path)] = diagnostics ?? [];
 }

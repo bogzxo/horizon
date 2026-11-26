@@ -72,6 +72,18 @@ public class StatusBar : UIComponent
     // every paint it made a string a letter tried, a kilobyte a tick in the designer with a long message
     private readonly Dictionary<StatusItem, (string Text, float Room, string Fitted)> fitted = [];
 
+    // Cached per-item text measurements and laid-out bounds so Paint, ItemBounds, and ItemAt stay O(N) instead of O(N^2)
+    private string[] cachedTexts = [];
+    private float[] cachedTextWidths = [];
+    private bool[] cachedShown = [];
+    private bool[] cachedRight = [];
+    private float[] cachedMinWidths = [];
+    private UIRect[] cachedBounds = [];
+    private UIFont? cachedFont;
+    private float cachedScale;
+    private UIRect cachedLayoutBounds;
+    private int cachedCount = -1;
+
     public IReadOnlyList<StatusItem> Items => items;
 
     /// <summary>The colour of the strip, null for the skin's panel.</summary>
@@ -113,14 +125,106 @@ public class StatusBar : UIComponent
     {
         items.Clear();
         fitted.Clear();
+        cachedCount = -1;
     }
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * 0.95f;
 
     protected override Vector2 Measure(UISkin skin) => new(0.0f, MathF.Round(skin.Font.LineHeight * ScaleOf(skin) + HEIGHT_PADDING * 2.0f));
 
-    private float WidthOf(UISkin skin, StatusItem item) =>
-        MathF.Max(item.MinWidth, skin.Font.Measure(item.Text, ScaleOf(skin)).X + ITEM_PADDING * 2.0f);
+    /// <summary>Helper method to cache item text measurements and compute all item bounds in a single O(N) pass.</summary>
+    private void EnsureItemLayout(UISkin skin)
+    {
+        int count = items.Count;
+        float scale = ScaleOf(skin);
+        bool fontOrScaleChanged = cachedFont != skin.Font || cachedScale != scale;
+        bool layoutDirty = fontOrScaleChanged || cachedCount != count || cachedLayoutBounds != Bounds;
+
+        if (cachedTexts.Length < count)
+        {
+            int previousLength = cachedTexts.Length;
+            Array.Resize(ref cachedTexts, count);
+            Array.Resize(ref cachedTextWidths, count);
+            Array.Resize(ref cachedShown, count);
+            Array.Resize(ref cachedRight, count);
+            Array.Resize(ref cachedMinWidths, count);
+            Array.Resize(ref cachedBounds, count);
+            for (int i = previousLength; i < count; i++)
+                cachedTexts[i] = string.Empty;
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            StatusItem item = items[i];
+            bool shown = item.Shown;
+            if (cachedShown[i] != shown)
+            {
+                cachedShown[i] = shown;
+                layoutDirty = true;
+            }
+
+            if (cachedRight[i] != item.Right)
+            {
+                cachedRight[i] = item.Right;
+                layoutDirty = true;
+            }
+
+            if (cachedMinWidths[i] != item.MinWidth)
+            {
+                cachedMinWidths[i] = item.MinWidth;
+                layoutDirty = true;
+            }
+
+            if (shown && (fontOrScaleChanged || !ReferenceEquals(cachedTexts[i], item.Text)))
+            {
+                cachedTexts[i] = item.Text;
+                cachedTextWidths[i] = skin.Font.Measure(item.Text, scale).X;
+                layoutDirty = true;
+            }
+        }
+
+        cachedFont = skin.Font;
+        cachedScale = scale;
+
+        if (!layoutDirty)
+            return;
+
+        cachedCount = count;
+        cachedLayoutBounds = Bounds;
+
+        float rightTotal = 0.0f;
+        for (int i = 0; i < count; i++)
+        {
+            if (cachedRight[i] && cachedShown[i])
+                rightTotal += MathF.Max(cachedMinWidths[i], cachedTextWidths[i] + ITEM_PADDING * 2.0f);
+        }
+
+        float rightStart = Bounds.Max.X - EDGE - rightTotal;
+        float leftX = Bounds.Min.X + EDGE;
+        float rightX = rightStart;
+
+        for (int i = 0; i < count; i++)
+        {
+            if (!cachedShown[i])
+            {
+                cachedBounds[i] = default;
+                continue;
+            }
+
+            float width = MathF.Max(cachedMinWidths[i], cachedTextWidths[i] + ITEM_PADDING * 2.0f);
+            if (cachedRight[i])
+            {
+                cachedBounds[i] = width <= ITEM_PADDING * 2.0f ? default : new UIRect(new Vector2(rightX, Bounds.Min.Y), new Vector2(rightX + width, Bounds.Max.Y));
+                rightX += width;
+            }
+            else
+            {
+                float clamped = MathF.Min(width, rightStart - LEFT_GAP - leftX);
+                cachedBounds[i] = clamped <= ITEM_PADDING * 2.0f ? default : new UIRect(new Vector2(leftX, Bounds.Min.Y), new Vector2(leftX + clamped, Bounds.Max.Y));
+                leftX += width;
+            }
+        }
+    }
 
     /// <summary>Where an item is on the bar, in the module's units. Empty for one that isn't there right now.</summary>
     public UIRect ItemBounds(StatusItem item) =>
@@ -128,49 +232,12 @@ public class StatusBar : UIComponent
 
     private UIRect ItemBounds(UISkin skin, StatusItem item)
     {
-        if (!item.Shown)
+        int index = items.IndexOf(item);
+        if (index < 0)
             return default;
 
-        // The left ones from the left in their order, the right ones end at the right in theirs
-        float x = Bounds.Min.X + EDGE;
-        if (item.Right)
-        {
-            x = Bounds.Max.X - EDGE;
-            foreach (StatusItem other in items)
-            {
-                if (other.Right && other.Shown)
-                    x -= WidthOf(skin, other);
-            }
-        }
-
-        // The left ones stop short of where the right ones start, a long message was written over them
-        float rightStart = Bounds.Max.X - EDGE;
-        if (!item.Right)
-        {
-            foreach (StatusItem other in items)
-            {
-                if (other.Right && other.Shown)
-                    rightStart -= WidthOf(skin, other);
-            }
-        }
-
-        foreach (StatusItem other in items)
-        {
-            if (other.Right != item.Right || !other.Shown)
-                continue;
-
-            float width = WidthOf(skin, other);
-            if (other == item)
-            {
-                if (!item.Right)
-                    width = MathF.Min(width, rightStart - LEFT_GAP - x);
-                return width <= ITEM_PADDING * 2.0f ? default : new UIRect(new Vector2(x, Bounds.Min.Y), new Vector2(x + width, Bounds.Max.Y));
-            }
-
-            x += width;
-        }
-
-        return default;
+        EnsureItemLayout(skin);
+        return cachedBounds[index];
     }
 
     // The room kept between the last of the left items and the first of the right
@@ -218,10 +285,14 @@ public class StatusBar : UIComponent
 
     private StatusItem? ItemAt(Vector2 point)
     {
-        foreach (StatusItem item in items)
+        if (Module?.Compositor.Skin is not { } skin || items.Count == 0)
+            return null;
+
+        EnsureItemLayout(skin);
+        for (int i = 0; i < items.Count; i++)
         {
-            if (ItemBounds(item).Contains(point))
-                return item;
+            if (cachedBounds[i].Contains(point))
+                return items[i];
         }
 
         return null;
@@ -289,11 +360,12 @@ public class StatusBar : UIComponent
         // A hairline along its top in the colour of the skin's edges, between it and what it's under
         list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.BorderColor with { W = Hairline ? skin.BorderColor.W : 0.0f });
 
+        EnsureItemLayout(skin);
         for (int i = 0; i < items.Count; i++)
         {
             list.BeginPart(i);
             StatusItem item = items[i];
-            UIRect area = ItemBounds(skin, item);
+            UIRect area = cachedBounds[i];
             if (area.IsEmpty)
                 continue;
 

@@ -46,7 +46,7 @@ namespace Horizon.UI
                     if (component.Layer.Length > 0 && !into.Contains(component.Layer))
                         into.Add(component.Layer);
 
-                    foreach (UIComponent child in component.Children)
+                    foreach (UIComponent child in component.ChildSpan)
                         Collect(child, into);
                 }
             }
@@ -173,6 +173,10 @@ namespace Horizon.UI
 
         private UIComponent? popup;
 
+        /// <summary>The open popup if it is still attached, shown in hierarchy and enabled; null otherwise.</summary>
+        internal UIComponent? ActivePopup =>
+            popup is { } open && open.Module == this && open.IsShownInHierarchy && open.EnabledInHierarchy ? open : null;
+
         // What was put away and is still being painted going, and when it started going
         private UIComponent? closingPopup;
         private float closingAt = -1.0f;
@@ -218,8 +222,6 @@ namespace Horizon.UI
         {
             Compositor = compositor;
             Root.Module = this;
-
-            SetupRuntime();
         }
 
         /// <summary>
@@ -262,7 +264,7 @@ namespace Horizon.UI
             if (component.TabStop)
                 into.Add(component);
 
-            foreach (UIComponent child in component.Children)
+            foreach (UIComponent child in component.ChildSpan)
             {
                 if (component.ShowsChild(child))
                     CollectFocusable(child, into);
@@ -394,7 +396,7 @@ namespace Horizon.UI
             if (closingPopup is { } going)
             {
                 list.PushOwner(going);
-                if (!(going.Module == this && going.Visible && going.PaintClosing(list, ref closingAt)))
+                if (!(going.Module == this && going.IsShownInHierarchy && going.PaintClosing(list, ref closingAt)))
                     closingPopup = null;
                 list.PopOwner();
             }
@@ -402,7 +404,7 @@ namespace Horizon.UI
             // Whatever is open goes on top of the lot, and isn't cut off by what its owner is inside of.
             if (Popup is { } open)
             {
-                if (open.Module == this && open.Visible)
+                if (open.Module == this && open.IsShownInHierarchy)
                 {
                     list.PushOwner(open);
                     open.PaintPopup(list);
@@ -432,8 +434,8 @@ namespace Horizon.UI
             Vector2 local = ToLocal(point);
 
             // What is open is on top, so it gets the pointer before anything under it does.
-            if (Popup is { } popup && popup.PopupContains(local))
-                return popup;
+            if (ActivePopup is { } open && open.PopupContains(local))
+                return open;
 
             // Then whatever is raised above the rest, the highest first
             for (int i = raisedShown.Length - 1; i >= 0; i--)

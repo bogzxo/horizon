@@ -1,6 +1,6 @@
 ﻿namespace Horizon.Core;
 
-public class IntervalRunnerFixedStep(float timeInterval, Action action) : Entity
+public sealed class IntervalRunnerFixedStep(float timeInterval, Action action) : Entity
 {
     public float TimeInterval { get; init; } = timeInterval;
     private float _timer = 0.0f;

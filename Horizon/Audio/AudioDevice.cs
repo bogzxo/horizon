@@ -22,13 +22,14 @@ public sealed class AudioDevice : IDisposable
     // How many frames are mixed at a time
     private const int CHUNK = 512;
 
-    private readonly IAudioOutput? output;
+    private volatile IAudioOutput? output;
 
     // Held while a buffer is mixed, so once Pause or Dispose has it no buffer moves anything on
     private readonly object rendering = new();
 
     // Keeps pause, resume and dispose in order on the output, without holding up a buffer being mixed
     private readonly object control = new();
+    private AudioFormat format;
     private bool paused;
     private bool disposed;
 
@@ -48,11 +49,17 @@ public sealed class AudioDevice : IDisposable
     }
 
     /// <summary>The format everything is played in, the one the device gave back when there is one.</summary>
-    public AudioFormat Format { get; }
+    public AudioFormat Format
+    {
+        get
+        {
+            lock (control) return format;
+        }
+    }
 
     /// <param name="open">False for none at all, the mixer and nothing out of it (an application, Hex, has no use for
     /// a thread feeding the speakers).</param>
-    public AudioDevice(bool open = true) : this(OutputOf(open, static () => PlatformInstallation.Current?.CreateAudioOutput()))
+    public AudioDevice(bool open = true) : this(OutputOf(open, static () => PlatformInstallation.Current?.CreateAudioOutput()), openAsync: false)
     {
     }
 
@@ -60,44 +67,97 @@ public sealed class AudioDevice : IDisposable
     /// Plays out of an output the platform made. The device owns it from here on and disposes it, also when it fails
     /// to open. Null is no sound at all.
     /// </summary>
-    public AudioDevice(IAudioOutput? output)
+    public AudioDevice(IAudioOutput? output) : this(output, openAsync: false)
+    {
+    }
+
+    internal AudioDevice(IAudioOutput? output, bool openAsync)
     {
         var wanted = new AudioFormat(RATE, CHANNELS, CHUNK);
-        Format = wanted;
+        format = wanted;
 
-        if (output is not null)
+        // The mixer is made immediately at 48 kHz so callers can queue audio without waiting on OS audio device open
+        Mixer = new AudioMixer(RATE);
+        if (output is null) return;
+
+        if (openAsync)
         {
-            try
-            {
-                AudioFormat got = output.Open(wanted);
-                if (got.SampleRate <= 0 || got.Channels != CHANNELS || got.FramesPerBuffer <= 0)
-                    throw new InvalidOperationException($"it gave back {got.SampleRate} a second in {got.Channels} channels, {got.FramesPerBuffer} frames at a time");
+            var thread = new System.Threading.Thread(OpenWorker) { Name = "Audio Open", IsBackground = true };
+            thread.Start(new OpenState(this, output, wanted));
+        }
+        else
+        {
+            OpenAndStart(output, wanted);
+        }
+    }
 
-                Format = got;
-                Log.Info($"[Audio] Playing at {got.SampleRate} frames a second.");
-            }
-            catch (Exception exception)
+    private sealed class OpenState(AudioDevice device, IAudioOutput candidate, AudioFormat wanted)
+    {
+        public readonly AudioDevice Device = device;
+        public readonly IAudioOutput Candidate = candidate;
+        public readonly AudioFormat Wanted = wanted;
+    }
+
+    private static void OpenWorker(object? state)
+    {
+        var open = (OpenState)state!;
+        open.Device.OpenAndStart(open.Candidate, open.Wanted);
+    }
+
+    private void OpenAndStart(IAudioOutput candidate, AudioFormat wanted)
+    {
+        lock (control)
+        {
+            if (disposed)
             {
-                Log.Warning($"[Audio] No sound, there's no audio device to be had: {exception.Message}");
-                output.Dispose();
-                output = null;
+                candidate.Dispose();
+                return;
             }
         }
 
-        // The mixer is made at the rate the device really runs at before the output is started, so nothing is
-        // ever asked of a mixer that isn't there yet
-        Mixer = new AudioMixer(Format.SampleRate);
-        if (output is null) return;
+        AudioFormat got;
+        try
+        {
+            got = candidate.Open(wanted);
+            if (got.SampleRate <= 0 || got.Channels != CHANNELS || got.FramesPerBuffer <= 0)
+                throw new InvalidOperationException($"it gave back {got.SampleRate} a second in {got.Channels} channels, {got.FramesPerBuffer} frames at a time");
+        }
+        catch (Exception exception)
+        {
+            Log.Warning($"[Audio] No sound, there's no audio device to be had: {exception.Message}");
+            candidate.Dispose();
+            return;
+        }
 
         try
         {
-            output.Start(Render);
-            this.output = output;
+            lock (control)
+            {
+                if (disposed)
+                {
+                    candidate.Dispose();
+                    return;
+                }
+
+                format = got;
+                if (got.SampleRate != RATE)
+                    Mixer.SetSampleRate(got.SampleRate);
+
+                candidate.Start(Render);
+                output = candidate;
+
+                bool isPaused;
+                lock (rendering) isPaused = paused;
+                if (isPaused)
+                    candidate.Pause();
+            }
+
+            Log.Info($"[Audio] Playing at {got.SampleRate} frames a second.");
         }
         catch (Exception exception)
         {
             Log.Warning($"[Audio] No sound, the audio device wouldn't start: {exception.Message}");
-            output.Dispose();
+            candidate.Dispose();
         }
     }
 
@@ -105,7 +165,7 @@ public sealed class AudioDevice : IDisposable
     /// An audio device out of what a platform host makes, unless it isn't to be opened or HORIZON_AUDIO says off, in
     /// which case nothing is asked of the host at all.
     /// </summary>
-    internal static AudioDevice For(bool open, IPlatformHost host) => new(OutputOf(open, host.CreateAudioOutput));
+    internal static AudioDevice For(bool open, IPlatformHost host, bool openAsync = false) => new(OutputOf(open, host.CreateAudioOutput), openAsync);
 
     // What the platform makes unless audio is off, and nothing for an application
     private static IAudioOutput? OutputOf(bool open, Func<IAudioOutput?> make)
@@ -132,14 +192,13 @@ public sealed class AudioDevice : IDisposable
     {
         lock (rendering)
         {
-            if (paused || disposed || Mixer.Playing == 0)
+            if (paused || disposed)
             {
                 buffer.Clear();
                 return false;
             }
 
-            Mixer.Mix(buffer);
-            return true;
+            return Mixer.Mix(buffer);
         }
     }
 
@@ -188,6 +247,7 @@ public sealed class AudioDevice : IDisposable
 
             // Disposing the output waits its thread out, and a buffer it still asks for meanwhile is silence
             output?.Dispose();
+            output = null;
             Mixer.StopAll();
         }
     }

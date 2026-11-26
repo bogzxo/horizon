@@ -220,9 +220,8 @@ public sealed class OcclusionMap2D : IDisposable
             rows.Name = "occlusion distance rows";
         }
 
-        uint groupsX = (width + 7) / 8, groupsY = (height + 7) / 8;
-
-        foreach (Technique pass in new[] { rowsShader!, columnsShader! })
+        ReadOnlySpan<Technique> passes = [rowsShader!, columnsShader!];
+        foreach (Technique pass in passes)
         {
             pass.Bind();
             pass.SetUniform("uSize", FieldSize);
@@ -232,7 +231,7 @@ public sealed class OcclusionMap2D : IDisposable
             grid.Bind(0);
             device.BindStorageImage(0, rows);
             device.BindStorageImage(1, field);
-            device.Dispatch(groupsX, groupsY);
+            device.Dispatch(pass.Shader.GroupsFor(width, 0), pass.Shader.GroupsFor(height, 1));
             device.Barrier(BarrierTargets.ShaderImages);
             pass.Unbind();
         }
@@ -416,7 +415,7 @@ public sealed class OcclusionMap2D : IDisposable
 
     private static bool EnsureShaders()
     {
-        if (rowsShader is not null && columnsShader is not null) return true;
+        if (rowsShader is { IsValid: true } && columnsShader is { IsValid: true }) return true;
 
         var shaders = GameEngine.Instance.ObjectManager.Shaders;
         if (!shaders.TryCreateOrGet("sdf_rows", ShaderDescription.FromPath("shaders/lighting", "sdf_rows"), out var rows)) return false;
@@ -424,6 +423,7 @@ public sealed class OcclusionMap2D : IDisposable
 
         rowsShader = new Technique(rows.Asset);
         columnsShader = new Technique(columns.Asset);
+        GraphicsDevice.Current.WarmComputePipelines([rows.Asset, columns.Asset]);
         return true;
     }
 

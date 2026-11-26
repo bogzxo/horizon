@@ -66,7 +66,13 @@ public enum TexelFormat
     R8,
 
     /// <summary>A half float a texel, two bytes (<see cref="System.Half"/>).</summary>
-    R16F
+    R16F,
+
+    /// <summary>Four half floats a texel, eight bytes.</summary>
+    Rgba16F,
+
+    /// <summary>Four floats a texel, sixteen bytes.</summary>
+    Rgba32F
 }
 
 /// <summary>What a memory barrier has to wait for before the next thing reads it.</summary>
@@ -119,6 +125,9 @@ public enum PixelFormat
 
     /// <summary>Four halves, for pictures that are blended into themselves frame after frame.</summary>
     Rgba16F,
+
+    /// <summary>Packed 11-11-10 unsigned float RGB (4 bytes), for HDR colour without alpha (bloom).</summary>
+    R11G11B10F,
 
     /// <summary>Four floats, for data rather than colour.</summary>
     Rgba32F,
@@ -178,7 +187,11 @@ public enum BlendFactor
     SrcAlpha,
     OneMinusSrcAlpha,
     DstAlpha,
-    OneMinusDstAlpha
+    OneMinusDstAlpha,
+    Src1Color,
+    OneMinusSrc1Color,
+    Src1Alpha,
+    OneMinusSrc1Alpha
 }
 
 /// <summary>Where an attachment of a render target sits, which is also which output of a fragment shader it takes.</summary>

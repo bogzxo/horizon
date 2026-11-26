@@ -115,6 +115,9 @@ public class OnScreenKeyboard : StackPanel
     private readonly KeyDefinition[][] layout;
     private readonly Button[][] keys;
     private readonly Vector2 keySize;
+    private readonly bool isFullLayout;
+    private UISkin? styledSkin;
+    private bool styledUseArt;
     private int row, column;
     private bool showSelection = true;
     private bool shift, caps;
@@ -171,6 +174,18 @@ public class OnScreenKeyboard : StackPanel
         this.keySize = keySize ?? new Vector2(60.0f, 52.0f);
         Spacing = KEY_SPACING;
 
+        for (int r = 0; r < layout.Length && !isFullLayout; r++)
+        {
+            for (int c = 0; c < layout[r].Length; c++)
+            {
+                if (layout[r][c].Types == SHIFT)
+                {
+                    isFullLayout = true;
+                    break;
+                }
+            }
+        }
+
         keys = new Button[layout.Length][];
         for (int r = 0; r < layout.Length; r++)
         {
@@ -216,33 +231,38 @@ public class OnScreenKeyboard : StackPanel
 
     protected override Vector2 Measure(UISkin skin)
     {
-        // What a key looks like depends on the skin, which isn't known before now. The keys pick their look up here
-        // and the layout after this one has them at their new sizes
-        bool keyArt = skin.TryGetRegion(KEY_STYLE, out _);
-
-        for (int r = 0; r < keys.Length; r++)
+        // What a key looks like depends on the skin, which isn't known before now. Only reconfigure keys when the
+        // skin or UseArt changes, avoiding per-tick style/string/measurement work across every key button.
+        if (!ReferenceEquals(styledSkin, skin) || styledUseArt != UseArt)
         {
-            for (int c = 0; c < keys[r].Length; c++)
+            styledSkin = skin;
+            styledUseArt = UseArt;
+            bool keyArt = skin.TryGetRegion(KEY_STYLE, out _);
+
+            for (int r = 0; r < keys.Length; r++)
             {
-                KeyDefinition key = layout[r][c];
-                Button button = keys[r][c];
-
-                // The art of the key itself, which says everything there is to say about the key
-                if (UseArt && key.Sprite.Length > 0 && skin.TryGetRegion(key.Sprite, out var art))
+                for (int c = 0; c < keys[r].Length; c++)
                 {
-                    button.Style = key.Sprite;
-                    button.Label = string.Empty;
-                    button.Size = art.Size;
-                    button.Animated = false;
-                    continue;
+                    KeyDefinition key = layout[r][c];
+                    Button button = keys[r][c];
+
+                    // The art of the key itself, which says everything there is to say about the key
+                    if (UseArt && key.Sprite.Length > 0 && skin.TryGetRegion(key.Sprite, out var art))
+                    {
+                        button.Style = key.Sprite;
+                        button.Label = string.Empty;
+                        button.Size = art.Size;
+                        button.Animated = false;
+                        continue;
+                    }
+
+                    // A blank key with the label on it, or a plain button for a skin without keys
+                    button.Style = keyArt ? KEY_STYLE : "button";
+                    button.Label = key.Label;
+
+                    float needed = skin.Font.Measure(key.Label, KEY_LABEL_SCALE).X + skin.ButtonPadding.Total.X;
+                    button.Size = new Vector2(MathF.Max(keySize.X * key.Width, MathF.Ceiling(needed)), keySize.Y);
                 }
-
-                // A blank key with the label on it, or a plain button for a skin without keys
-                button.Style = keyArt ? KEY_STYLE : "button";
-                button.Label = key.Label;
-
-                float needed = skin.Font.Measure(key.Label, KEY_LABEL_SCALE).X + skin.ButtonPadding.Total.X;
-                button.Size = new Vector2(MathF.Max(keySize.X * key.Width, MathF.Ceiling(needed)), keySize.Y);
             }
         }
 
@@ -283,12 +303,15 @@ public class OnScreenKeyboard : StackPanel
     {
         for (int r = 0; r < layout.Length; r++)
         {
-            int c = Array.FindIndex(layout[r], key => key.Label == label);
-            if (c < 0)
-                continue;
-
-            Select(r, c);
-            return true;
+            KeyDefinition[] line = layout[r];
+            for (int c = 0; c < line.Length; c++)
+            {
+                if (line[c].Label == label)
+                {
+                    Select(r, c);
+                    return true;
+                }
+            }
         }
 
         return false;
@@ -355,5 +378,5 @@ public class OnScreenKeyboard : StackPanel
     }
 
     // The full keyboard has a shift key, the small ones don't
-    private bool IsFullLayout => layout.Any(line => line.Any(key => key.Types == SHIFT));
+    private bool IsFullLayout => isFullLayout;
 }

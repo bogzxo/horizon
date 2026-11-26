@@ -12,9 +12,8 @@ struct Params
 
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
 
-// The smaller level blown up, and the level of this size it goes on top of
+// The smaller level blown up, blended additively onto the level of this size from the way down
 BIND_TEXTURE(0) Sampler2D uLow;
-BIND_TEXTURE(1) Sampler2D uSame;
 
 [shader("fragment")]
 float4 fsMain(ScreenVaryings input) : SV_Target0
@@ -28,5 +27,5 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
     sum += uLow.Sample(uv + float2(-t.x, -t.y)).rgb + uLow.Sample(uv + float2(t.x, -t.y)).rgb
          + uLow.Sample(uv + float2(-t.x, t.y)).rgb + uLow.Sample(uv + float2(t.x, t.y)).rgb;
 
-    return float4(uSame.Sample(uv).rgb + sum / 16.0, 1.0);
+    return float4(sum / 16.0, 1.0);
 }

@@ -164,13 +164,18 @@ public class PrimitiveRenderer : GameObject
         }
         else
         {
-            ReadOnlySpan<ShapeInstance> from = before.Span, to = after.Span;
-            for (int i = 0; i < count; i++)
-                into[i] = ShapeInstance.CanBlend(from[i], to[i]) ? ShapeInstance.Blend(from[i], to[i], alpha) : from[i];
+            BlendShapes(before.Span, after.Span, alpha, into);
         }
 
         Submit(count, camera);
         stream.End();
+    }
+
+    /// <summary>Helper method to blend matched shapes between two snapshots, falling back to the newer shape when they cannot blend.</summary>
+    internal static void BlendShapes(ReadOnlySpan<ShapeInstance> from, ReadOnlySpan<ShapeInstance> to, float alpha, Span<ShapeInstance> into)
+    {
+        for (int i = 0; i < to.Length; i++)
+            into[i] = ShapeInstance.CanBlend(from[i], to[i]) ? ShapeInstance.Blend(from[i], to[i], alpha) : to[i];
     }
 
     /// <summary>
@@ -207,12 +212,12 @@ public class PrimitiveRenderer : GameObject
 
         stream!.BindRange(SHAPES_BINDING);
 
-        GraphicsDevice.Current.DrawInstanced(Topology.Triangles, 6, (uint)count);
+        GraphicsDevice.Current.DrawQuadInstanced((uint)count);
     }
 
     private static void EnsureShader()
     {
-        if (shader is not null) return;
+        if (shader is { IsValid: true }) return;
 
         // By name, so it is the same one for every renderer there ever is and nobody frees it from under the others
         if (!GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet(SHADER_NAME, ShaderDescription.FromPath("shaders/primitives", "shapes"), out var result))

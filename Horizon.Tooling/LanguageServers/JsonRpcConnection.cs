@@ -30,7 +30,7 @@ public sealed class JsonRpcConnection : IDisposable
     private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonNode?>> pending = new();
     private readonly Dictionary<string, Action<JsonNode?>> notifications = new(StringComparer.Ordinal);
     private int nextId;
-    private volatile bool closed;
+    private int closedState;
 
     /// <summary>Answers the other side's requests, given the method and its params. Null answers null, which is what most want.</summary>
     public Func<string, JsonNode?, JsonNode?>? OnRequest { get; set; }
@@ -46,7 +46,7 @@ public sealed class JsonRpcConnection : IDisposable
     public Action<Exception?>? Closed { get; set; }
 
     /// <summary>Whether the other side has gone.</summary>
-    public bool IsClosed => closed;
+    public bool IsClosed => Volatile.Read(ref closedState) != 0;
 
     /// <param name="input">What the other side writes, read from here.</param>
     /// <param name="output">What this side writes to the other.</param>
@@ -84,11 +84,21 @@ public sealed class JsonRpcConnection : IDisposable
 
     private void Trace(string way, ReadOnlySpan<byte> body)
     {
-        if (trace is null)
+        if (trace is null || IsClosed)
             return;
         string text = Encoding.UTF8.GetString(body);
         lock (trace)
-            trace.WriteLine($"{(Environment.TickCount64 - traceStart) / 1000.0,9:0.000} {way} {(text.Length > 600 ? text[..600] + "..." : text)}");
+        {
+            if (IsClosed)
+                return;
+            try
+            {
+                trace.WriteLine($"{(Environment.TickCount64 - traceStart) / 1000.0,9:0.000} {way} {(text.Length > 600 ? text[..600] + "..." : text)}");
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
     }
 
     /// <summary>Hands the notifications of a method to a handler, replacing any before it.</summary>
@@ -133,13 +143,16 @@ public sealed class JsonRpcConnection : IDisposable
 
     private void Send(JsonObject message)
     {
-        if (closed)
+        if (IsClosed)
             throw new InvalidOperationException("The other side has gone.");
 
         // Written node by node (the serializer proper wants reflection, which a trimmed application hasn't got) into a
         // buffer the writer keeps, so it's made under the lock that writes it
         lock (writing)
         {
+            if (IsClosed)
+                throw new InvalidOperationException("The other side has gone.");
+
             try
             {
                 Trace(">>", writer.Make(message));
@@ -158,7 +171,7 @@ public sealed class JsonRpcConnection : IDisposable
         Exception? broke = null;
         try
         {
-            while (!closed)
+            while (!IsClosed)
             {
                 if (ReadMessage() is not { } body)
                     break;
@@ -180,7 +193,7 @@ public sealed class JsonRpcConnection : IDisposable
         }
         catch (Exception e) when (e is IOException or ObjectDisposedException or OperationCanceledException)
         {
-            broke = closed ? null : e;
+            broke = IsClosed ? null : e;
         }
         catch (Exception e)
         {
@@ -232,8 +245,8 @@ public sealed class JsonRpcConnection : IDisposable
 
             if (later is not null)
             {
-                JsonNode answering = id.DeepClone();
-                later.ContinueWith(done => Answer(answering, done.IsCompletedSuccessfully ? done.Result : null), TaskScheduler.Default);
+                message.Remove("id");
+                later.ContinueWith(done => Answer(id, done.IsCompletedSuccessfully ? done.Result : null), TaskScheduler.Default);
                 return;
             }
 
@@ -250,7 +263,8 @@ public sealed class JsonRpcConnection : IDisposable
 
             try
             {
-                Send(new JsonObject { ["jsonrpc"] = "2.0", ["id"] = id.DeepClone(), ["result"] = result });
+                message.Remove("id");
+                Send(new JsonObject { ["jsonrpc"] = "2.0", ["id"] = id, ["result"] = result });
             }
             catch (Exception)
             {
@@ -289,25 +303,31 @@ public sealed class JsonRpcConnection : IDisposable
         }
     }
 
-    private void Close(Exception? why)
+    private void DrainPending(Exception error)
     {
-        if (closed)
-            return;
-
-        closed = true;
         foreach (var (id, waiting) in pending)
         {
-            pending.TryRemove(id, out _);
-            waiting.TrySetException(why ?? new IOException("The other side has gone."));
+            if (pending.TryRemove(id, out _))
+                waiting.TrySetException(error);
         }
+    }
 
+    private void Close(Exception? why)
+    {
+        if (Interlocked.Exchange(ref closedState, 1) != 0)
+            return;
+
+        DrainPending(why ?? new IOException("The other side has gone."));
         Closed?.Invoke(why);
     }
 
     public void Dispose()
     {
-        closed = true;
-        try { output.Dispose(); } catch (Exception) { }
+        bool firstClose = Interlocked.Exchange(ref closedState, 1) == 0;
+        lock (writing)
+        {
+            try { output.Dispose(); } catch (Exception) { }
+        }
 
         // On Linux and macOS letting go of a pipe waits for a read of it on another thread (the reading thread's) to
         // return, which is when the other side goes, so it's let go of off the caller's thread, or closing a language
@@ -316,6 +336,17 @@ public sealed class JsonRpcConnection : IDisposable
         {
             try { input.Dispose(); } catch (Exception) { }
         });
-        Close(null);
+
+        DrainPending(new IOException("The other side has gone."));
+        if (firstClose)
+            Closed?.Invoke(null);
+
+        if (trace is not null)
+        {
+            lock (trace)
+            {
+                try { trace.Dispose(); } catch (Exception) { }
+            }
+        }
     }
 }

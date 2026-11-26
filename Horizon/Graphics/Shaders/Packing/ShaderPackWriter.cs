@@ -69,8 +69,8 @@ public static class ShaderPackWriter
                 Int(bytes, member.ArrayStride);
             }
 
-            UInt(bytes, (uint)entry.Spirv.Length);
-            bytes.Write(entry.Spirv);
+            UInt(bytes, (uint)entry.SpirvSpan.Length);
+            bytes.Write(entry.SpirvSpan);
         }
 
         bytes.Write(SHA256.HashData(bytes.GetBuffer().AsSpan(0, (int)bytes.Length)));

@@ -13,8 +13,9 @@ namespace Horizon.Core.Components;
 /// The matrix is the System.Numerics way round, scale then rotation then translation, multiplied as a row vector
 /// times the matrix, which is what every shader of the engine expects (see camera.slang).
 /// </summary>
-public class TransformComponent3D : GameComponent
+public sealed class TransformComponent3D : GameComponent
 {
+    public override ComponentCapabilities Capabilities => ComponentCapabilities.None;
     private Vector3 position;
     private Quaternion rotation = Quaternion.Identity;
     private Vector3 scale = Vector3.One;

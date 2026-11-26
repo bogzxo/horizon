@@ -99,10 +99,12 @@ public partial class TreeView
         {
             UITreeItem was = edited;
             string text = editBox.Text;
+            Func<string, string?>? check = editCheck;
             Func<string, bool>? commit = editCommit;
+            Action? cancelCallback = editCancelled;
             CloseEdit(focusTree: true);
             if (commit?.Invoke(text) == false && edited is null)
-                Edit(was, text, 0, text.Length, editCheck, commit, editCancelled);
+                Edit(was, text, 0, text.Length, check, commit, cancelCallback);
             return;
         }
 

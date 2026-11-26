@@ -19,7 +19,7 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
     private IPlatformAppearance? macAppearance;
     private IPlatformDialogs? macDialogs;
     private readonly List<SilkGamepadSource> gamepads = [];
-    private volatile bool disposed, closed;
+    private volatile bool disposed, closed, firstFramePresented;
 
     internal DesktopHost(PlatformHostRequest request)
     {
@@ -98,7 +98,7 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
         }
 
         var context = window.NativeInput ?? throw new InvalidOperationException("The desktop window loaded without an input context.");
-        input = new DesktopInput(this, context, window.PointerToPixels, window.Win32Handle, window.CocoaHandle);
+        input = new DesktopInput(this, context, window.PointerToPixels, window.Win32Handle, window.CocoaHandle, window.SdlWindowHandle);
 
         // On a Mac making the surface is SDL putting a Metal view into the window, which only the main thread may do,
         // see SilkSurface
@@ -113,6 +113,10 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
 
     public void Invoke(Action work) => dispatcher.Invoke(work);
 
+    internal bool TryInvoke(Action work, int timeoutMs) => dispatcher.TryInvoke(work, timeoutMs);
+
+    internal bool TryInvoke<T>(Func<T> work, int timeoutMs, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out T result) => dispatcher.TryInvoke(work, timeoutMs, out result);
+
     public void Wake() => window?.WakeWindow();
 
     public void RequestClose() => window?.RequestClose();
@@ -121,7 +125,29 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
     internal void DoWork() => dispatcher.Drain();
 
     /// <summary>Opens a feed of the controllers, sampled on the window's thread once it's started.</summary>
-    internal SilkGamepadSource OpenGamepads(Silk.NET.Input.IInputContext context) => new(context, Post, Sampled);
+    internal SilkGamepadSource? OpenGamepads(Silk.NET.Input.IInputContext context)
+    {
+        if (!request.ReadsGamepads)
+            return null;
+        if (context is GlfwInputWithoutGamepads glfwInput)
+            return new SilkGamepadSource(glfwInput.GlfwApi, Post, Sampled, IsFirstFramePresented);
+        return new SilkGamepadSource(context, Post, Sampled);
+    }
+
+    private bool IsFirstFramePresented() => firstFramePresented;
+
+    /// <summary>Called once from the render thread after the first frame presents to trigger deferred GLFW gamepad probing.</summary>
+    internal void OnFirstFramePresented()
+    {
+        firstFramePresented = true;
+        Post(ActivateDeferredGamepads);
+    }
+
+    private void ActivateDeferredGamepads()
+    {
+        for (int index = 0; index < gamepads.Count; index++)
+            gamepads[index].ActivateProbe();
+    }
 
     // A feed started or let go of, on the window's thread
     private void Sampled(SilkGamepadSource source, bool sampled)
@@ -147,10 +173,15 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
 
     public void PumpUntil(Task done)
     {
+        if (!done.IsCompleted && window is { } w)
+            _ = done.ContinueWith(static (_, state) => ((DesktopWindow)state!).WakeWindow(), w, TaskContinuationOptions.ExecuteSynchronously);
+
         while (!done.IsCompleted)
         {
+            window?.ConsumeWake();
             dispatcher.Drain();
-            Window.WaitForWork();
+            if (!done.IsCompleted)
+                Window.WaitForWork();
         }
 
         dispatcher.Drain();

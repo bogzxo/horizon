@@ -96,7 +96,8 @@ public partial class UICompositor
         if (InputOf is not { } input)
             return;
 
-        HookComposition(input);
+        if (!ReferenceEquals(compositionInput, input))
+            HookComposition(input);
 
         if (!ReferenceEquals(lastRoutedFocus, focus))
         {
@@ -214,7 +215,7 @@ public partial class UICompositor
 
         for (int i = snapshot.Length - 1; i >= 0; i--)
         {
-            if (snapshot[i].Enabled && snapshot[i].Popup is not null)
+            if (snapshot[i].Enabled && snapshot[i].ActivePopup is not null)
             {
                 snapshot[i].Popup = null;
                 return;
@@ -306,7 +307,7 @@ public partial class UICompositor
         bool menuOpen = false;
         foreach (UIModule each in snapshot)
         {
-            if (each.Enabled && each.Popup is Components.ContextMenu or Components.MenuBar or Components.Dropdown)
+            if (each.Enabled && each.ActivePopup is Components.ContextMenu or Components.MenuBar or Components.Dropdown)
             {
                 menuOpen = true;
                 break;
@@ -329,7 +330,7 @@ public partial class UICompositor
         // wherever it likes meanwhile
         if (pinned is { } pin)
         {
-            if (pin.Owner.Module is { } owner && pin.Owner.Visible && !Pointer.Down)
+            if (pin.Owner.Module is { } owner && pin.Owner.IsShownInHierarchy && !Pointer.Down)
             {
                 if (tooltipModule is not null && tooltipModule != owner)
                     tooltipModule.ShowTooltip(null, default);
@@ -380,7 +381,7 @@ public partial class UICompositor
         // The one up already stays while the pointer is on what it's about, over the box itself, or on its way between
         if (held is { } up)
         {
-            if (!Pointer.Down && !keyHushed && up.Of != hushed && up.Of.Module is { } owner && owner == tooltipModule && up.Of.Visible)
+            if (!Pointer.Down && !keyHushed && up.Of != hushed && up.Of.Module is { } owner && owner == tooltipModule && up.Of.IsShownInHierarchy)
             {
                 // Something else with its own say takes it down at once, the way across is over the same thing or nothing
                 UIComponent? saying = SaidBy(over);
@@ -458,12 +459,12 @@ public partial class UICompositor
     /// <summary>The component that took the last turn of the wheel, null when nothing had a use for it. For a test.</summary>
     public UIComponent? WheelTakenBy
     {
-        get => wheelTakenBy?.TryGetTarget(out UIComponent? taken) == true ? taken : null;
-        private set => wheelTakenBy = value is null ? null : new WeakReference<UIComponent>(value);
+        get => wheelTakenBy.TryGetTarget(out UIComponent? taken) ? taken : null;
+        private set => wheelTakenBy.SetTarget(value);
     }
 
     // Weak, it's only for a test to look at, and it kept a closed file's whole editor alive until the wheel turned again
-    private WeakReference<UIComponent>? wheelTakenBy;
+    private readonly WeakReference<UIComponent?> wheelTakenBy = new(null);
 
     /// <summary>
     /// Hands the mouse wheel to whatever is under the pointer that has a use for it. The innermost component
@@ -517,7 +518,24 @@ public partial class UICompositor
             pendingPreciseX = pendingPreciseY = 0.0f;
         }
 
+        bool hasDirectInput = delta != 0.0f || across != 0.0f;
         bool glided = Glide(ref delta, ref across, ref precise);
+
+        UIComponent? currentPopup = null;
+        for (int i = snapshot.Length - 1; i >= 0; i--)
+        {
+            if (!snapshot[i].Enabled || !snapshot[i].Interactive || snapshot[i].HitTest(pointer) is null)
+                continue;
+            currentPopup = snapshot[i].ActivePopup;
+            break;
+        }
+        if (!ReferenceEquals(currentPopup, lastScrollPopup))
+        {
+            lastScrollPopup = currentPopup;
+            StopGlide();
+            if (glided && !hasDirectInput)
+                return;
+        }
 
         if (UIWheel.Tracing && (delta != 0.0f || across != 0.0f || UIWheel.Held || UIWheel.Gliding))
             UIWheel.Trace(FormattableString.Invariant($"tick={tick} dt={UIWheel.Seconds:F4} delta={delta:F4} across={across:F4} precise={precise} held={UIWheel.Held} gliding={UIWheel.Gliding}"));
@@ -537,16 +555,28 @@ public partial class UICompositor
             if (snapshot[i].HitTest(pointer) is not { } over)
                 continue;
 
+            // An open popup (a dropdown list, context menu, menu bar) absorbs scroll behind it instead of letting
+            // trackpad inertia or wheel events move the page underneath when the pointer drifts outside ListBounds.
+            UIComponent? activePopup = snapshot[i].ActivePopup;
+            if (activePopup is not null && !activePopup.PopupContains(snapshot[i].ToLocal(pointer)))
+            {
+                if (glided)
+                    StopGlide();
+                if (wheel != 0.0f) UIKeyboard.UseScroll();
+                if (across != 0.0f && tick >= 0) Volatile.Write(ref scrollXUsedOn, tick);
+                return;
+            }
+
             // Whatever is in front has the wheel over itself, used or not. Nothing behind it gets it, a window of settings
             // with nothing to scroll where the pointer is doesn't scroll the code under it
             UIComponent? taken = null;
-            if (delta != 0.0f) taken = GiveWheel(over, snapshot[i].Popup, delta, ScrollSpeed, precise);
-            if (across != 0.0f) taken = GiveWheelX(over, snapshot[i].Popup, across, ScrollSpeed, precise) ?? taken;
+            if (delta != 0.0f) taken = GiveWheel(over, activePopup, delta, ScrollSpeed, precise);
+            if (across != 0.0f) taken = GiveWheelX(over, activePopup, across, ScrollSpeed, precise) ?? taken;
             WheelTakenBy = taken;
 
             // The glide is over once it has nowhere to go: nobody took it, or it ran into an end and bounced
             if (glided && (taken is null || taken.HasOverscroll))
-                glideX = glideY = 0.0f;
+                StopGlide();
             if (wheel != 0.0f) UIKeyboard.UseScroll();
             if (across != 0.0f && tick >= 0) Volatile.Write(ref scrollXUsedOn, tick);
             return;
@@ -574,6 +604,13 @@ public partial class UICompositor
     // Whether the fingers were on the trackpad the tick before, and the glide's speed in notches a second
     private bool fingersWereOn;
     private float glideX, glideY;
+    private UIComponent? lastScrollPopup;
+
+    private void StopGlide()
+    {
+        glideX = glideY = 0.0f;
+        Array.Clear(flickAt);
+    }
 
     /// <summary>
     /// Keeps the fingers' moves, starts a glide as they lift, and adds this tick's part of one that's going to the turn.
@@ -675,7 +712,7 @@ public partial class UICompositor
                 taken = amount != 0.0f && component.OnMagnify(amount);
                 if (!taken && smart)
                     taken = component.OnSmartMagnify();
-                if (component == snapshot[i].Popup)
+                if (component == snapshot[i].ActivePopup)
                     break;
             }
 
@@ -802,10 +839,52 @@ public partial class UICompositor
         chooserClickPending = true;
     }
 
+    /// <summary>Helper method to clear hovered, pressed, and gripped references that became hidden, disabled, or detached.</summary>
+    private void PrunePointerReferences()
+    {
+        if (hovered is not null && (!hovered.IsShownInHierarchy || !hovered.EnabledInHierarchy))
+            SetHovered(null);
+
+        if (pressed is not null && (!pressed.IsShownInHierarchy || !pressed.EnabledInHierarchy))
+        {
+            var cancelled = pressed;
+            pressed = null;
+            touchDeferred = false;
+            cancelled.IsPressed = false;
+            if (cancelled.IsResizing)
+                cancelled.EndResize();
+            if (ReferenceEquals(gripped, cancelled))
+                gripped = null;
+        }
+
+        if (gripped is not null && (!gripped.IsShownInHierarchy || !gripped.EnabledInHierarchy))
+        {
+            var grip = gripped;
+            gripped = null;
+            if (grip.IsResizing)
+                grip.EndResize();
+            else
+                grip.ActiveGrip = UIResize.None;
+        }
+    }
+
+    private static bool HasOpenDialog(UIModule[] snapshot)
+    {
+        for (int i = 0; i < snapshot.Length; i++)
+        {
+            if (snapshot[i].Enabled && snapshot[i].Dialog is { IsOpen: true })
+                return true;
+        }
+
+        return false;
+    }
+
     private void RoutePointer(UIModule[] snapshot, float dt)
     {
         if (PointerSource is not null)
             Volatile.Write(ref scriptedPointerTick, GameEngine.Instance?.WindowManager?.Tick ?? 0);
+
+        PrunePointerReferences();
 
         UIPointer pointer = PointerSource?.Invoke() ?? ReadPointer();
         lastPointer = pointer.Position;
@@ -842,19 +921,17 @@ public partial class UICompositor
             return;
         }
 
+        if ((pointer.Down && !pointerWasDown) || (pointer.SecondaryDown && !secondaryWasDown))
+            StopGlide();
+
         UIWheel.Seconds = dt;
         RouteScroll(snapshot, pointer.Position);
         RouteGestures(snapshot, pointer.Position);
         if (!pointer.Down)
             StepFling(dt);
 
-        // A component that left the UI while it was held is forgotten.
-        if (pressed is not null && pressed.Module is not { Enabled: true })
-        {
-            pressed.IsPressed = false;
-            pressed = null;
-            touchDeferred = false;
-        }
+        // A component that left the UI, was hidden, or was disabled while held is forgotten.
+        PrunePointerReferences();
 
         // Modules are drawn in order, so the last one is on top and gets the first look.
         UIComponent? over = null;
@@ -934,7 +1011,7 @@ public partial class UICompositor
         // While something is held nothing else reacts to the pointer passing over it. A finger is only over anything
         // while it's down, and not while it's scrolling, or the last thing tapped stays lit forever
         bool hovers = !pointer.IsTouch || (pointer.Down && !touchPanning && !touchConsumed);
-        SetHovered(hovers && (pressed is null || pressed == over) ? over : null);
+        SetHovered(hovers && (pressed is null || pressed == over) && over is not null && over.EnabledInHierarchy ? over : null);
 
         if (touchTook)
         {
@@ -946,10 +1023,10 @@ public partial class UICompositor
             touchPanning = false;
         }
         // An edge of a window without the system's frame, dragged by the window itself, nothing in the UI gets the press
-        else if (!pointer.IsTouch && pointer.Down && !pointerWasDown && !snapshot.Any(module => module.Dialog is { IsOpen: true }) &&
+        else if (!pointer.IsTouch && pointer.Down && !pointerWasDown && !HasOpenDialog(snapshot) &&
             WindowEdgeAt() is var windowEdges && windowEdges != WindowEdges.None)
         {
-            GameEngine.Instance.WindowManager.BeginResize(windowEdges);
+            GameEngine.Instance?.WindowManager?.BeginResize(windowEdges);
         }
         else if (pointer.Down && !pointerWasDown)
         {
@@ -989,11 +1066,17 @@ public partial class UICompositor
         }
         else if (pointer.Down && pressed is not null)
         {
-            // What was held can leave the UI while it's held (a window closed by a key), and is let go of then
-            if (pressed.Module is not { } heldIn)
+            // What was held can leave the UI, hide, or become disabled while it's held (a window closed by a key), and is let go of then
+            if (pressed.Module is not { } heldIn || !pressed.IsShownInHierarchy || !pressed.EnabledInHierarchy)
             {
-                pressed.IsPressed = false;
+                var cancelled = pressed;
                 pressed = null;
+                touchDeferred = false;
+                cancelled.IsPressed = false;
+                if (cancelled.IsResizing)
+                    cancelled.EndResize();
+                if (ReferenceEquals(gripped, cancelled))
+                    gripped = null;
             }
             else if (touchDeferred)
             {

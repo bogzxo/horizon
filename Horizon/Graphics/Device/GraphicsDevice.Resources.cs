@@ -29,6 +29,7 @@ public sealed unsafe partial class GraphicsDevice
             if (!inUse && buffer.Capacity >= bytes)
             {
                 buffer.Size = bytes;
+                InvalidateStorageBinding(buffer, handleChanged: false);
                 return;
             }
 
@@ -67,6 +68,7 @@ public sealed unsafe partial class GraphicsDevice
         buffer.Capacity = bytes;
         buffer.Size = bytes;
         buffer.LastUse = 0;
+        InvalidateStorageBinding(buffer, handleChanged: true);
         Statistics.Buffers++;
         LabelBuffer(buffer);
     }
@@ -173,7 +175,7 @@ public sealed unsafe partial class GraphicsDevice
         else if (!pixels.IsEmpty)
         {
             fixed (byte* pointer = pixels)
-                UploadTexels(texture, 0, 0, texture.Width, texture.Height, definition.Format == PixelFormat.R8 ? TexelFormat.R8 : TexelFormat.Rgba8, pointer);
+                UploadTexels(texture, 0, 0, texture.Width, texture.Height, TexelFormatOf(definition.Format), pointer);
 
             if (levels > 1) GenerateMipmaps(texture);
         }
@@ -182,6 +184,11 @@ public sealed unsafe partial class GraphicsDevice
             // A texture that is read before anything was put in it shows nothing rather than whatever was in the memory
             ClearImageNow(texture, System.Numerics.Vector4.Zero);
         }
+
+        // Set 2 bindless descriptors declare ShaderReadOnlyOptimal, so freshly created sampled textures (including
+        // empty/cleared or staging-uploaded ones) must transition out of Undefined/Transfer layouts before use
+        if ((definition.Usage & TextureUsage.Sampled) != 0 && texture.Layout != ImageLayout.ShaderReadOnlyOptimal)
+            Transition(texture, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags2.AllGraphicsBit | PipelineStageFlags2.ComputeShaderBit, AccessFlags2.ShaderSampledReadBit);
     }
 
     /// <summary>
@@ -254,7 +261,17 @@ public sealed unsafe partial class GraphicsDevice
         texture.Memory = default;
     }
 
-    internal Format FormatOf(PixelFormat format) => format switch
+    /// <summary>Helper method to map a texture's pixel format to the texel upload format used by staging uploads.</summary>
+    internal static TexelFormat TexelFormatOf(PixelFormat format) => format switch
+    {
+        PixelFormat.R8 => TexelFormat.R8,
+        PixelFormat.R16F => TexelFormat.R16F,
+        PixelFormat.Rgba16F => TexelFormat.Rgba16F,
+        PixelFormat.Rgba32F => TexelFormat.Rgba32F,
+        _ => TexelFormat.Rgba8
+    };
+
+    internal static Format MapPixelFormat(PixelFormat format, Format depthStencilFormat) => format switch
     {
         PixelFormat.Rgba8 => Format.R8G8B8A8Unorm,
         PixelFormat.Rgba8Srgb => Format.R8G8B8A8Srgb,
@@ -265,11 +282,14 @@ public sealed unsafe partial class GraphicsDevice
         PixelFormat.Rg32Uint => Format.R32G32Uint,
         PixelFormat.Rgba32Uint => Format.R32G32B32A32Uint,
         PixelFormat.Rgba16F => Format.R16G16B16A16Sfloat,
+        PixelFormat.R11G11B10F => Format.B10G11R11UfloatPack32,
         PixelFormat.Rgba32F => Format.R32G32B32A32Sfloat,
-        PixelFormat.Depth24Stencil8 => Context.DepthStencilFormat,
+        PixelFormat.Depth24Stencil8 => depthStencilFormat,
         PixelFormat.Depth32F => Format.D32Sfloat,
         _ => Format.R8G8B8A8Unorm
     };
+
+    internal Format FormatOf(PixelFormat format) => MapPixelFormat(format, Context.DepthStencilFormat);
 
     /* Names for the debugger, see VulkanContext.Name. A resource nobody named is told by what it is */
 
@@ -292,7 +312,7 @@ public sealed unsafe partial class GraphicsDevice
     /* Shaders */
 
     /// <summary>Helper method to turn SPIR-V into a module.</summary>
-    internal Silk.NET.Vulkan.ShaderModule CreateShaderModule(byte[] spirv)
+    internal Silk.NET.Vulkan.ShaderModule CreateShaderModule(ReadOnlySpan<byte> spirv)
     {
         fixed (byte* pointer = spirv)
         {
@@ -311,6 +331,12 @@ public sealed unsafe partial class GraphicsDevice
     internal void DestroyShader(Shader shader)
     {
         Unbind(shader);
+        shader.ComputePipeline = default;
+        if (hasLastGraphicsPipeline && lastGraphicsKey.Shader == shader.Handle)
+        {
+            hasLastGraphicsPipeline = false;
+            lastGraphicsPipeline = default;
+        }
 
         var pipelines = Pipelines.Forget(shader);
         var modules = shader.Modules.Select(stage => stage.Module).DistinctBy(module => module.Handle).ToArray();

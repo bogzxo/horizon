@@ -24,6 +24,7 @@ public sealed partial class DesktopWindow
     // to so the collector leaves it be while Windows has a pointer to it
     private nint frameHandle, glfwProcedure;
     private WindowProcedure? frameProcedure;
+    private bool handlingDpiChange;
 
     private delegate nint WindowProcedure(nint window, uint message, nint wParam, nint lParam);
 
@@ -150,12 +151,41 @@ public sealed partial class DesktopWindow
                 return 0;
 
             case WM_DPICHANGED:
-                if (ScalesToDisplay && !IsZoomed(window))
                 {
-                    var suggested = (NativeRect*)lParam;
-                    SetWindowPos(window, 0, suggested->Left, suggested->Top, suggested->Right - suggested->Left, suggested->Bottom - suggested->Top, SWP_NOZORDER | SWP_NOACTIVATE);
-                }
-                {
+                    // Update display scale from wParam BEFORE SetWindowPos so WM_GETMINMAXINFO and WM_SIZE see the new scale.
+                    float dpiScale = ScaleFromDpiWParam(wParam);
+                    if (dpiScale > 0.0f)
+                        ApplyDisplayScale(dpiScale);
+
+                    if (ScalesToDisplay && lParam != 0 && !handlingDpiChange)
+                    {
+                        var suggested = (NativeRect*)lParam;
+                        float scale = ScalesToDisplay ? displayScale : 1.0f;
+                        int minW = (int)MathF.Ceiling(MinimumSize.X * scale);
+                        int minH = (int)MathF.Ceiling(MinimumSize.Y * scale);
+                        bool canApply = TryComputeDpiSuggestedRect(
+                            suggested->Left, suggested->Top, suggested->Right, suggested->Bottom,
+                            minW, minH,
+                            IsZoomed(window), IsIconic(window), _window.WindowState == WindowState.Fullscreen,
+                            handlingDpiChange,
+                            out int x, out int y, out int width, out int height);
+
+                        if (canApply && (!GetWindowRect(window, out NativeRect current) ||
+                            current.Left != x || current.Top != y ||
+                            (current.Right - current.Left) != width || (current.Bottom - current.Top) != height))
+                        {
+                            handlingDpiChange = true;
+                            try
+                            {
+                                SetWindowPos(window, 0, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+                            }
+                            finally
+                            {
+                                handlingDpiChange = false;
+                            }
+                        }
+                    }
+
                     nint result = CallWindowProc(glfwProcedure, window, message, wParam, lParam);
                     UpdateDisplayScale();
                     return result;
@@ -231,6 +261,41 @@ public sealed partial class DesktopWindow
         var at = UnpackPoint(lParam);
         if (ScreenToClient(window, ref at))
             CallWindowProc(glfwProcedure, window, message, wParam, PackPoint(at.X, at.Y));
+    }
+
+    /// <summary>Decodes the new display scale from a Win32 <c>WM_DPICHANGED</c> <c>wParam</c>, or 0 when invalid.</summary>
+    internal static float ScaleFromDpiWParam(nint wParam)
+    {
+        int dpiX = (int)(wParam & 0xFFFF);
+        int dpiY = (int)((wParam >> 16) & 0xFFFF);
+        int dpi = dpiX > 0 ? dpiX : dpiY;
+        return dpi > 0 ? dpi / DEFAULT_DPI : 0.0f;
+    }
+
+    /// <summary>
+    /// Validates and clamps a Win32 <c>WM_DPICHANGED</c> suggested window rectangle, skipping resizes when the window
+    /// is maximized, minimized, fullscreen, or already inside a DPI resize (preventing recursive ping-pong loops).
+    /// </summary>
+    internal static bool TryComputeDpiSuggestedRect(
+        int left, int top, int right, int bottom,
+        int minWidth, int minHeight,
+        bool isMaximized, bool isMinimized, bool isFullscreen, bool inDpiChange,
+        out int x, out int y, out int width, out int height)
+    {
+        x = y = width = height = 0;
+        if (inDpiChange || isMaximized || isMinimized || isFullscreen)
+            return false;
+
+        int rawWidth = right - left;
+        int rawHeight = bottom - top;
+        if (rawWidth <= 0 || rawHeight <= 0)
+            return false;
+
+        x = left;
+        y = top;
+        width = Math.Max(rawWidth, Math.Max(1, minWidth));
+        height = Math.Max(rawHeight, Math.Max(1, minHeight));
+        return true;
     }
 
     /// <summary>The room the taskbar leaves on the screen that has the most of a rectangle, null if Windows won't say.</summary>
@@ -331,6 +396,10 @@ public sealed partial class DesktopWindow
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsZoomed(nint window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(nint window);
 
     [DllImport("user32.dll")]
     private static extern nint MonitorFromRect(in NativeRect rect, uint flags);

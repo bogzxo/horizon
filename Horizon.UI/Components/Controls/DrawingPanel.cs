@@ -29,6 +29,7 @@ public class DrawingPanel : UIComponent
     private readonly record struct Shape(Kind Kind, Vector2 A, Vector2 B, Vector4 Color, float Size, string? Text, UISprite? Sprite, string? Animation, int Frame, bool Mirrored);
 
     private readonly List<Shape> shapes = [];
+    private int shapeVersion;
     private IRuntimeValue? pointerHandler, keyHandler;
 
     private bool panning;
@@ -63,20 +64,56 @@ public class DrawingPanel : UIComponent
     /// <summary>How many shapes it holds, and how many of them are frames of a sprite.</summary>
     public int ShapeCount => shapes.Count;
 
-    public int SpriteCount => shapes.Count(shape => shape.Kind == Kind.Sprite);
+    public int SpriteCount
+    {
+        get
+        {
+            int count = 0;
+            for (int i = 0; i < shapes.Count; i++)
+            {
+                if (shapes[i].Kind == Kind.Sprite)
+                    count++;
+            }
 
-    public void Clear() => shapes.Clear();
+            return count;
+        }
+    }
 
-    public void Rect(Vector2 min, Vector2 max, Vector4 color) => shapes.Add(new Shape(Kind.Rect, min, max, color, 0, null, null, null, 0, false));
+    public void Clear()
+    {
+        shapes.Clear();
+        shapeVersion++;
+    }
 
-    public void Frame(Vector2 min, Vector2 max, float thickness, Vector4 color) => shapes.Add(new Shape(Kind.Frame, min, max, color, thickness, null, null, null, 0, false));
+    public void Rect(Vector2 min, Vector2 max, Vector4 color)
+    {
+        shapes.Add(new Shape(Kind.Rect, min, max, color, 0, null, null, null, 0, false));
+        shapeVersion++;
+    }
 
-    public void Line(Vector2 from, Vector2 to, float thickness, Vector4 color) => shapes.Add(new Shape(Kind.Line, from, to, color, thickness, null, null, null, 0, false));
+    public void Frame(Vector2 min, Vector2 max, float thickness, Vector4 color)
+    {
+        shapes.Add(new Shape(Kind.Frame, min, max, color, thickness, null, null, null, 0, false));
+        shapeVersion++;
+    }
 
-    public void Text(string text, Vector2 at, float scale, Vector4 color) => shapes.Add(new Shape(Kind.Text, at, at, color, scale, text, null, null, 0, false));
+    public void Line(Vector2 from, Vector2 to, float thickness, Vector4 color)
+    {
+        shapes.Add(new Shape(Kind.Line, from, to, color, thickness, null, null, null, 0, false));
+        shapeVersion++;
+    }
 
-    public void Sprite(UISprite sprite, string animation, int frame, Vector2 min, Vector2 max, Vector4 tint, bool mirrored = false) =>
+    public void Text(string text, Vector2 at, float scale, Vector4 color)
+    {
+        shapes.Add(new Shape(Kind.Text, at, at, color, scale, text, null, null, 0, false));
+        shapeVersion++;
+    }
+
+    public void Sprite(UISprite sprite, string animation, int frame, Vector2 min, Vector2 max, Vector4 tint, bool mirrored = false)
+    {
         shapes.Add(new Shape(Kind.Sprite, min, max, tint, 0, null, sprite, animation, frame, mirrored));
+        shapeVersion++;
+    }
 
     /// <summary>Zooms and pans so a part of the drawing fills it, with a margin of so many units on screen.</summary>
     public void Fit(Vector2 min, Vector2 max, float margin = 24.0f)
@@ -96,6 +133,8 @@ public class DrawingPanel : UIComponent
     public Vector2 FromScreen(Vector2 at) => (at - Bounds.Center - Pan) / Zoom;
 
     protected override Vector2 Measure(UISkin skin) => new(400.0f, 300.0f);
+
+    protected override long PaintVersion => HashCode.Combine(shapeVersion, Zoom, Pan, Color) & 0x7FFFFFFF;
 
     protected override void Paint(UIDrawList list)
     {

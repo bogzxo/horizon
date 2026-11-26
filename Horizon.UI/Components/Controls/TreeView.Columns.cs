@@ -16,9 +16,13 @@ public sealed partial class UITreeItem
     // The note and the badge cut short with dots to the room their columns had last, the way the text is kept
     internal string? noteOf;
     internal float noteRoom;
+    internal UIFont? noteFont;
+    internal float noteScale;
     internal string noteFitted = string.Empty;
     internal string? badgeOf;
     internal float badgeRoom;
+    internal UIFont? badgeFont;
+    internal float badgeScale;
     internal string badgeFitted = string.Empty;
 
     /// <summary>
@@ -131,8 +135,8 @@ public partial class TreeView
         {
             0 => Fitted(item, skin, scale, room),
             1 => item.Detail.Length > 0 ? FittedDetail(item, skin, scale, room) : string.Empty,
-            2 => FitCell(item.Note, ref item.noteOf, ref item.noteRoom, ref item.noteFitted, skin, scale, room),
-            3 => FitCell(item.Badge, ref item.badgeOf, ref item.badgeRoom, ref item.badgeFitted, skin, scale, room),
+            2 => FitCell(item.Note, ref item.noteOf, ref item.noteRoom, ref item.noteFont, ref item.noteScale, ref item.noteFitted, skin, scale, room),
+            3 => FitCell(item.Badge, ref item.badgeOf, ref item.badgeRoom, ref item.badgeFont, ref item.badgeScale, ref item.badgeFitted, skin, scale, room),
             _ => string.Empty
         };
 
@@ -140,17 +144,17 @@ public partial class TreeView
         return (room > 0.0f ? shown : string.Empty, from, room);
     }
 
-    // Some text cut to its room with dots, kept until the text or the room changes, nothing when not even the dots fit
-    private static string FitCell(string text, ref string? of, ref float at, ref string fitted, UISkin skin, float scale, float room)
+    // Some text cut to its room with dots, kept until the text, room, font or scale changes, nothing when not even the dots fit
+    private static string FitCell(string text, ref string? of, ref float at, ref UIFont? font, ref float atScale, ref string fitted, UISkin skin, float scale, float room)
     {
-        if (ReferenceEquals(of, text) && at == room)
+        if (ReferenceEquals(of, text) && at == room && ReferenceEquals(font, skin.Font) && atScale == scale)
             return fitted;
 
         string shown = text;
         if (text.Length > 0 && skin.Font.Measure(text, scale, markup: false).X > room)
             shown = skin.Font.Measure(CUT, scale, markup: false).X * 2.0f > room ? string.Empty : Cut(text, skin, scale, room);
 
-        (of, at, fitted) = (text, room, shown);
+        (of, at, font, atScale, fitted) = (text, room, skin.Font, scale, shown);
         return shown;
     }
 

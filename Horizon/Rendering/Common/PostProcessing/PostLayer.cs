@@ -170,27 +170,32 @@ public sealed class PostLayer : IDisposable
         RenderState.Blend = false;
         RenderState.DepthTest = false;
 
-        if (effectsActive)
+        try
         {
-            Effects.Run(
-                size,
-                dt,
-                picture,
-                Nothing,
-                bindOutput,
-                size,
-                target?.LogicalSize ?? GameEngine.Instance.WindowManager.ViewportSize);
+            if (effectsActive)
+            {
+                Effects.Run(
+                    size,
+                    dt,
+                    picture,
+                    Nothing,
+                    bindOutput,
+                    size,
+                    target?.LogicalSize ?? GameEngine.Instance.WindowManager.ViewportSize);
+            }
+            else
+            {
+                Effects.Blit(picture, bindOutput);
+            }
         }
-        else
+        finally
         {
-            Effects.Blit(picture, bindOutput);
+            // An effect that found nothing to draw leaves the layer bound
+            Renderer2D.BindOutput(target);
+            target = null;
+
+            RenderState.Restore(before);
         }
-
-        // An effect that found nothing to draw leaves the layer bound
-        Renderer2D.BindOutput(target);
-        target = null;
-
-        RenderState.Restore(before);
     }
 
     private void Clear()

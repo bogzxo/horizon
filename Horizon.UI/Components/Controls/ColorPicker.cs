@@ -150,6 +150,21 @@ public class ColorPicker : UIComponent
         }
     }
 
+    protected override long PaintVersion
+    {
+        get
+        {
+            var hash = new HashCode();
+            hash.Add(hue);
+            hash.Add(saturation);
+            hash.Add(brightness);
+            hash.Add(alpha);
+            hash.Add(ShowAlpha);
+            hash.Add(Original);
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
@@ -159,12 +174,12 @@ public class ColorPicker : UIComponent
 
         // The field, its corners rounded by the frame drawn over the cells in the colour of what's behind it
         UIRect shade = ShadeBounds;
-        Cells(list, shade, (x, y) => new Vector4(ToRgb(hue, x, y), 1.0f) * tint);
+        PaintShadeCells(list, shade, hue, tint);
         Rounded(list, shade, edge);
 
         // The hues, then the alpha over a checkerboard in the colour picked
         UIRect hues = HueBounds;
-        Cells(list, hues, (x, _) => new Vector4(ToRgb(x, 1.0f, 1.0f), 1.0f) * tint);
+        PaintHueCells(list, hues, tint);
         Rounded(list, hues, edge);
         SliderHandle(list, hues, hue, new Vector4(ToRgb(hue, 1.0f, 1.0f), 1.0f) * tint);
 
@@ -172,7 +187,7 @@ public class ColorPicker : UIComponent
         {
             UIRect alphas = AlphaBounds;
             Checkers(list, alphas, tint);
-            Cells(list, alphas, (x, _) => new Vector4(solid, x) * tint, horizontalOnly: true);
+            PaintAlphaCells(list, alphas, solid, tint);
             Rounded(list, alphas, edge);
             SliderHandle(list, alphas, alpha, new Vector4(solid, alpha) * tint);
         }
@@ -201,21 +216,58 @@ public class ColorPicker : UIComponent
         Rounded(list, swatch, edge);
     }
 
-    // A gradient over an area as cells, the colour of each from where its middle is across and up (0 to 1)
-    private static void Cells(UIDrawList list, UIRect area, Func<float, float, Vector4> colour, bool horizontalOnly = false)
+    // Helper method to paint the saturation/brightness field as flat cells without delegate or closure allocations
+    private static void PaintShadeCells(UIDrawList list, UIRect area, float hue, Vector4 tint)
     {
         int across = Math.Max(1, (int)MathF.Ceiling(area.Width / CELL));
-        int up = horizontalOnly || area.Height <= SLIDER ? 1 : Math.Max(1, (int)MathF.Ceiling(area.Height / CELL));
+        int up = area.Height <= SLIDER ? 1 : Math.Max(1, (int)MathF.Ceiling(area.Height / CELL));
         Vector2 cell = new(area.Width / across, area.Height / up);
+        Vector2 overlap = cell + new Vector2(0.5f);
+        float invAcross = across == 1 ? 0.0f : 1.0f / (across - 1.0f);
+        float invUp = up == 1 ? 0.0f : 1.0f / (up - 1.0f);
 
         for (int y = 0; y < up; y++)
         {
-            float v = up == 1 ? 0.5f : y / (up - 1.0f);
+            float v = up == 1 ? 0.5f : y * invUp;
+            float minY = area.Min.Y + y * cell.Y;
             for (int x = 0; x < across; x++)
             {
-                Vector2 min = area.Min + new Vector2(x, y) * cell;
-                list.Rect(new UIRect(min, min + cell + new Vector2(0.5f)), colour(across == 1 ? 0.5f : x / (across - 1.0f), v));
+                float s = across == 1 ? 0.5f : x * invAcross;
+                var min = new Vector2(area.Min.X + x * cell.X, minY);
+                list.Rect(new UIRect(min, min + overlap), new Vector4(ToRgb(hue, s, v), 1.0f) * tint);
             }
+        }
+    }
+
+    // Helper method to paint the horizontal hue strip as flat cells without delegate or closure allocations
+    private static void PaintHueCells(UIDrawList list, UIRect area, Vector4 tint)
+    {
+        int across = Math.Max(1, (int)MathF.Ceiling(area.Width / CELL));
+        float cellWidth = area.Width / across;
+        float invAcross = across == 1 ? 0.0f : 1.0f / (across - 1.0f);
+        float maxY = area.Max.Y + 0.5f;
+
+        for (int x = 0; x < across; x++)
+        {
+            float h = across == 1 ? 0.5f : x * invAcross;
+            float minX = area.Min.X + x * cellWidth;
+            list.Rect(new UIRect(new Vector2(minX, area.Min.Y), new Vector2(minX + cellWidth + 0.5f, maxY)), new Vector4(ToRgb(h, 1.0f, 1.0f), 1.0f) * tint);
+        }
+    }
+
+    // Helper method to paint the horizontal alpha strip as flat cells without delegate or closure allocations
+    private static void PaintAlphaCells(UIDrawList list, UIRect area, Vector3 solid, Vector4 tint)
+    {
+        int across = Math.Max(1, (int)MathF.Ceiling(area.Width / CELL));
+        float cellWidth = area.Width / across;
+        float invAcross = across == 1 ? 0.0f : 1.0f / (across - 1.0f);
+        float maxY = area.Max.Y + 0.5f;
+
+        for (int x = 0; x < across; x++)
+        {
+            float a = across == 1 ? 0.5f : x * invAcross;
+            float minX = area.Min.X + x * cellWidth;
+            list.Rect(new UIRect(new Vector2(minX, area.Min.Y), new Vector2(minX + cellWidth + 0.5f, maxY)), new Vector4(solid, a) * tint);
         }
     }
 
@@ -287,17 +339,19 @@ public class ColorPicker : UIComponent
         {
             case Zone.Shade:
                 UIRect shade = ShadeBounds;
-                saturation = Math.Clamp((point.X - shade.Min.X) / shade.Width, 0.0f, 1.0f);
-                brightness = Math.Clamp((point.Y - shade.Min.Y) / shade.Height, 0.0f, 1.0f);
+                saturation = shade.Width > 0.0f ? Math.Clamp((point.X - shade.Min.X) / shade.Width, 0.0f, 1.0f) : 0.0f;
+                brightness = shade.Height > 0.0f ? Math.Clamp((point.Y - shade.Min.Y) / shade.Height, 0.0f, 1.0f) : 0.0f;
                 break;
 
             case Zone.Hue:
                 // Just short of all the way round, which would be red again and read back as the left end
-                hue = Math.Clamp((point.X - HueBounds.Min.X) / HueBounds.Width, 0.0f, 0.999f);
+                UIRect hues = HueBounds;
+                hue = hues.Width > 0.0f ? Math.Clamp((point.X - hues.Min.X) / hues.Width, 0.0f, 0.999f) : 0.0f;
                 break;
 
             case Zone.Alpha:
-                alpha = Math.Clamp((point.X - AlphaBounds.Min.X) / AlphaBounds.Width, 0.0f, 1.0f);
+                UIRect alphas = AlphaBounds;
+                alpha = alphas.Width > 0.0f ? Math.Clamp((point.X - alphas.Min.X) / alphas.Width, 0.0f, 1.0f) : 0.0f;
                 break;
 
             case Zone.Original when Original is { } was:
@@ -365,25 +419,97 @@ public class ColorPicker : UIComponent
         return (hue / 6.0f, max > 0.0f ? chroma / max : 0.0f, max);
     }
 
+    private const string HEX_DIGITS = "0123456789ABCDEF";
+
+    /// <summary>Formats a colour as #RRGGBB (or #RRGGBBAA when not opaque) into <paramref name="destination"/> without allocating.</summary>
+    public static bool TryFormatHex(Vector4 colour, Span<char> destination, out int written)
+    {
+        static int Byte(float value) => (int)MathF.Round(Math.Clamp(value, 0.0f, 1.0f) * 255.0f);
+
+        int r = Byte(colour.X);
+        int g = Byte(colour.Y);
+        int b = Byte(colour.Z);
+        int a = Byte(colour.W);
+        int needed = a == 255 ? 7 : 9;
+        if (destination.Length < needed)
+        {
+            written = 0;
+            return false;
+        }
+
+        destination[0] = '#';
+        destination[1] = HEX_DIGITS[r >> 4];
+        destination[2] = HEX_DIGITS[r & 0xF];
+        destination[3] = HEX_DIGITS[g >> 4];
+        destination[4] = HEX_DIGITS[g & 0xF];
+        destination[5] = HEX_DIGITS[b >> 4];
+        destination[6] = HEX_DIGITS[b & 0xF];
+        if (needed == 9)
+        {
+            destination[7] = HEX_DIGITS[a >> 4];
+            destination[8] = HEX_DIGITS[a & 0xF];
+        }
+
+        written = needed;
+        return true;
+    }
+
     /// <summary>A colour as #RRGGBB, with AA on the end when it isn't opaque.</summary>
     public static string ToHex(Vector4 colour)
     {
-        static int Byte(float value) => (int)MathF.Round(Math.Clamp(value, 0.0f, 1.0f) * 255.0f);
-        string hex = $"#{Byte(colour.X):X2}{Byte(colour.Y):X2}{Byte(colour.Z):X2}";
-        return Byte(colour.W) == 255 ? hex : hex + $"{Byte(colour.W):X2}";
+        Span<char> buffer = stackalloc char[9];
+        TryFormatHex(colour, buffer, out int written);
+        return new string(buffer[..written]);
     }
 
     /// <summary>A colour out of #RGB, #RRGGBB or #RRGGBBAA (the # can be left off), null for text that isn't one.</summary>
-    public static Vector4? FromHex(string text)
+    public static Vector4? FromHex(string text) => text is null ? null : FromHex(text.AsSpan());
+
+    /// <summary>A colour out of #RGB, #RRGGBB or #RRGGBBAA (the # can be left off), null for text that isn't one. Makes no allocations.</summary>
+    public static Vector4? FromHex(ReadOnlySpan<char> text)
     {
-        string hex = text.Trim().TrimStart('#');
+        ReadOnlySpan<char> hex = text.Trim();
+        while (hex.Length > 0 && hex[0] == '#')
+            hex = hex[1..];
+
         if (hex.Length == 3)
-            hex = string.Concat(hex.Select(c => new string(c, 2)));
-        if (hex.Length is not (6 or 8) || !hex.All(char.IsAsciiHexDigit))
+        {
+            int r = HexNibble(hex[0]);
+            int g = HexNibble(hex[1]);
+            int b = HexNibble(hex[2]);
+            if ((r | g | b) < 0)
+                return null;
+            return new Vector4(((r << 4) | r) / 255.0f, ((g << 4) | g) / 255.0f, ((b << 4) | b) / 255.0f, 1.0f);
+        }
+
+        if (hex.Length is not (6 or 8))
             return null;
 
-        float Part(int at) => Convert.ToInt32(hex.Substring(at, 2), 16) / 255.0f;
-        return new Vector4(Part(0), Part(2), Part(4), hex.Length == 8 ? Part(6) : 1.0f);
+        int rByte = HexByte(hex[0], hex[1]);
+        int gByte = HexByte(hex[2], hex[3]);
+        int bByte = HexByte(hex[4], hex[5]);
+        int aByte = hex.Length == 8 ? HexByte(hex[6], hex[7]) : 255;
+        if ((rByte | gByte | bByte | aByte) < 0)
+            return null;
+
+        return new Vector4(rByte / 255.0f, gByte / 255.0f, bByte / 255.0f, aByte / 255.0f);
+    }
+
+    // Helper method to decode a single ASCII hex digit, or -1 if invalid
+    private static int HexNibble(char c) => c switch
+    {
+        >= '0' and <= '9' => c - '0',
+        >= 'a' and <= 'f' => c - 'a' + 10,
+        >= 'A' and <= 'F' => c - 'A' + 10,
+        _ => -1
+    };
+
+    // Helper method to decode two ASCII hex digits into a byte, or -1 if either is invalid
+    private static int HexByte(char hi, char lo)
+    {
+        int h = HexNibble(hi);
+        int l = HexNibble(lo);
+        return (h | l) < 0 ? -1 : (h << 4) | l;
     }
 
     protected override void DefineScript()

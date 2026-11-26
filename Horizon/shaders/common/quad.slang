@@ -5,12 +5,11 @@
 
 static const float2 QUAD_POSITIONS[4] = { float2(-0.5, -0.5), float2(0.5, -0.5), float2(0.5, 0.5), float2(-0.5, 0.5) };
 static const float2 QUAD_TEXCOORDS[4] = { float2(0.0, 1.0), float2(1.0, 1.0), float2(1.0, 0.0), float2(0.0, 0.0) };
-static const uint QUAD_INDICES[6] = { 0, 1, 2, 0, 2, 3 };
 
-// Which corner of the quad a vertex of the draw is.
+// Which corner of the quad a vertex of the draw is (indexed via the shared 0,1,2,0,2,3 quad index buffer).
 uint quadCorner(uint vertexId)
 {
-    return QUAD_INDICES[vertexId % 6];
+    return vertexId & 3u;
 }
 
 // The instance the draw is on, counted from the first instance of the frame's buffer rather than of the draw.

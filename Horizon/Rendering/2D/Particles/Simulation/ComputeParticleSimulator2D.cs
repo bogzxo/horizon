@@ -67,7 +67,7 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
         if (CreateShader() is not Shader shader)
             return;
 
-        if (compactShader is null)
+        if (compactShader is not { IsValid: true })
         {
             if (!GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet("particle2d_compact", ShaderDescription.FromPath("shaders/particle", "particle_compact"), out var compact))
             {
@@ -79,15 +79,16 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
         }
 
         compute = new Technique(shader);
+        GraphicsDevice.Current.WarmComputePipelines([shader, compactShader.Shader]);
         pool = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, Maximum * ParticleState2D.SizeInBytes));
         instances = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, Maximum * ParticleInstance.SizeInBytes));
-        command = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage | BufferUsage.Indirect, BufferAccess.Dynamic, 16));
+        command = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage | BufferUsage.Indirect, BufferAccess.Dynamic, 20));
         pool.Name = "particle pool";
         instances.Name = "particle instances";
         command.Name = "particle draw command";
 
-        // A draw of the quad, with the instance count for the GPU to fill in every frame
-        command.Update<uint>([6, 0, 0, 0]);
+        // A VkDrawIndexedIndirectCommand of the shared quad, with the instance count for the GPU to fill in every frame
+        command.Update<uint>([6, 0, 0, 0, 0]);
     }
 
     protected internal override void Update(float dt)
@@ -99,7 +100,7 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
     protected internal override bool Prepare(out ParticleDraw draw)
     {
         draw = default;
-        if (compute is null || compactShader is null || pool is null || instances is null || command is null)
+        if (compute is not { IsValid: true } || compactShader is not { IsValid: true } || pool is null || instances is null || command is null)
             return false;
 
         Upload(TakePending());

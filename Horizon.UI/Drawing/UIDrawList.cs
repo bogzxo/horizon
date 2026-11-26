@@ -43,6 +43,8 @@ public sealed partial class UIDrawList
     private readonly List<Run> runs = [];
     private int runStart;
     private Texture? runImage0, runImage1;
+    // Last frame-quad index that bound IMAGE_SLOT / IMAGE_SLOT+1 in the active run, for O(1) RecordRunSegments
+    private int lastUsedImage0Quad = -1, lastUsedImage1Quad = -1;
 
     // The atlases of other people this list drew out of (or wanted to), for the renderer to bring up to date
     private readonly List<TextureAtlas> atlases = [];
@@ -192,6 +194,7 @@ public sealed partial class UIDrawList
         runs.Clear();
         runStart = 0;
         runImage0 = runImage1 = null;
+        lastUsedImage0Quad = lastUsedImage1Quad = -1;
         atlases.Clear();
         glass.Clear();
 
@@ -465,10 +468,11 @@ public sealed partial class UIDrawList
 
         // Kept in its frame even cut away, a frame between two ticks can bring it into sight
         Vector2 drawn = visualScale * scale;
+        float drawnScale = MathF.Min(MathF.Abs(drawn.X), MathF.Abs(drawn.Y));
         float frosted = MathF.Min(1.0f, opacity * GLASS_LEAD);
         int underItems = Math.Clamp(under.Items, 0, itemCount);
         int underQuads = Math.Clamp(under.Quads, 0, frameList.QuadCount);
-        KeepFrameGlass(underQuads, rect, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), bend * MathF.Abs(drawn.X), lens, tint);
+        KeepFrameGlass(underQuads, rect, radius * drawnScale, blur * MathF.Min(MathF.Abs(scale.X), MathF.Abs(scale.Y)), bend * drawnScale, lens, tint, underItems, itemCount);
         if (rect.Intersect(clip).IsEmpty)
             return;
 
@@ -482,7 +486,7 @@ public sealed partial class UIDrawList
 
         // Frosted well ahead of the rest fading in (see frosted above). Faded along with it, a menu coming in had the code
         // behind it sharp through its half there text, the two sets of words on top of each other for the first few frames
-        glass.Add(new UIGlassPane(itemCount, min, max, clipMin, clipMax, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), frosted, bend * MathF.Abs(drawn.X), underItems, lens, tint));
+        glass.Add(new UIGlassPane(itemCount, min, max, clipMin, clipMax, radius * drawnScale, blur * MathF.Min(MathF.Abs(scale.X), MathF.Abs(scale.Y)), frosted, bend * drawnScale, underItems, lens, tint));
     }
 
     // How many times quicker a pane of glass comes in than what's painted over it, see Glass
@@ -518,7 +522,8 @@ public sealed partial class UIDrawList
         RoundRect(rect, radius, panel);
 
         // A pixel of the screen wide, a hairline whatever the UI is scaled by
-        float hairline = 1.0f / MathF.Max(0.01f, MathF.Abs((visualScale * scale).X));
+        Vector2 drawnScale = Vector2.Abs(visualScale * scale);
+        float hairline = 1.0f / MathF.Max(0.01f, MathF.Min(drawnScale.X, drawnScale.Y));
         RoundOutline(rect, radius, hairline, Skin.BorderColor);
     }
 
@@ -609,13 +614,33 @@ public sealed partial class UIDrawList
     /// </summary>
     internal static SpriteItem ScreenShape(UIRect rect, UIRect cut, Vector2 form, float radius, uint color, Vector2 visualScale, Vector2 visualOffset, Vector2 scale, Vector2 origin)
     {
-        Vector2 ToScreen(Vector2 at) => (at * visualScale + visualOffset) * scale + origin;
-        float pixels = MathF.Abs((visualScale * scale).X);
+        Vector2 screenMin = (rect.Min * visualScale + visualOffset) * scale + origin;
+        Vector2 screenMax = (rect.Max * visualScale + visualOffset) * scale + origin;
+        Vector2 low = Vector2.Min(screenMin, screenMax);
+        Vector2 high = Vector2.Max(screenMin, screenMax);
+        Vector2 screenSize = high - low;
 
-        Vector2 clipMin = float.IsFinite(cut.Min.X) && float.IsFinite(cut.Min.Y) ? ToScreen(cut.Min) : new Vector2(-NO_CLIP);
-        Vector2 clipMax = float.IsFinite(cut.Max.X) && float.IsFinite(cut.Max.Y) ? ToScreen(cut.Max) : new Vector2(NO_CLIP);
-        SpriteItem item = SpriteItem.Rectangle(ToScreen(rect.Min), ToScreen(rect.Max), new Vector2(form.X * pixels, form.Y), clipMax, color, SpriteItem.NoTexture | SpriteItem.ShapeFlag);
-        item.Ring = radius * pixels;
+        // Under HiDPI or non-uniform stretch scaling, use the smaller axis scale and clamp corner radius and outline
+        // thickness to half the shorter screen-space side so the SDF rounded box never inverts or caves in.
+        Vector2 absScale = Vector2.Abs(visualScale * scale);
+        float pixels = MathF.Min(absScale.X, absScale.Y);
+        float screenRadius = MathF.Max(0.0f, radius * pixels);
+        float screenThickness = MathF.Max(0.0f, form.X * pixels);
+        if (form.Y <= 0.0f)
+        {
+            float maxRadius = MathF.Min(screenSize.X, screenSize.Y) * 0.5f;
+            screenRadius = MathF.Min(screenRadius, maxRadius);
+            if (screenThickness > 0.0f)
+                screenThickness = MathF.Min(screenThickness, maxRadius);
+        }
+
+        Vector2 clipMin = float.IsFinite(cut.Min.X) && float.IsFinite(cut.Min.Y) ? (cut.Min * visualScale + visualOffset) * scale + origin : new Vector2(-NO_CLIP);
+        Vector2 clipMax = float.IsFinite(cut.Max.X) && float.IsFinite(cut.Max.Y) ? (cut.Max * visualScale + visualOffset) * scale + origin : new Vector2(NO_CLIP);
+        if (clipMin.X > clipMax.X) (clipMin.X, clipMax.X) = (clipMax.X, clipMin.X);
+        if (clipMin.Y > clipMax.Y) (clipMin.Y, clipMax.Y) = (clipMax.Y, clipMin.Y);
+
+        SpriteItem item = SpriteItem.Rectangle(low, high, new Vector2(screenThickness, form.Y), clipMax, color, SpriteItem.NoTexture | SpriteItem.ShapeFlag);
+        item.Ring = screenRadius;
         item.Key = clipMin;
         return item;
     }
@@ -643,7 +668,10 @@ public sealed partial class UIDrawList
     /// <param name="radius">How big the corners are. No more than half of the shorter side, which makes a pill of it.</param>
     public void RoundRect(UIRect rect, float radius, Vector4 color)
     {
-        radius = MathF.Min(radius, MathF.Min(rect.Width, rect.Height) * 0.5f);
+        if (rect.IsEmpty)
+            return;
+
+        radius = MathF.Max(0.0f, MathF.Min(radius, MathF.Min(rect.Width, rect.Height) * 0.5f));
         if (radius < 0.5f)
         {
             Rect(rect, color);
@@ -659,7 +687,10 @@ public sealed partial class UIDrawList
     /// <summary>Draws the edge of a rectangle with rounded corners, on the inside. See <see cref="RoundRect"/>.</summary>
     public void RoundOutline(UIRect rect, float radius, float thickness, Vector4 color)
     {
-        radius = MathF.Min(radius, MathF.Min(rect.Width, rect.Height) * 0.5f);
+        if (rect.IsEmpty || thickness <= 0.0f)
+            return;
+
+        radius = MathF.Max(0.0f, MathF.Min(radius, MathF.Min(rect.Width, rect.Height) * 0.5f));
         if (radius < 0.5f)
         {
             Outline(rect, thickness, color);
@@ -920,6 +951,11 @@ public sealed partial class UIDrawList
             slot = IMAGE_SLOT;
         }
 
+        if (slot == IMAGE_SLOT)
+            lastUsedImage0Quad = frameList.QuadCount;
+        else
+            lastUsedImage1Quad = frameList.QuadCount;
+
         return slot;
     }
 
@@ -1010,12 +1046,13 @@ public sealed partial class UIDrawList
 
     private void CloseRun()
     {
-        KeepFrameRun(runImage0, runImage1);
+        KeepFrameRun(runImage0, runImage1, itemCount, lastUsedImage0Quad, lastUsedImage1Quad);
         int count = itemCount - runStart;
         if (count > 0)
             runs.Add(new Run(runStart, count, runImage0, runImage1));
 
         runStart = itemCount;
         runImage0 = runImage1 = null;
+        lastUsedImage0Quad = lastUsedImage1Quad = -1;
     }
 }

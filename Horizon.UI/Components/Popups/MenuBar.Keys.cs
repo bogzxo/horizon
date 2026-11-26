@@ -54,16 +54,15 @@ public partial class MenuBar
     }
 
     // Where in the shown title the mnemonic letter is, the one after an &, or the first letter
-    private static int MnemonicAt(string title)
+    internal static int MnemonicAt(string title)
     {
         int at = title.IndexOf('&');
         if (at >= 0 && at + 1 < title.Length)
             return at;
 
-        string shown = TitleShown(title);
-        for (int i = 0; i < shown.Length; i++)
+        for (int i = 0; i < title.Length; i++)
         {
-            if (char.IsLetterOrDigit(shown[i]))
+            if (char.IsLetterOrDigit(title[i]))
                 return i;
         }
 
@@ -71,7 +70,21 @@ public partial class MenuBar
     }
 
     /// <summary>The letter that opens a menu with Alt, lower case, nothing for a title without one.</summary>
-    public static char MnemonicOf(Menu menu) => MnemonicAt(menu.Title) is >= 0 and var at ? char.ToLowerInvariant(TitleShown(menu.Title)[at]) : '\0';
+    public static char MnemonicOf(Menu menu)
+    {
+        string title = menu.Title;
+        int at = title.IndexOf('&');
+        if (at >= 0 && at + 1 < title.Length)
+            return char.ToLowerInvariant(title[at + 1]);
+
+        for (int i = 0; i < title.Length; i++)
+        {
+            if (char.IsLetterOrDigit(title[i]))
+                return char.ToLowerInvariant(title[i]);
+        }
+
+        return '\0';
+    }
 
     /// <summary>
     /// Opens a menu with the keys, its first item lit, the way Alt and its letter does. The keyboard stays where it was.
@@ -253,13 +266,13 @@ public partial class MenuBar
 
     // The mnemonic underlined while the keys are on the bar or Alt is held, always painted and see-through otherwise, so
     // the quads of the word don't shift as it comes and goes
-    private void PaintMnemonic(UIDrawList list, UISkin skin, Menu menu, UIRect title, float scale)
+    private void PaintMnemonic(UIDrawList list, UISkin skin, Menu menu, string shownTitle, UIRect title, float scale)
     {
         int at = MnemonicAt(menu.Title);
-        if (at < 0)
+        if (at < 0 || at >= shownTitle.Length)
             return;
 
-        // Measured only while it shows, the pieces of the title measured were garbage every tick the bar was painted
+        // Measured only while it shows, and sliced as spans so no substrings are allocated
         bool lit = Armed || OpenMenu is not null && !PointerMovedSinceKeys || altDown && !altSpoiled;
         if (!lit)
         {
@@ -267,10 +280,10 @@ public partial class MenuBar
             return;
         }
 
-        string shown = TitleShown(menu.Title);
+        ReadOnlySpan<char> shown = shownTitle.AsSpan();
         float width = skin.Font.Measure(shown, scale, markup: false).X;
-        float left = title.Center.X - width * 0.5f + skin.Font.Measure(shown.Substring(0, at), scale, markup: false).X;
-        float right = title.Center.X - width * 0.5f + skin.Font.Measure(shown.Substring(0, at + 1), scale, markup: false).X;
+        float left = title.Center.X - width * 0.5f + skin.Font.Measure(shown[..at], scale, markup: false).X;
+        float right = title.Center.X - width * 0.5f + skin.Font.Measure(shown[..(at + 1)], scale, markup: false).X;
         float under = MathF.Round(title.Center.Y - skin.Font.LineHeight * scale * 0.42f);
         list.Rect(new UIRect(new Vector2(left, under - 1.0f), new Vector2(right, under)), skin.TextColor with { W = skin.TextColor.W * 0.8f });
     }

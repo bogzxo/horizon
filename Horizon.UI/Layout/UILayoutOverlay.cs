@@ -43,7 +43,7 @@ internal static class UILayoutOverlay
     {
         UIComponent? under = FindUnder(module.Root, pointer, options.ShowHidden);
 
-        foreach (var component in module.Root.Children)
+        foreach (var component in module.Root.ChildSpan)
             PaintTree(list, component, options, under, 0);
 
         if (options.ShowLabels && under is not null)
@@ -130,7 +130,7 @@ internal static class UILayoutOverlay
         list.EndParts();
         list.PopOwner();
 
-        foreach (var child in component.Children)
+        foreach (var child in component.ChildSpan)
             PaintTree(list, child, options, under, depth + 1);
 
         if (animated)
@@ -160,7 +160,7 @@ internal static class UILayoutOverlay
         UIRect content = stack.Bounds.Shrink(stack.Padding);
         UIComponent? previous = null;
 
-        foreach (var child in stack.Children)
+        foreach (var child in stack.ChildSpan)
         {
             // A hidden child takes up no room in a stack, so there is no gap next to it either.
             if (!child.Visible)
@@ -272,7 +272,7 @@ internal static class UILayoutOverlay
     {
         UIComponent? previous = null;
 
-        foreach (var child in stack.Children)
+        foreach (var child in stack.ChildSpan)
         {
             if (!child.Visible)
                 continue;

@@ -30,6 +30,11 @@ public sealed class PostTarget : IDisposable
     /// </summary>
     public static TextureDefinition Precise => TextureDefinition.Rgba16Float;
 
+    /// <summary>
+    /// Packed 11-11-10 unsigned float RGB, blended between the texels. Half the bandwidth of <see cref="Precise"/> for HDR colour without alpha.
+    /// </summary>
+    public static TextureDefinition HdrColor => TextureDefinition.R11G11B10Float;
+
     private readonly RenderTarget frameBuffer;
 
     public Texture Texture { get; }

@@ -16,7 +16,49 @@ public enum ShaderLanguage
 }
 
 /// <summary>One stage of a compiled program and where it starts. The stages of one Slang file share one SPIR-V module.</summary>
-public sealed record CompiledStage(ShaderStage Stage, string EntryPoint, byte[] Spirv, uint[] ThreadGroupSize);
+public sealed record CompiledStage
+{
+    private readonly ShaderPackEntry? sourceEntry;
+    private readonly ReadOnlyMemory<byte> spirvMemory;
+    private byte[]? spirvArray;
+
+    public ShaderStage Stage { get; init; }
+    public string EntryPoint { get; init; }
+    public byte[] Spirv
+    {
+        get => spirvArray ??= sourceEntry is not null ? sourceEntry.Spirv : spirvMemory.ToArray();
+        init { spirvArray = value; spirvMemory = value; }
+    }
+    public uint[] ThreadGroupSize { get; init; }
+
+    internal ReadOnlyMemory<byte> SpirvMemory => spirvArray is not null ? spirvArray : spirvMemory;
+
+    public CompiledStage(ShaderStage stage, string entryPoint, byte[] spirv, uint[] threadGroupSize)
+    {
+        Stage = stage;
+        EntryPoint = entryPoint;
+        spirvArray = spirv;
+        spirvMemory = spirv;
+        ThreadGroupSize = threadGroupSize;
+    }
+
+    internal CompiledStage(ShaderStage stage, string entryPoint, ReadOnlyMemory<byte> spirv, uint[] threadGroupSize)
+    {
+        Stage = stage;
+        EntryPoint = entryPoint;
+        spirvMemory = spirv;
+        ThreadGroupSize = threadGroupSize;
+    }
+
+    internal CompiledStage(ShaderStage stage, string entryPoint, ShaderPackEntry entry, uint[] threadGroupSize)
+    {
+        Stage = stage;
+        EntryPoint = entryPoint;
+        sourceEntry = entry;
+        spirvMemory = entry.SpirvMemory;
+        ThreadGroupSize = threadGroupSize;
+    }
+}
 
 /// <summary>What came out of compiling a program, for <see cref="Shader"/> to make modules of.</summary>
 public sealed class CompiledShader
@@ -139,7 +181,7 @@ public static partial class ShaderCompiler
         string source;
         try
         {
-            using var preprocessor = new ShaderPreprocessor(content, options.BindlessCapacity);
+            using var preprocessor = new ShaderPreprocessor(content, options.BindlessCapacity, recordInputs: options.Recorder is not null);
             source = definition.File is null
                 ? preprocessor.ProcessSource(string.Empty, ShaderLines.Split(definition.Source))
                 : preprocessor.ProcessFile(definition.File);

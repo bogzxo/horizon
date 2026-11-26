@@ -49,7 +49,7 @@ public sealed record DisplayState(Vector2 ViewportSize, Vector2 WindowSize, Vect
 /// and the next frame gets it done before it draws.
 /// </para>
 /// </summary>
-public partial class WindowManager : GameComponent, IDisposable
+public sealed partial class WindowManager : GameComponent, IDisposable
 {
     // The platform the window manager runs on, owned by it and disposed once the GPU is gone
     private readonly IPlatformHost host;
@@ -96,6 +96,8 @@ public partial class WindowManager : GameComponent, IDisposable
 
     private readonly double logLoopsEvery;
     private double nextLoopLog;
+    // Reused on the render thread by LogLoops so periodic loop diagnostics don't allocate a StringBuilder per sample
+    private readonly System.Text.StringBuilder loopLogBuffer = new(256);
 
     // Set this in the environment to a number of seconds and what every thread allocates is written to the log that
     // often, by type. For finding out where the garbage comes from without a profiler
@@ -913,35 +915,43 @@ public partial class WindowManager : GameComponent, IDisposable
 
         nextLoopLog = now + logLoopsEvery;
 
-        foreach (LoopStatistics loop in Loops)
+        for (int i = 0; i < Loops.Count; i++)
         {
+            LoopStatistics loop = Loops[i];
             var totals = loop.AllocationTotals;
-            Log.Info(
-                $"[{Name}] {loop.Name} at {loop.Rate:0} a second, {loop.WorkMs:0.00} ms a turn ({loop.PeakWorkMs:0.00} at worst), " +
-                $"{loop.AllocatedPerTurn:0} bytes a turn which is {loop.AllocatedPerSecond / 1024.0:0.0} KB a second. " +
-                $"{GC.CollectionCount(0)} small and {GC.CollectionCount(2)} big collections so far. " +
-                $"Totals: {totals.Turns} turns, {totals.Bytes} bytes.");
+            loopLogBuffer.Clear()
+                .Append('[').Append(Name).Append("] ").Append(loop.Name)
+                .Append($" at {loop.Rate:0} a second, {loop.WorkMs:0.00} ms a turn ({loop.PeakWorkMs:0.00} at worst), ")
+                .Append($"{loop.AllocatedPerTurn:0} bytes a turn which is {loop.AllocatedPerSecond / 1024.0:0.0} KB a second. ")
+                .Append($"{GC.CollectionCount(0)} small and {GC.CollectionCount(2)} big collections so far. ")
+                .Append($"Totals: {totals.Turns} turns, {totals.Bytes} bytes.");
+            Log.Info(loopLogBuffer.ToString());
         }
 
         // And what the process weighs. The heap the garbage collector has in hand against what it has committed
         // from the machine, the process as the machine sees it, the memory the device has taken in blocks (the part
         // of it the CPU can see is the machine's memory as well), and the threads
         var info = GC.GetGCMemoryInfo();
-        Log.Info(
-            $"[{Name}] memory, heap {GC.GetTotalMemory(false) / (1024.0 * 1024.0):0.0} MB of {info.TotalCommittedBytes / (1024.0 * 1024.0):0.0} committed" +
-            ProcessWeight() +
-            (Graphics is { } gpu
-                ? $", device {gpu.Statistics.MemoryInUse / (1024.0 * 1024.0):0.0} MB in use of {gpu.Statistics.MemoryBlockBytes / (1024.0 * 1024.0):0} in {gpu.Statistics.MemoryBlocks} blocks, {gpu.Statistics.MemoryHostBytes / (1024.0 * 1024.0):0} MB of them mapped"
-                : string.Empty));
+        loopLogBuffer.Clear()
+            .Append('[').Append(Name).Append($"] memory, heap {GC.GetTotalMemory(false) / (1024.0 * 1024.0):0.0} MB of {info.TotalCommittedBytes / (1024.0 * 1024.0):0.0} committed");
+        AppendProcessWeight(loopLogBuffer);
+        if (Graphics is { } gpu)
+            loopLogBuffer.Append($", device {gpu.Statistics.MemoryInUse / (1024.0 * 1024.0):0.0} MB in use of {gpu.Statistics.MemoryBlockBytes / (1024.0 * 1024.0):0} in {gpu.Statistics.MemoryBlocks} blocks, {gpu.Statistics.MemoryHostBytes / (1024.0 * 1024.0):0} MB of them mapped");
+        Log.Info(loopLogBuffer.ToString());
 
         // And what the GPU spent on the last frame it finished, pass by pass, the way the overlay shows it
         if (Graphics is { } device && device.GpuScopes.Length > 0)
         {
-            var passes = new System.Text.StringBuilder();
-            passes.Append($"[{Name}] GPU {device.GpuFrameMilliseconds:0.00} ms a frame");
+            loopLogBuffer.Clear()
+                .Append('[').Append(Name).Append($"] GPU {device.GpuFrameMilliseconds:0.00} ms a frame");
             foreach (GpuScope scope in device.GpuScopes)
-                passes.Append($", {new string('>', scope.Depth)}{scope.Name} {scope.Milliseconds:0.00}");
-            Log.Info(passes.ToString());
+            {
+                loopLogBuffer.Append(", ");
+                if (scope.Depth > 0)
+                    loopLogBuffer.Append('>', scope.Depth);
+                loopLogBuffer.Append(scope.Name).Append($" {scope.Milliseconds:0.00}");
+            }
+            Log.Info(loopLogBuffer.ToString());
         }
     }
 
@@ -1001,11 +1011,11 @@ public partial class WindowManager : GameComponent, IDisposable
 
     // The process as the machine sees it, its working set, private memory and threads. Apple's phones don't let a
     // process ask (Process throws PlatformNotSupportedException there), so it's left out on them
-    private static string ProcessWeight()
+    private static void AppendProcessWeight(System.Text.StringBuilder buffer)
     {
-        if (OperatingSystem.IsIOS() || OperatingSystem.IsTvOS() || OperatingSystem.IsMacCatalyst()) return string.Empty;
+        if (OperatingSystem.IsIOS() || OperatingSystem.IsTvOS() || OperatingSystem.IsMacCatalyst()) return;
 
         using var process = System.Diagnostics.Process.GetCurrentProcess();
-        return $", working set {process.WorkingSet64 / (1024.0 * 1024.0):0} MB, private {process.PrivateMemorySize64 / (1024.0 * 1024.0):0} MB, {process.Threads.Count} threads";
+        buffer.Append($", working set {process.WorkingSet64 / (1024.0 * 1024.0):0} MB, private {process.PrivateMemorySize64 / (1024.0 * 1024.0):0} MB, {process.Threads.Count} threads");
     }
 }

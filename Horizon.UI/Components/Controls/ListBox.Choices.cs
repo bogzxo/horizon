@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 
 using Horizon.Rendering;
 using Horizon.UI.Drawing;
@@ -40,6 +41,9 @@ public partial class ListBox
     // How far apart the pieces of a row in segments are, and how far its detail is from the rest
     private const float SEGMENT_GAP = 10.0f, DETAIL_INDENT = 10.0f;
 
+    // Reusable scratch buffer for joining segmented choice texts without LINQ allocations
+    private readonly StringBuilder segmentBuffer = new();
+
     /// <summary>
     /// The letters of an item's row that match <see cref="Query"/>, each by the part they're in, where in it they start and
     /// how many. The parts are its quiet word, its text and its detail (0, 1 and 2), or each of its
@@ -52,12 +56,33 @@ public partial class ListBox
             return known;
 
         var found = new List<(int Part, int Start, int Length)>();
-        if (Choice?.Invoke(item) is { } choice && query.Trim().Length > 0)
+        if (Choice?.Invoke(item) is { } choice && query.AsSpan().Trim().Length > 0)
         {
             if (choice.Segments is { Count: > 0 } segments)
-                Spread(UIChooser.MatchSpans(string.Join(" ", segments.Select(piece => piece.Text)), query), [.. Starts(segments)], [.. segments.Select(piece => piece.Text.Length)], found);
+            {
+                segmentBuffer.Clear();
+                int count = segments.Count;
+                int[] starts = new int[count];
+                int[] lengths = new int[count];
+                int at = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    if (i > 0)
+                        segmentBuffer.Append(' ');
+                    string pieceText = segments[i].Text;
+                    starts[i] = at;
+                    lengths[i] = pieceText.Length;
+                    segmentBuffer.Append(pieceText);
+                    at += pieceText.Length + 1;
+                }
+
+                Spread(UIChooser.MatchSpans(segmentBuffer.ToString(), query), starts, lengths, found);
+            }
             else if (UIChooser.MatchSpans(choice.Text, query) is { Count: > 0 } own)
-                found.AddRange(own.Select(span => (1, span.Start, span.Length)));
+            {
+                for (int i = 0; i < own.Count; i++)
+                    found.Add((1, own[i].Start, own[i].Length));
+            }
             else
             {
                 // Where each part is in what the row is known by, a path for a file or the row written out for a command
@@ -80,22 +105,12 @@ public partial class ListBox
         return found;
     }
 
-    // Where each segment starts in them all written with a space between
-    private static IEnumerable<int> Starts(IReadOnlyList<(string Text, UIChoiceTone Tone)> segments)
-    {
-        int at = 0;
-        foreach (var (text, _) in segments)
-        {
-            yield return at;
-            at += text.Length + 1;
-        }
-    }
-
     // The pieces matched in the whole of it cut up by the part they fall in, a part not found (-1) gets none
-    private static void Spread(List<(int Start, int Length)> spans, int[] starts, int[] lengths, List<(int Part, int Start, int Length)> into)
+    private static void Spread(List<(int Start, int Length)> spans, ReadOnlySpan<int> starts, ReadOnlySpan<int> lengths, List<(int Part, int Start, int Length)> into)
     {
-        foreach (var (start, length) in spans)
+        for (int s = 0; s < spans.Count; s++)
         {
+            var (start, length) = spans[s];
             for (int part = 0; part < starts.Length; part++)
             {
                 if (starts[part] < 0)
@@ -190,24 +205,26 @@ public partial class ListBox
     private static float Write(UIDrawList list, string text, int part, List<(int Part, int Start, int Length)> lit, float left, UIRect area, float scale, Vector4 color, Vector4 accent)
     {
         UIFont font = list.Skin.Font;
+        ReadOnlySpan<char> span = text;
         int at = 0;
-        foreach (var (inPart, start, length) in lit)
+        for (int i = 0; i < lit.Count; i++)
         {
-            if (inPart != part || start < at || start + length > text.Length)
+            var (inPart, start, length) = lit[i];
+            if (inPart != part || start < at || start + length > span.Length)
                 continue;
 
             if (start > at)
-                left = Piece(list, font, text[at..start], left, area, scale, color);
-            left = Piece(list, font, text.Substring(start, length), left, area, scale, accent);
+                left = Piece(list, font, span.Slice(at, start - at), left, area, scale, color);
+            left = Piece(list, font, span.Slice(start, length), left, area, scale, accent);
             at = start + length;
         }
 
-        if (at < text.Length)
-            left = Piece(list, font, text[at..], left, area, scale, color);
+        if (at < span.Length)
+            left = Piece(list, font, span.Slice(at), left, area, scale, color);
         return left;
     }
 
-    private static float Piece(UIDrawList list, UIFont font, string text, float left, UIRect area, float scale, Vector4 color)
+    private static float Piece(UIDrawList list, UIFont font, ReadOnlySpan<char> text, float left, UIRect area, float scale, Vector4 color)
     {
         list.Text(text, new UIRect(new Vector2(left, area.Min.Y), new Vector2(MathF.Max(left, area.Max.X), area.Max.Y)), Origin.Left, scale, color, markup: false);
         return left + font.Measure(text, scale, markup: false).X;

@@ -24,6 +24,13 @@ internal sealed unsafe class SdlAudioOutput : IAudioOutput
     // is the delay between a hit and its sound
     private const int AHEAD = 2048;
 
+    // Bounded waits when idle: paused wakes immediately on Resume/Dispose; silence backs off to ~16 ms (~60 Hz)
+    // instead of 500 Hz busy polling while still starting newly played audio within one frame.
+    internal const int PAUSED_WAIT_MS = 500;
+    internal const int SILENT_INITIAL_WAIT_MS = 4;
+    internal const int SILENT_MAX_WAIT_MS = 16;
+
+    private readonly AutoResetEvent wakeEvent = new(false);
     private Sdl? sdl;
     private uint device;
     private AudioFormat format;
@@ -78,6 +85,40 @@ internal sealed unsafe class SdlAudioOutput : IAudioOutput
         if (disposed != 0 || !paused) return;
         paused = false;
         if (device != 0 && thread is not null) sdl!.PauseAudioDevice(device, 0);
+        SignalWake();
+    }
+
+    /// <summary>Computes the bounded wait duration for the pump thread given its current state.</summary>
+    internal static int ComputeWaitMs(bool paused, bool queueFull, bool silent, int silentStreak, AudioFormat format)
+    {
+        if (paused)
+            return PAUSED_WAIT_MS;
+
+        if (queueFull)
+        {
+            int halfChunkMs = format.SampleRate > 0 ? (format.FramesPerBuffer * 500) / format.SampleRate : 4;
+            return Math.Clamp(halfChunkMs, 2, 10);
+        }
+
+        if (silent)
+        {
+            if (silentStreak <= 1) return SILENT_INITIAL_WAIT_MS;
+            if (silentStreak <= 3) return 8;
+            return SILENT_MAX_WAIT_MS;
+        }
+
+        return 0;
+    }
+
+    private void SignalWake()
+    {
+        try
+        {
+            wakeEvent.Set();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     // Keeps the device fed, asking for a chunk whenever what's queued drops under what it should be ahead by. Paused
@@ -86,22 +127,34 @@ internal sealed unsafe class SdlAudioOutput : IAudioOutput
     {
         var chunk = new float[format.FramesPerBuffer * format.Channels];
         uint ahead = (uint)(AHEAD * format.Channels * sizeof(float));
+        int silentStreak = 0;
 
         while (running)
         {
-            if (paused || sdl!.GetQueuedAudioSize(device) >= ahead)
+            bool isPaused = paused;
+            if (isPaused)
             {
-                Thread.Sleep(2);
+                silentStreak = 0;
+                wakeEvent.WaitOne(ComputeWaitMs(paused: true, queueFull: false, silent: false, silentStreak: 0, format));
                 continue;
             }
 
-            // With nothing playing nothing is queued, SDL plays silence by itself, and the thread hardly wakes
+            if (sdl!.GetQueuedAudioSize(device) >= ahead)
+            {
+                silentStreak = 0;
+                wakeEvent.WaitOne(ComputeWaitMs(paused: false, queueFull: true, silent: false, silentStreak: 0, format));
+                continue;
+            }
+
+            // With nothing playing nothing is queued, SDL plays silence by itself, and the thread backs off cleanly
             if (!render!(chunk))
             {
-                Thread.Sleep(2);
+                if (silentStreak < 16) silentStreak++;
+                wakeEvent.WaitOne(ComputeWaitMs(paused: false, queueFull: false, silent: true, silentStreak, format));
                 continue;
             }
 
+            silentStreak = 0;
             fixed (float* samples = chunk) sdl!.QueueAudio(device, samples, (uint)(chunk.Length * sizeof(float)));
         }
     }
@@ -111,6 +164,7 @@ internal sealed unsafe class SdlAudioOutput : IAudioOutput
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
 
         running = false;
+        SignalWake();
         if (thread is not null && !thread.Join(500))
         {
             // A pump that won't stop could still be queueing, so the device is left open rather than closed under it
@@ -120,5 +174,6 @@ internal sealed unsafe class SdlAudioOutput : IAudioOutput
 
         if (device != 0) sdl!.CloseAudioDevice(device);
         device = 0;
+        wakeEvent.Dispose();
     }
 }

@@ -13,8 +13,8 @@ namespace Horizon.UI.Components;
 // change's bar was painted over the chevron's room.
 public partial class CodeEditor
 {
-    // How far in from the left the column of marks starts, and the gap after it, a share of a digit
-    private const float GLYPH_PAD = 2.0f, GLYPH_GAP = 0.6f;
+    // How far in from the left the column of marks starts, the mark icon's share of a line's height, and the gap after it as a share of a digit
+    private const float GLYPH_PAD = 1.0f, GLYPH_GAP = 0.25f, GLYPH_SCALE = 0.65f;
 
     // The codicon a breakpoint that isn't plain is drawn with, VS Code's, the outline of one for one that's off
     private static string MarkSymbol(CodeBreakpointMark mark)
@@ -29,7 +29,7 @@ public partial class CodeEditor
 
     // Where the strip of the marks ends on the left of the gutter, as wide as one of them
     private float BreakpointStripRight(UISkin painted) =>
-        Bounds.Shrink(Padding).Min.X + GLYPH_PAD + MathF.Round(FontOf(painted).LineHeight * paintedScale * 0.8f) + 2.0f;
+        Bounds.Shrink(Padding).Min.X + GLYPH_PAD + MathF.Round(FontOf(painted).LineHeight * paintedScale * GLYPH_SCALE) + 2.0f;
 
     /// <summary>
     /// The line whose breakpoint strip in the gutter a point is over, -1 for anywhere else, so a right click there can be
@@ -50,15 +50,15 @@ public partial class CodeEditor
     // The columns for where the code starts, every number of them worked out the one way, see the top of the file
     private GutterColumns GutterOf(UIRect content, float codeLeft, float digit, float lineHeight)
     {
-        float glyph = MathF.Round(lineHeight * 0.8f);
+        float glyph = MathF.Round(lineHeight * GLYPH_SCALE);
         float numbersRight = codeLeft - digit * GUTTER_GAP;
         float bar = MathF.Max(2.0f, MathF.Round(digit * CHANGE_BAR));
         float barRight = codeLeft - MathF.Max(1.0f, MathF.Round(digit * 0.15f));
         float barLeft = barRight - bar;
-        float foldFrom = numbersRight + MathF.Max(2.0f, MathF.Round(digit * 0.4f));
-        float foldTo = barLeft - MathF.Max(2.0f, MathF.Round(digit * 0.25f));
+        float foldFrom = numbersRight + MathF.Max(1.0f, MathF.Round(digit * 0.2f));
+        float foldTo = barLeft - MathF.Max(1.0f, MathF.Round(digit * 0.15f));
         // The chevron's box a bit wider than its column, the icon is drawn well inside its box and came out a speck
-        float fold = MathF.Round(lineHeight * 0.9f);
+        float fold = MathF.Round(lineHeight * 0.82f);
         return new GutterColumns(content.Min.X + GLYPH_PAD, glyph, numbersRight, foldFrom + (foldTo - foldFrom - fold) * 0.5f, fold, barLeft, barRight);
     }
 
@@ -85,10 +85,9 @@ public partial class CodeEditor
     private (int[] Old, int[] New)? diffNumbers;
     private int diffBiggest;
 
-    // How many digits a column of numbers is wide, the biggest number's at the least four. At the least two, an enter at
-    // line 99 or an undo back past it moved every line of the code a digit right and back again. A diff isn't typed into
-    // and has two columns of them, it keeps to two
-    private const int MIN_DIGITS = 4;
+    // How many digits a column of numbers is wide at the least: two keeps files under 100 lines compact without
+    // jumping on early edits, while 100+ line files grow cleanly as needed.
+    private const int MIN_DIGITS = 2;
 
     private int NumberDigits()
     {
@@ -118,7 +117,7 @@ public partial class CodeEditor
         int digits = NumberDigits();
         float numbers = DiffLineNumbers is null ? digits : digits * 2 + 1;
         float digit = FontOf(skin).Measure("0", scale, markup: false).X;
-        float glyph = MathF.Round(FontOf(skin).LineHeight * scale * 0.8f);
+        float glyph = MathF.Round(FontOf(skin).LineHeight * scale * GLYPH_SCALE);
         return GLYPH_PAD + glyph + MathF.Round(digit * GLYPH_GAP) + digit * (numbers + GUTTER_GAP);
     }
 
@@ -191,7 +190,7 @@ public partial class CodeEditor
             }
             else if (breakpoint || pointing)
             {
-                float dot = MathF.Round(columns.GlyphSide * 0.32f);
+                float dot = MathF.Max(2.5f, MathF.Round(columns.GlyphSide * 0.34f));
                 var round = new UIRect(slot.Center - new Vector2(dot), slot.Center + new Vector2(dot));
                 list.RoundRect(round, dot, skin.ErrorColor with { W = breakpoint ? 1.0f : 0.35f });
             }

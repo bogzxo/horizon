@@ -302,6 +302,94 @@ public class TabPanel : UIComponent
 
     private float HeaderOf(UISkin skin) => HeaderHeight > 0.0f ? HeaderHeight : MathF.Round(skin.Font.LineHeight * TextScaleOf(skin) * 1.6f);
 
+    // Cached tab label measurements and prefix offsets so Measure, Paint, TabBounds, and TabAt stay O(N) / O(1)
+    private string[] cachedTitles = [];
+    private float[] cachedTabWidths = [];
+    private float[] cachedTabOffsets = [];
+    private UIFont? cachedFont;
+    private float cachedScale, cachedSpacing, cachedTabPadding, cachedTotalTabs;
+    private int cachedCount;
+    private string? cachedPrevHint, cachedNextHint;
+    private float cachedPrevWidth, cachedNextWidth;
+
+    /// <summary>Helper method to measure and cache tab widths and prefix offsets only when font, scale, spacing, or titles change.</summary>
+    private void EnsureTabMetrics(UISkin skin, float scale)
+    {
+        int count = ChildSpan.Length;
+        bool fontOrScaleChanged = cachedFont != skin.Font || cachedScale != scale;
+        bool dirty = fontOrScaleChanged || cachedCount != count || cachedSpacing != Spacing || cachedTabPadding != TabPadding;
+
+        if (!dirty)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (!ReferenceEquals(cachedTitles[i], TitleOf(i)))
+                {
+                    dirty = true;
+                    break;
+                }
+            }
+        }
+
+        if (dirty)
+        {
+            if (cachedTitles.Length < count)
+            {
+                cachedTitles = new string[count];
+                cachedTabWidths = new float[count];
+                cachedTabOffsets = new float[count];
+            }
+
+            float total = 0.0f;
+            float offset = 0.0f;
+            for (int i = 0; i < count; i++)
+            {
+                string title = TitleOf(i);
+                float width = !fontOrScaleChanged && i < cachedCount && ReferenceEquals(cachedTitles[i], title)
+                    ? cachedTabWidths[i]
+                    : skin.Font.Measure(title, scale).X;
+
+                cachedTitles[i] = title;
+                cachedTabWidths[i] = width;
+                cachedTabOffsets[i] = offset;
+
+                float padded = width + TabPadding * 2.0f;
+                total += padded + (i > 0 ? Spacing : 0.0f);
+                offset += padded + Spacing;
+            }
+
+            cachedFont = skin.Font;
+            cachedScale = scale;
+            cachedSpacing = Spacing;
+            cachedTabPadding = TabPadding;
+            cachedCount = count;
+            cachedTotalTabs = total;
+        }
+
+        string prev = Resolve(PreviousHint);
+        if (fontOrScaleChanged || !ReferenceEquals(cachedPrevHint, prev))
+        {
+            cachedPrevHint = prev;
+            cachedPrevWidth = prev.Length > 0 ? skin.Font.Measure(prev, scale).X : 0.0f;
+        }
+
+        string next = Resolve(NextHint);
+        if (fontOrScaleChanged || !ReferenceEquals(cachedNextHint, next))
+        {
+            cachedNextHint = next;
+            cachedNextWidth = next.Length > 0 ? skin.Font.Measure(next, scale).X : 0.0f;
+        }
+    }
+
+    private UIRect TabBoundsCached(UIRect header, int index)
+    {
+        float left = header.Center.X - cachedTotalTabs * 0.5f
+            + HeaderAlign.ToVector().X * MathF.Max(0.0f, header.Width - cachedTotalTabs - Spacing * 0.5f)
+            + cachedTabOffsets[index];
+        float width = cachedTabWidths[index] + TabPadding * 2.0f;
+        return new UIRect(new Vector2(left - Spacing * 0.25f, header.Min.Y), new Vector2(left + width + Spacing * 0.25f, header.Max.Y));
+    }
+
     protected override Vector2 Measure(UISkin skin)
     {
         // As big as the biggest page, so flipping doesn't make everything around the panel jump
@@ -310,10 +398,10 @@ public class TabPanel : UIComponent
             page = Vector2.Max(page, child.DesiredSize);
 
         float scale = TextScaleOf(skin);
-        float strip = 0.0f;
-        for (int i = 0; i < ChildSpan.Length; i++)
-            strip += skin.Font.Measure(TitleOf(i), scale).X + Spacing + TabPadding * 2.0f;
-        strip += skin.Font.Measure(Resolve(PreviousHint), scale).X + skin.Font.Measure(Resolve(NextHint), scale).X;
+        EnsureTabMetrics(skin, scale);
+
+        float strip = cachedCount > 0 ? cachedTotalTabs + Spacing : 0.0f;
+        strip += cachedPrevWidth + cachedNextWidth;
 
         return new Vector2(MathF.Max(page.X, strip), page.Y + HeaderOf(skin) + Spacing * 0.5f) + Padding.Total;
     }
@@ -363,28 +451,21 @@ public class TabPanel : UIComponent
         if (Module?.Compositor.Skin is not { } skin || index < 0 || index >= ChildSpan.Length)
             return default;
 
-        float scale = TextScaleOf(skin);
-        UIRect header = HeaderBounds;
-
-        float total = 0.0f;
-        for (int i = 0; i < ChildSpan.Length; i++)
-            total += skin.Font.Measure(TitleOf(i), scale).X + TabPadding * 2.0f + (i > 0 ? Spacing : 0.0f);
-
-        float left = header.Center.X - total * 0.5f
-            + HeaderAlign.ToVector().X * MathF.Max(0.0f, header.Width - total - Spacing * 0.5f);
-        for (int i = 0; i < index; i++)
-            left += skin.Font.Measure(TitleOf(i), scale).X + TabPadding * 2.0f + Spacing;
-
-        float width = skin.Font.Measure(TitleOf(index), scale).X + TabPadding * 2.0f;
-        return new UIRect(new Vector2(left - Spacing * 0.25f, header.Min.Y), new Vector2(left + width + Spacing * 0.25f, header.Max.Y));
+        EnsureTabMetrics(skin, TextScaleOf(skin));
+        return TabBoundsCached(HeaderBounds, index);
     }
 
     /// <summary>The tab at a point in the layout's units, -1 for none. For whoever wants to click one without the pointer (an editor).</summary>
     public int TabAt(Vector2 point)
     {
+        if (Module?.Compositor.Skin is not { } skin || ChildSpan.Length == 0)
+            return -1;
+
+        EnsureTabMetrics(skin, TextScaleOf(skin));
+        UIRect header = HeaderBounds;
         for (int i = 0; i < ChildSpan.Length; i++)
         {
-            if (TabBounds(i).Contains(point))
+            if (TabBoundsCached(header, i).Contains(point))
                 return i;
         }
 
@@ -396,6 +477,7 @@ public class TabPanel : UIComponent
         UISkin skin = list.Skin;
         float scale = TextScaleOf(skin);
         UIRect header = HeaderBounds;
+        EnsureTabMetrics(skin, scale);
 
         // The open one in the text's colour on its pill, the accent only when one's given. It was gold, words and an underline
         Vector4 accent = AccentColor ?? skin.TextColor;
@@ -405,7 +487,7 @@ public class TabPanel : UIComponent
         for (int i = 0; i < ChildSpan.Length; i++)
         {
             list.BeginPart(i);
-            UIRect tab = TabBounds(i);
+            UIRect tab = TabBoundsCached(header, i);
             // Folded no page is showing, so none has the pill of the one open. It kept it and read as a page that was up
             bool open = i == Selected && !Folded;
 
@@ -415,7 +497,7 @@ public class TabPanel : UIComponent
             list.Box(pill, open ? (AccentColor is { } given ? given with { W = ListBox.PICKED } : skin.TextColor with { W = ListBox.PICKED })
                 : IsHovered && tab.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
-            list.Text(TitleOf(i), tab, Origin.Center, scale, open ? accent : dim);
+            list.Text(cachedTitles[i], tab, Origin.Center, scale, open ? accent : dim);
         }
 
         list.EndParts();

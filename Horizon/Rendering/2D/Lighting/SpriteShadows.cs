@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 using Horizon.Engine;
 using Horizon.Graphics;
@@ -29,10 +30,41 @@ internal sealed class SpriteShadows : IDisposable
     /// </summary>
     public int Reach { get; set; } = 128;
 
+    /// <summary>std140 Params block for sprite_seed.slang (24 bytes).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct SeedParams
+    {
+        public Vector2 Size;
+        public Vector2 Cells;
+        public int Scale;
+        public int SpritesBlock;
+    }
+
+    /// <summary>std140 Params block for sprite_flood.slang and sprite_flood_final.slang (16 bytes).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct FloodParams
+    {
+        public Vector2 Cells;
+        public int Step;
+        public int Scale;
+    }
+
+    /// <summary>std140 Params block for sprite_field.slang (32 bytes).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct FieldParams
+    {
+        public Vector2 Size;
+        public Vector2 Cells;
+        public int Scale;
+        public float Far;
+        public float PixelWorld;
+        public int SpritesBlock;
+    }
+
     private static readonly TextureDefinition Fields = new(PixelFormat.Rg16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
     private static readonly TextureDefinition Seeds = new(PixelFormat.Rg32Uint, Smooth: false, Usage: TextureUsage.Sampled | TextureUsage.Storage);
 
-    private static Technique? seed, flood, field;
+    private static Technique? seed, flood, floodFinal, field;
 
     private Texture? seedsA, seedsB, result;
     private uint width, height, cells, rows;
@@ -63,53 +95,87 @@ internal sealed class SpriteShadows : IDisposable
         using (device.BeginGpuScope("shadow seeds"))
         {
             seed!.Bind();
-            seed.SetUniform("uSize", in size);
-            seed.SetUniform("uCells", in grid);
-            seed.SetUniform("uScale", scale);
-            seed.SetUniform("uSpritesBlock", spritesBlockRays);
+            var seedParams = new SeedParams
+            {
+                Size = size,
+                Cells = grid,
+                Scale = scale,
+                SpritesBlock = spritesBlockRays ? 1 : 0
+            };
+            seed.SetParamsBlock(in seedParams);
             material.Bind(0);
-            surface.Bind(1);
             device.BindStorageImage(0, seedsA);
             device.Dispatch(groupsX, groupsY);
             device.Barrier(BarrierTargets.ShaderImages);
-
         }
 
-        // The flood, from the longest step down to one, back and forth between the two seed textures
+        // The flood, from the longest step down to one, back and forth between the two seed textures.
+        // Steps 4, 2 and 1 are fused into a single shared-memory pass when maxReach >= 4.
+        int maxReach = Math.Min(Math.Max(1, Reach), (int)Math.Max(cells, rows));
         int step = 1;
-        while (step * 2 <= Math.Max(1, Reach)) step *= 2;
+        while (step * 2 <= maxReach) step *= 2;
         float far = step * 2.0f * scale;
 
         Texture from = seedsA!, into = seedsB!;
         using (device.BeginGpuScope("shadow flood"))
         {
-            flood!.Bind();
-            flood.SetUniform("uCells", in grid);
-            flood.SetUniform("uScale", scale);
-            for (; step >= 1; step /= 2)
+            if (step >= 4 && floodFinal is { IsValid: true })
             {
-                flood.SetUniform("uStep", step);
+                if (step >= 8)
+                {
+                    flood!.Bind();
+                    for (; step >= 8; step /= 2)
+                    {
+                        var floodParams = new FloodParams { Cells = grid, Step = step, Scale = scale };
+                        flood.SetParamsBlock(in floodParams);
+                        device.BindStorageImage(0, from);
+                        device.BindStorageImage(1, into);
+                        device.Dispatch(groupsX, groupsY);
+                        device.Barrier(BarrierTargets.ShaderImages);
+                        (from, into) = (into, from);
+                    }
+                }
+
+                floodFinal.Bind();
+                var finalParams = new FloodParams { Cells = grid, Step = 4, Scale = scale };
+                floodFinal.SetParamsBlock(in finalParams);
                 device.BindStorageImage(0, from);
                 device.BindStorageImage(1, into);
-                device.Dispatch(groupsX, groupsY);
+                device.Dispatch((cells + 15) / 16, (rows + 15) / 16);
                 device.Barrier(BarrierTargets.ShaderImages);
                 (from, into) = (into, from);
             }
-
+            else
+            {
+                flood!.Bind();
+                for (; step >= 1; step /= 2)
+                {
+                    var floodParams = new FloodParams { Cells = grid, Step = step, Scale = scale };
+                    flood.SetParamsBlock(in floodParams);
+                    device.BindStorageImage(0, from);
+                    device.BindStorageImage(1, into);
+                    device.Dispatch(groupsX, groupsY);
+                    device.Barrier(BarrierTargets.ShaderImages);
+                    (from, into) = (into, from);
+                }
+            }
         }
 
         // And the distances, exact, for every texel of the picture
         using (device.BeginGpuScope("shadow distances"))
         {
             field!.Bind();
-            field.SetUniform("uSize", in size);
-            field.SetUniform("uCells", in grid);
-            field.SetUniform("uScale", scale);
-            field.SetUniform("uFar", far);
-            field.SetUniform("uPixelWorld", pixelWorld);
-            field.SetUniform("uSpritesBlock", spritesBlockRays);
+            var fieldParams = new FieldParams
+            {
+                Size = size,
+                Cells = grid,
+                Scale = scale,
+                Far = far,
+                PixelWorld = pixelWorld,
+                SpritesBlock = spritesBlockRays ? 1 : 0
+            };
+            field.SetParamsBlock(in fieldParams);
             material.Bind(0);
-            surface.Bind(1);
             device.BindStorageImage(0, from);
             device.BindStorageImage(1, result);
             device.Dispatch((width + 7) / 8, (height + 7) / 8);
@@ -134,31 +200,44 @@ internal sealed class SpriteShadows : IDisposable
         rows = (height + (uint)scale - 1) / (uint)scale;
 
         var textures = GameEngine.Instance.ObjectManager.Textures;
-        if (!textures.TryCreate(new TextureDescription { Width = cells, Height = rows, Definition = Seeds }, out var a)) return false;
-        if (!textures.TryCreate(new TextureDescription { Width = cells, Height = rows, Definition = Seeds }, out var b)) return false;
-        if (!textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = Fields }, out var f)) return false;
-        a.Asset.Name = "sprite shadow seeds a";
-        b.Asset.Name = "sprite shadow seeds b";
-        f.Asset.Name = "sprite shadow field";
-
+        if (!textures.TryCreate(new TextureDescription { Width = cells, Height = rows, Definition = Seeds }, out var a))
+            return false;
         seedsA = a.Asset;
+        seedsA.Name = "sprite shadow seeds a";
+
+        if (!textures.TryCreate(new TextureDescription { Width = cells, Height = rows, Definition = Seeds }, out var b))
+        {
+            Release();
+            return false;
+        }
         seedsB = b.Asset;
+        seedsB.Name = "sprite shadow seeds b";
+
+        if (!textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = Fields }, out var f))
+        {
+            Release();
+            return false;
+        }
         result = f.Asset;
+        result.Name = "sprite shadow field";
         return true;
     }
 
     private static bool EnsureShaders()
     {
-        if (seed is not null && flood is not null && field is not null) return true;
+        if (seed is { IsValid: true } && flood is { IsValid: true } && floodFinal is { IsValid: true } && field is { IsValid: true }) return true;
 
         var shaders = GameEngine.Instance.ObjectManager.Shaders;
         if (!shaders.TryCreateOrGet("sprite_seed", ShaderDescription.FromPath("shaders/lighting", "sprite_seed"), out var s)) return false;
         if (!shaders.TryCreateOrGet("sprite_flood", ShaderDescription.FromPath("shaders/lighting", "sprite_flood"), out var j)) return false;
+        if (!shaders.TryCreateOrGet("sprite_flood_final", ShaderDescription.FromPath("shaders/lighting", "sprite_flood_final"), out var jf)) return false;
         if (!shaders.TryCreateOrGet("sprite_field", ShaderDescription.FromPath("shaders/lighting", "sprite_field"), out var f)) return false;
 
         seed = new Technique(s.Asset);
         flood = new Technique(j.Asset);
+        floodFinal = new Technique(jf.Asset);
         field = new Technique(f.Asset);
+        GraphicsDevice.Current.WarmComputePipelines([s.Asset, j.Asset, jf.Asset, f.Asset]);
         return true;
     }
 

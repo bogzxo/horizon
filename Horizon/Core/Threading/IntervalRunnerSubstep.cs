@@ -1,6 +1,6 @@
 ﻿namespace Horizon.Core;
 
-public class IntervalRunnerSubStep(float timeInterval, Action action) : Entity
+public sealed class IntervalRunnerSubStep(float timeInterval, Action action) : Entity
 {
     public float TimeInterval { get; init; } = timeInterval;
     private float _timer = 0.0f;
@@ -21,6 +21,9 @@ public class IntervalRunnerSubStep(float timeInterval, Action action) : Entity
 
         // Its own tweens, components and children get their turn like anybody else's
         base.UpdateState(dt);
+
+        if (TimeInterval <= 0.0f || !float.IsFinite(TimeInterval) || dt <= 0.0f || !float.IsFinite(dt))
+            return;
 
         _timer += dt;
 

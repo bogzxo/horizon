@@ -216,6 +216,9 @@ public abstract class Camera : GameObject
     {
         // Out of the window and into clip space, which goes from -1 to 1 either way with its Y going up
         Vector2 window = Engine.WindowManager.WindowSize;
+        if (window.X <= 0.0f || window.Y <= 0.0f)
+            return Vector2.Zero;
+
         var clip = new Vector4(
             screenPosition.X / window.X * 2.0f - 1.0f,
             1.0f - screenPosition.Y / window.Y * 2.0f,

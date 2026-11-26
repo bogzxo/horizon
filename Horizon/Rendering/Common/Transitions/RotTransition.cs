@@ -25,7 +25,7 @@ public sealed class RotTransition : ScreenTransition
     // Seeds are picked from zero up to this, which is plenty of different rot
     private const float SEED_RANGE = 64.0f;
 
-    private PostTechnique technique = null!;
+    private PostTechnique? technique;
     private float seed = NewSeed();
     private bool wasArriving;
 
@@ -60,6 +60,9 @@ public sealed class RotTransition : ScreenTransition
 
     protected override void Draw(float cover, bool arriving, float dt)
     {
+        if (technique is not { IsValid: true }) technique = new PostTechnique("rot");
+        if (!technique.IsValid) return;
+
         // The new scene comes out of rot of its own. Nobody sees it change, everything is covered right then
         if (arriving && !wasArriving)
             seed = NewSeed();

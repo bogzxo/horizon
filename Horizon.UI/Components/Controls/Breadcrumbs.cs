@@ -125,6 +125,27 @@ public class Breadcrumbs : UIComponent
 
     private Vector2 Pointer => Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : default;
 
+    protected override long PaintVersion
+    {
+        get
+        {
+            var hash = new HashCode();
+            hash.Add(Editing);
+            if (!Editing)
+            {
+                hash.Add(TextScale);
+                hash.Add(parts.Count);
+                for (int i = 0; i < parts.Count; i++)
+                    hash.Add(parts[i]);
+                bool clickable = OnPressed is not null;
+                hash.Add(clickable);
+                hash.Add(clickable && IsHovered && Module is not null ? PartAt(Pointer) : -1);
+            }
+
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
+    }
+
     protected override void Paint(UIDrawList list)
     {
         if (Editing)

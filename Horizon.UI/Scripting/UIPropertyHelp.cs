@@ -241,6 +241,26 @@ public static class UIPropertyHelp
         ["on_press"] = "the old name of on_pressed, still read so old layouts load",
     };
 
+    private static readonly Dictionary<string, Dictionary<string, string>> KindHelp = BuildKindHelp();
+
+    private static Dictionary<string, Dictionary<string, string>> BuildKindHelp()
+    {
+        var byKind = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        foreach (var (key, value) in Help)
+        {
+            int dot = key.IndexOf('.');
+            if (dot <= 0)
+                continue;
+
+            string kind = key[..dot];
+            string prop = key[(dot + 1)..];
+            if (!byKind.TryGetValue(kind, out Dictionary<string, string>? props))
+                byKind[kind] = props = new Dictionary<string, string>(StringComparer.Ordinal);
+            props[prop] = value;
+        }
+        return byKind;
+    }
+
     /// <summary>
     /// What a property does, "kind.name" first and the name on its own after that, empty for one nobody wrote
     /// anything down for.
@@ -248,7 +268,7 @@ public static class UIPropertyHelp
     /// <param name="kind">What a layout calls the component (UIModule.KindOf), "progress_bar", "slider", null if unknown.</param>
     public static string Describe(string? kind, string name)
     {
-        if (kind is not null && Help.TryGetValue(kind + "." + name, out string? special))
+        if (kind is not null && KindHelp.TryGetValue(kind, out Dictionary<string, string>? byName) && byName.TryGetValue(name, out string? special))
             return special;
 
         return Help.TryGetValue(name, out string? help) ? help : string.Empty;

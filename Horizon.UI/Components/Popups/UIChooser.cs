@@ -136,11 +136,23 @@ public static partial class UIChooser
             nothing.Text = query.Trim().Length > 0 ? $"Nothing matches \"{query.Trim()}\"" : "Nothing to pick from here";
         }
 
+        // Cancels and disposes the active search CancellationTokenSource so no CTS leaks on replacement, completion, or close
+        void CancelSearch()
+        {
+            looking = null;
+            if (stopLooking is { } previous)
+            {
+                stopLooking = null;
+                previous.Cancel();
+                previous.Dispose();
+            }
+        }
+
         // A searched list asked again for what's typed now, the last search let go of. What it found stays up until the
         // new one comes back, so the rows don't blink away between two keys
         void Search(string query)
         {
-            stopLooking?.Cancel();
+            CancelSearch();
             stopLooking = new CancellationTokenSource();
             CancellationToken token = stopLooking.Token;
             UIChoiceSearch asked = search!;
@@ -173,6 +185,11 @@ public static partial class UIChooser
                 return;
 
             looking = null;
+            if (stopLooking is { } completedCts)
+            {
+                stopLooking = null;
+                completedCts.Dispose();
+            }
             if (!done.IsCompletedSuccessfully)
                 return;
 
@@ -207,6 +224,7 @@ public static partial class UIChooser
             if (!shown.CancelledOutside)
                 escaped();
         }));
+        shown.InternalClosed = CancelSearch;
         Vector4 edge = module.Compositor.Skin?.BorderColor ?? new Vector4(1.0f, 1.0f, 1.0f, 0.1f);
         var picking = shown.Body.Add(new ChooserPanel { Spacing = 6.0f });
         TextBox box = picking.Add(new TextBox
@@ -331,8 +349,7 @@ public static partial class UIChooser
             else
             {
                 // Back to what the dialog started with, a search that's still going has nothing to say about it
-                looking = null;
-                stopLooking?.Cancel();
+                CancelSearch();
                 if (search is not null)
                     Use(prefix, choices);
                 Narrow(query);

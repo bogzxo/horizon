@@ -44,6 +44,7 @@ public sealed partial class DebugSession
             {
                 ["breakpoints"] = new JsonArray(wanted.Where(point => point.Enabled).Select(point => (JsonNode?)new JsonObject { ["instructionReference"] = point.Address }).ToArray())
             }).ConfigureAwait(false);
+            if (State == DebugState.Ended) return false;
             var placed = body?["breakpoints"] as JsonArray;
             int index = 0;
             lock (breakpoints)

@@ -6,6 +6,7 @@ using Horizon.Platform;
 
 using Silk.NET.Vulkan;
 
+using Buffer = Silk.NET.Vulkan.Buffer;
 using PipelineCache = Horizon.Graphics.Vulkan.PipelineCache;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
@@ -55,6 +56,8 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     private readonly Swapchain swapchain;
     private readonly FrameResources[] frames = new FrameResources[FRAMES_IN_FLIGHT];
     private int frameIndex;
+    private Buffer quadIndexBuffer;
+    private VulkanMemory.Allocation quadIndexMemory;
 
     // The timeline every submission signals, counting up. A resource used in a submission is free again once the
     // timeline has got past that submission's value
@@ -119,6 +122,9 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     /// <summary>The alignment (in bytes) an offset into a uniform buffer has to have to be bound as a range.</summary>
     public uint UniformOffsetAlignment => (uint)Math.Max(1, Context.Limits.MinUniformBufferOffsetAlignment);
 
+    /// <summary>Whether the card supports dual-source colour blending (<see cref="BlendFactor.Src1Color"/> / <see cref="BlendFactor.OneMinusSrc1Color"/>).</summary>
+    public bool SupportsDualSourceBlend => Context.SupportsDualSourceBlend;
+
     /// <summary>How many frames have been begun.</summary>
     public ulong FrameNumber { get; private set; }
 
@@ -157,20 +163,37 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     /// Makes the device for a platform's surface, a window's or a phone's, see <see cref="IPlatformSurface"/>.
     /// </summary>
     public GraphicsDevice(IPlatformSurface surface, uint width, uint height, bool vsync)
-        : this(new VulkanContext(surface), surface, width, height, vsync) { }
+        : this(new VulkanContext(surface), memory: null, bindless: null, layouts: null, pipelines: null, surface, width, height, vsync) { }
 
     /// <summary>
     /// A device on a context that has its surface by now, one made along with it or one made ahead of the window and
     /// given its surface after, see <see cref="VulkanContext.Prepare"/>.
     /// </summary>
     internal GraphicsDevice(VulkanContext context, IPlatformSurface surface, uint width, uint height, bool vsync)
+        : this(context, memory: null, bindless: null, layouts: null, pipelines: null, surface, width, height, vsync) { }
+
+    /// <summary>A device reusing a <see cref="PreparedDevice"/> built ahead of the window.</summary>
+    internal GraphicsDevice(PreparedDevice prepared, IPlatformSurface surface, uint width, uint height, bool vsync)
+        : this(prepared.Context, prepared.Memory, prepared.Bindless, prepared.Layouts, prepared.Pipelines, surface, width, height, vsync) { }
+
+    private GraphicsDevice(
+        VulkanContext context,
+        VulkanMemory? memory,
+        BindlessTextures? bindless,
+        DescriptorLayouts? layouts,
+        PipelineCache? pipelines,
+        IPlatformSurface surface,
+        uint width,
+        uint height,
+        bool vsync)
     {
         Context = context;
         surfaceSource = surface;
-        Memory = new VulkanMemory(Context);
-        Bindless = new BindlessTextures(Context);
-        Layouts = new DescriptorLayouts(Context, Bindless);
-        Pipelines = new PipelineCache(Context, Layouts);
+        Memory = memory ?? new VulkanMemory(Context);
+        Bindless = bindless ?? new BindlessTextures(Context);
+        Layouts = layouts ?? new DescriptorLayouts(Context, Bindless);
+        Pipelines = pipelines ?? new PipelineCache(Context, Layouts);
+        CreateQuadIndexBuffer();
 
         this.vsync = vsync;
         swapchain = new Swapchain(Context);
@@ -219,6 +242,29 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         current = this;
         Log.Info($"[Graphics] {Description}.");
+    }
+
+    /// <summary>Compiles any uncached compute pipelines for <paramref name="shaders"/> in a single batched Vulkan call.</summary>
+    public void WarmComputePipelines(ReadOnlySpan<Shader> shaders) => Pipelines.WarmCompute(shaders);
+
+    private void CreateQuadIndexBuffer()
+    {
+        ReadOnlySpan<ushort> indices = [0, 1, 2, 0, 2, 3];
+        nuint bytes = (nuint)(indices.Length * sizeof(ushort));
+        var info = new BufferCreateInfo
+        {
+            SType = StructureType.BufferCreateInfo,
+            Size = bytes,
+            Usage = BufferUsageFlags.IndexBufferBit,
+            SharingMode = SharingMode.Exclusive
+        };
+
+        VulkanContext.Check(Vk.CreateBuffer(Device, in info, null, out quadIndexBuffer), "making the shared quad index buffer");
+        Vk.GetBufferMemoryRequirements(Device, quadIndexBuffer, out MemoryRequirements requirements);
+        quadIndexMemory = Memory.Allocate(requirements, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit, MemoryPropertyFlags.DeviceLocalBit, forImage: false);
+        VulkanContext.Check(Vk.BindBufferMemory(Device, quadIndexBuffer, quadIndexMemory.Memory, quadIndexMemory.Offset), "binding the shared quad index buffer");
+        indices.CopyTo(new Span<ushort>(quadIndexMemory.Mapped, indices.Length));
+        Context.Name(ObjectType.Buffer, quadIndexBuffer.Handle, "shared quad indices");
     }
 
     /// <summary>Whether this machine has a feature, see <see cref="GraphicsFeature"/>.</summary>
@@ -415,12 +461,15 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         completed = Math.Max(completed, QueryCompleted());
         frame.Reset();
+        ResetFrameDescriptorCache();
 
         cmd = frame.BeginCommandBuffer();
         ResetRecordingState();
 
-        // Nothing of the last frame is to be read while this one writes, see the summary
-        GlobalBarrier(PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryWriteBit | AccessFlags2.MemoryReadBit, PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryWriteBit | AccessFlags2.MemoryReadBit);
+        // Execution-only barrier to prevent write-after-read hazards on shared buffers (e.g. light tiles, exposure
+        // SSBO) between the previous in-flight frame's reads and this frame's compute/transfer writes without a full
+        // AllCommandsBit L2 cache flush/invalidate. Textures and buffer updates carry their own memory barriers.
+        GlobalBarrier(PipelineStageFlags2.AllGraphicsBit | PipelineStageFlags2.ComputeShaderBit, AccessFlags2.None, PipelineStageFlags2.ComputeShaderBit | PipelineStageFlags2.TransferBit, AccessFlags2.None);
 
         scopeCounts[frameIndex] = 0;
         openScopes.Clear();
@@ -477,7 +526,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
             scopeNames[frameIndex][index] = name;
             scopeDepths[frameIndex][index] = openScopes.Count;
             scopeCounts[frameIndex] = index + 1;
-            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 2 + index * 2));
+            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.TopOfPipeBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 2 + index * 2));
         }
 
         openScopes.Push(index);
@@ -491,7 +540,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         int index = openScopes.Pop();
         if (index >= 0)
-            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 3 + index * 2));
+            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.BottomOfPipeBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 3 + index * 2));
         Context.EndLabel(cmd);
     }
 
@@ -645,6 +694,14 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         if (timestamps.Handle != 0) Vk.DestroyQueryPool(Device, timestamps, null);
         Vk.DestroySemaphore(Device, timeline, null);
+
+        if (quadIndexBuffer.Handle != 0)
+        {
+            Vk.DestroyBuffer(Device, quadIndexBuffer, null);
+            Memory.Free(quadIndexMemory);
+            quadIndexBuffer = default;
+            quadIndexMemory = default;
+        }
 
         Pipelines.Dispose();
         Layouts.Dispose();

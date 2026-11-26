@@ -188,7 +188,7 @@ public class GameEngine : Entity
         var host = Horizon.Platform.PlatformInstallation.CreateHost(Horizon.Platform.PlatformInstallation.Resolve(Configuration.Platform), request);
 
         Input = AddComponent<InputManager>(new() { ReadsGamepads = Configuration.Gamepads });
-        Audio = Horizon.Audio.AudioDevice.For(open: Configuration.WindowConfiguration.Mode != RunMode.Application, host);
+        Audio = Horizon.Audio.AudioDevice.For(open: Configuration.WindowConfiguration.Mode != RunMode.Application, host, openAsync: true);
 
 #if DEBUG
         // Before the scenes, so it has had its say about the mouse and the keys by the time a scene reads them
@@ -257,31 +257,63 @@ public class GameEngine : Entity
     /// <summary>Helper method to read the frame back for everybody waiting on CapturePixels, at the end of a frame on the render thread.</summary>
     private void HandOverPixels()
     {
-        uint width = (uint)WindowManager.ViewportSize.X, height = (uint)WindowManager.ViewportSize.Y;
-        if (width == 0 || height == 0)
+        int width = (int)WindowManager.ViewportSize.X, height = (int)WindowManager.ViewportSize.Y;
+        if (width <= 0 || height <= 0)
             return;
-
-        var pixels = new byte[width * height * 4];
-        WindowManager.Scaling.FinishScene();
-        Graphics.BindWindow();
-        Graphics.ReadPixels(0, 0, width, height, pixels);
 
         var waiting = new List<TaskCompletionSource<ImagePixels>>();
         while (pixelsWanted.TryDequeue(out var one))
             waiting.Add(one);
 
-        // Turned the right way up off the render thread, the pixels come out bottom row first
+        if (waiting.Count == 0)
+            return;
+
+        var pixels = new byte[width * height * 4];
+        WindowManager.Scaling.FinishScene();
+        Graphics.BindWindow();
+        Graphics.ReadPixels(0, 0, (uint)width, (uint)height, pixels);
+
+        // Turned the right way up in place off the render thread, the pixels come out bottom row first
         Task.Run(() =>
         {
-            int row = (int)width * 4;
-            var upright = new byte[pixels.Length];
-            for (int y = 0; y < height; y++)
-                Buffer.BlockCopy(pixels, y * row, upright, ((int)height - 1 - y) * row, row);
+            FlipRowsInPlace(pixels, width, height);
 
-            var picture = new ImagePixels((int)width, (int)height, upright);
+            var picture = new ImagePixels(width, height, pixels);
             foreach (var one in waiting)
                 one.TrySetResult(picture);
         });
+    }
+
+    /// <summary>
+    /// Helper method to flip an RGBA8 pixel buffer vertically in place using a single pooled scratch row,
+    /// avoiding a second full-frame allocation.
+    /// </summary>
+    internal static void FlipRowsInPlace(byte[] pixels, int width, int height)
+    {
+        if (width <= 0 || height <= 1)
+            return;
+
+        int row = width * 4;
+        if (pixels.Length < row * height)
+            return;
+
+        byte[] scratch = System.Buffers.ArrayPool<byte>.Shared.Rent(row);
+        try
+        {
+            int half = height / 2;
+            for (int y = 0; y < half; y++)
+            {
+                int top = y * row;
+                int bottom = (height - 1 - y) * row;
+                Buffer.BlockCopy(pixels, top, scratch, 0, row);
+                Buffer.BlockCopy(pixels, bottom, pixels, top, row);
+                Buffer.BlockCopy(scratch, 0, pixels, bottom, row);
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(scratch);
+        }
     }
 
     /// <summary>
@@ -289,13 +321,13 @@ public class GameEngine : Entity
     /// </summary>
     private void TakeScreenshot(string path)
     {
-        uint width = (uint)WindowManager.ViewportSize.X, height = (uint)WindowManager.ViewportSize.Y;
-        if (width == 0 || height == 0) return;
+        int width = (int)WindowManager.ViewportSize.X, height = (int)WindowManager.ViewportSize.Y;
+        if (width <= 0 || height <= 0) return;
 
         var pixels = new byte[width * height * 4];
         WindowManager.Scaling.FinishScene();
         Graphics.BindWindow();
-        Graphics.ReadPixels(0, 0, width, height, pixels);
+        Graphics.ReadPixels(0, 0, (uint)width, (uint)height, pixels);
 
         // Encoding a PNG takes a while, which is not the render thread's problem
         Task.Run(() =>

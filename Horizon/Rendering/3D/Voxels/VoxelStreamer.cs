@@ -214,5 +214,6 @@ public sealed class VoxelStreamer : IDisposable
         {
             if (thread.IsAlive) thread.Join();
         }
+        stopping.Dispose();
     }
 }

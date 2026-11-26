@@ -1,5 +1,6 @@
 using Horizon.Rendering;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 using Horizon.Graphics;
@@ -149,6 +150,27 @@ public sealed partial class UIDrawList
         float glyphBold = bold ? font.BoldAdvance * scale * pixels : 0.0f;
         uint glyphTexture = subpixels ? GLYPH_SUBPIXEL_SLOT : GLYPH_SLOT;
 
+        // Resolve the lock-free flat L1 ASCII page and screen-space clip/color once per text run.
+        GlyphAtlas.AsciiPage? asciiPage = null;
+        float invPixels = 0.0f;
+        float clipMinX = float.NegativeInfinity, clipMinY = float.NegativeInfinity;
+        float clipMaxX = float.PositiveInfinity, clipMaxY = float.PositiveInfinity;
+        uint fadedPacked = packed;
+        if (madeSize != 0)
+        {
+            asciiPage = ResolveAsciiPage(glyphs, outlines!.Id, madeSize, glyphStyle);
+            invPixels = 1.0f / pixels;
+            if (float.IsFinite(clip.Min.X)) clipMinX = (clip.Min.X + visualOffset.X) * pixels + origin.X;
+            if (float.IsFinite(clip.Min.Y)) clipMinY = (clip.Min.Y + visualOffset.Y) * pixels + origin.Y;
+            if (float.IsFinite(clip.Max.X)) clipMaxX = (clip.Max.X + visualOffset.X) * pixels + origin.X;
+            if (float.IsFinite(clip.Max.Y)) clipMaxY = (clip.Max.Y + visualOffset.Y) * pixels + origin.Y;
+            if (opacity < 1.0f)
+            {
+                uint alpha = (uint)((packed >> 24) * opacity + 0.5f);
+                fadedPacked = (packed & 0x00FFFFFF) | (alpha << 24);
+            }
+        }
+
         for (int i = 0; i < text.Length; i++)
         {
             char character = text[i];
@@ -196,7 +218,8 @@ public sealed partial class UIDrawList
                 continue;
             }
 
-            if (font.Resolve(character, out var glyph) && madeSize != 0 && Glyph(glyphs, outlines!, glyph.Id, madeSize, glyphStyle, glyphBold, slant, pen, font.Baseline * scale, packed, glyphTexture, subpixels))
+            if (font.Resolve(character, out var glyph) && madeSize != 0
+                && Glyph(glyphs, outlines!, asciiPage!, glyph.Id, madeSize, glyphStyle, glyphBold, slant, pen, font.Baseline * scale, packed, fadedPacked, glyphTexture, subpixels, pixels, invPixels, clipMinX, clipMinY, clipMaxX, clipMaxY))
             {
                 // Made at its size, see Glyph
             }
@@ -226,41 +249,105 @@ public sealed partial class UIDrawList
         }
 
         if (subpixelGlyphs.Count > 0)
-            FlushSubpixels(packed);
+            FlushSubpixels(packed, fadedPacked);
+    }
+
+    // Last resolved L1 ASCII page for this draw list, avoiding even per-run dictionary lookups across adjacent labels
+    private GlyphAtlas? cachedAsciiAtlas;
+    private int cachedAsciiFontId;
+    private ushort cachedAsciiSize;
+    private GlyphStyle cachedAsciiStyle;
+    private int cachedAsciiGeneration = -1;
+    private GlyphAtlas.AsciiPage? cachedAsciiPage;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private GlyphAtlas.AsciiPage ResolveAsciiPage(GlyphAtlas atlas, int fontId, ushort size, GlyphStyle style)
+    {
+        int gen = atlas.Generation;
+        if (ReferenceEquals(cachedAsciiAtlas, atlas)
+            && cachedAsciiFontId == fontId
+            && cachedAsciiSize == size
+            && cachedAsciiStyle == style
+            && cachedAsciiGeneration == gen
+            && cachedAsciiPage is { } page)
+        {
+            return page;
+        }
+
+        page = atlas.GetAsciiPage(fontId, size, style);
+        cachedAsciiAtlas = atlas;
+        cachedAsciiFontId = fontId;
+        cachedAsciiSize = size;
+        cachedAsciiStyle = style;
+        cachedAsciiGeneration = gen;
+        cachedAsciiPage = page;
+        return page;
     }
 
     // The subpixel letters of the text being drawn, put down together once it's all been gone through, see FlushSubpixels
-    private readonly List<(UIRect Rect, Vector2 TexMin, Vector2 TexMax)> subpixelGlyphs = [];
+    private readonly record struct SubpixelGlyph(Vector2 Min, Vector2 Max, UIRect Rect, Vector2 TexMin, Vector2 TexMax, bool Culled);
+    private readonly List<SubpixelGlyph> subpixelGlyphs = [];
 
-    // Whether this paint draws its letters ClearType's way and with which stripe first, and whether it hints them, as
-    // the compositor said for the screen it's on (see GlyphSmoothing and UseSmoothing)
-    private bool subpixelText, subpixelBgr, hintedText = true;
+    // Whether this paint draws its letters ClearType's way and with which stripe first, whether it hints them, and
+    // whether single-pass dual-source blending is active (see GlyphSmoothing and UseSmoothing)
+    private bool subpixelText, subpixelBgr, hintedText = true, dualSourceSubpixel;
 
     /// <summary>
     /// How this paint's letters are smoothed, said by the compositor before it paints: ClearType's way only when it's
     /// drawn straight into the window on a screen and a system that want it, unhinted on a Retina screen.
     /// </summary>
-    internal void UseSmoothing(bool subpixels, bool bgr, bool hinted)
+    internal void UseSmoothing(bool subpixels, bool bgr, bool hinted, bool dualSource = false)
     {
         subpixelText = subpixels;
         subpixelBgr = bgr;
         hintedText = hinted;
+        dualSourceSubpixel = dualSource;
         if (subpixels)
             GlyphAtlas.Subpixel.Want();
     }
 
     /// <summary>
-    /// A text's subpixel letters, twice over: first what's under each is darkened by how much of each of its stripes the
-    /// ink covers, then the ink's colour added by as much. That's a blend with a weight for each of red, green and blue,
-    /// which one quad with one alpha can't be, done with two that any GPU can blend (UIRenderer draws each run of them
-    /// with its own blend). The letters of the text go down all at once each time so a line is two runs, not two a letter.
+    /// A text's subpixel letters. When dual-source blending is active, emits one quad per glyph with
+    /// <see cref="SpriteItem.SubpixelInkFlag"/> for single-pass LCD blending. Otherwise emits two passes: first what's
+    /// under each is darkened by how much of each stripe the ink covers, then the ink's colour is added by as much.
     /// </summary>
-    private void FlushSubpixels(uint color)
+    private void FlushSubpixels(uint color, uint fadedColor)
     {
-        foreach (var (rect, texMin, texMax) in subpixelGlyphs)
-            Quad(rect, texMin, texMax, color, SpriteItem.SubpixelEraseFlag | GLYPH_SUBPIXEL_SLOT);
-        foreach (var (rect, texMin, texMax) in subpixelGlyphs)
-            Quad(rect, texMin, texMax, color, SpriteItem.SubpixelInkFlag | GLYPH_SUBPIXEL_SLOT);
+        ReadOnlySpan<SubpixelGlyph> span = CollectionsMarshal.AsSpan(subpixelGlyphs);
+        const uint ERASE_FLAGS = SpriteItem.SubpixelEraseFlag | GLYPH_SUBPIXEL_SLOT;
+        const uint INK_FLAGS = SpriteItem.SubpixelInkFlag | GLYPH_SUBPIXEL_SLOT;
+
+        if (!dualSourceSubpixel)
+        {
+            for (int i = 0; i < span.Length; i++)
+            {
+                ref readonly SubpixelGlyph g = ref span[i];
+                if (g.Culled)
+                {
+                    KeepFrameQuad(g.Rect, g.TexMin, g.TexMax, color, ERASE_FLAGS, 0.0f, 0.0f, 0.0f);
+                    ownerPainted++;
+                }
+                else
+                {
+                    EmitScreenGlyph(g.Min, g.Max, g.Rect, g.TexMin, g.TexMax, color, fadedColor, ERASE_FLAGS);
+                }
+            }
+        }
+
+        for (int i = 0; i < span.Length; i++)
+        {
+            ref readonly SubpixelGlyph g = ref span[i];
+            if (g.Culled)
+            {
+                KeepFrameQuad(g.Rect, g.TexMin, g.TexMax, color, INK_FLAGS, 0.0f, 0.0f, 0.0f);
+                ownerPainted++;
+            }
+            else
+            {
+                EmitScreenGlyph(g.Min, g.Max, g.Rect, g.TexMin, g.TexMax, color, fadedColor, INK_FLAGS);
+            }
+        }
+
         subpixelGlyphs.Clear();
     }
 
@@ -275,26 +362,91 @@ public sealed partial class UIDrawList
     private static readonly bool FieldTextOnly = string.Equals(Environment.GetEnvironmentVariable("HORIZON_TEXT"), "field", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Emits an unclipped, axis-aligned screen-space glyph quad directly into <see cref="items"/> without round-tripping
+    /// through layout space or re-intersecting the clip rectangle.
+    /// </summary>
+    [SkipLocalsInit]
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void EmitScreenGlyph(Vector2 min, Vector2 max, UIRect rect, Vector2 texMin, Vector2 texMax, uint askedColor, uint fadedColor, uint flags)
+    {
+        if (itemCount == items.Length)
+            Array.Resize(ref items, items.Length * 2);
+
+        float fade = 1.0f;
+        uint drawColor = fadedColor;
+        if (fading != 0)
+        {
+            fade = FadeOf(rect);
+            float shown = opacity * fade;
+            if (shown < 1.0f)
+            {
+                uint alpha = (uint)((askedColor >> 24) * shown + 0.5f);
+                drawColor = (askedColor & 0x00FFFFFF) | (alpha << 24);
+            }
+            else
+            {
+                drawColor = askedColor;
+            }
+        }
+
+        int index = itemCount++;
+        ref SpriteItem item = ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(items), index);
+        item.Origin = min;
+        item.AxisX = new Vector2(max.X - min.X, 0.0f);
+        item.AxisY = new Vector2(0.0f, max.Y - min.Y);
+        item.TexMin = texMin;
+        item.TexMax = texMax;
+        item.Key = new Vector2(owner, ownerPainted);
+        item.Color = drawColor;
+        item.Flags = flags;
+        item.Depth = 0.0f;
+        item.Ring = 0.0f;
+
+        KeepFrameQuad(rect, texMin, texMax, askedColor, flags, 0.0f, 0.0f, 0.0f, fade, index);
+        ownerPainted++;
+    }
+
+    /// <summary>
     /// A letter out of the glyph atlas, made at the size it is on the screen with the pen a quarter of a pixel at a time
     /// and its baseline on a whole row of pixels, one texel to the pixel. False when there's no picture of it to be had
     /// (the atlas is full until the next paint), and it's drawn out of its field instead. Only for a list with nothing
     /// growing or shrinking it, see Text.
     /// </summary>
     /// <param name="baseline">How far down the line its baseline is, in the layout.</param>
-    private bool Glyph(GlyphAtlas glyphs, GlyphOutlines outlines, char character, ushort size, GlyphStyle style, float bold, float slant, Vector2 pen, float baseline, uint color, uint texture, bool subpixels)
+    private bool Glyph(
+        GlyphAtlas glyphs,
+        GlyphOutlines outlines,
+        GlyphAtlas.AsciiPage asciiPage,
+        char character,
+        ushort size,
+        GlyphStyle style,
+        float bold,
+        float slant,
+        Vector2 pen,
+        float baseline,
+        uint color,
+        uint fadedColor,
+        uint texture,
+        bool subpixels,
+        float pixels,
+        float invPixels,
+        float clipMinX,
+        float clipMinY,
+        float clipMaxX,
+        float clipMaxY)
     {
         // The pen on the screen, which pixel and how far into it, and the baseline on the row nearest it
-        Vector2 screenPen = (pen + visualOffset) * scale + origin;
-        float column = MathF.Floor(screenPen.X);
-        int phase = (int)MathF.Round((screenPen.X - column) * GlyphAtlas.PHASES);
+        float screenPenX = (pen.X + visualOffset.X) * pixels + origin.X;
+        float column = MathF.Floor(screenPenX);
+        int phase = (int)MathF.Round((screenPenX - column) * GlyphAtlas.PHASES);
         if (phase == GlyphAtlas.PHASES)
         {
             column += 1.0f;
             phase = 0;
         }
-        float row = MathF.Round(((pen.Y - baseline) + visualOffset.Y) * scale.Y + origin.Y);
+        float row = MathF.Round(((pen.Y - baseline) + visualOffset.Y) * pixels + origin.Y);
 
-        if (!glyphs.TryGet(outlines, new GlyphKey(outlines.Id, character, size, (byte)phase, style), bold, slant, out GlyphSlot slot))
+        if (!glyphs.TryGet(outlines, asciiPage, character, size, (byte)phase, style, bold, slant, out GlyphSlot slot))
         {
             // Drawn out of its field this once, until the atlas has room: what's painted now isn't what the same text
             // paints once it does, and isn't kept to be painted again as it was (PaintVersion)
@@ -302,24 +454,37 @@ public sealed partial class UIDrawList
             return false;
         }
 
-        // The picture's rows go down from its top and the screen's up, its corners back into the layout for Quad
+        // The picture's rows go down from its top and the screen's up
         GlyphBox box = slot.Box;
-        Vector2 min = new(column + box.Left, row - box.Top - box.Height);
-        Vector2 max = new(column + box.Left + box.Width, row - box.Top);
-        var rect = new UIRect((min - origin) / scale - visualOffset, (max - origin) / scale - visualOffset);
+        float minX = column + box.Left;
+        float maxX = minX + box.Width;
+        float maxY = row - box.Top;
+        float minY = maxY - box.Height;
 
-        // Cut by a clip, a letter half under the edge of a scrolled list, Quad would trim the picture at whatever share
-        // of a texel the edge falls on. The field trims anywhere and still has an edge, so that letter goes to it
-        UIRect visible = rect.Intersect(clip);
-        if (!visible.IsEmpty && visible != rect)
+        // Check screen-space clip directly (avoids layout round-trip and double UIRect.Intersect).
+        bool culled = maxX <= clipMinX || minX >= clipMaxX || maxY <= clipMinY || minY >= clipMaxY;
+        if (!culled && (minX < clipMinX || maxX > clipMaxX || minY < clipMinY || maxY > clipMaxY))
             return false;
 
+        Vector2 min = new(minX, minY);
+        Vector2 max = new(maxX, maxY);
+        var rect = new UIRect((min - origin) * invPixels - visualOffset, (max - origin) * invPixels - visualOffset);
         var texMin = new Vector2(slot.X, slot.Y);
         var texMax = new Vector2(slot.X + box.Width, slot.Y + box.Height);
+
         if (subpixels)
-            subpixelGlyphs.Add((rect, texMin, texMax));
+        {
+            subpixelGlyphs.Add(new SubpixelGlyph(min, max, rect, texMin, texMax, culled));
+        }
+        else if (culled)
+        {
+            KeepFrameQuad(rect, texMin, texMax, color, SpriteItem.GlyphFlag | texture, 0.0f, 0.0f, 0.0f);
+            ownerPainted++;
+        }
         else
-            Quad(rect, texMin, texMax, color, SpriteItem.GlyphFlag | texture);
+        {
+            EmitScreenGlyph(min, max, rect, texMin, texMax, color, fadedColor, SpriteItem.GlyphFlag | texture);
+        }
         return true;
     }
 

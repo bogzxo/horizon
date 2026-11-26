@@ -148,9 +148,10 @@ public sealed partial class TerminalHost : IDisposable
         view.OnRequest = Requested;
 
         // A program put on the PATH since the last terminal was opened is known to this one's colouring, and to the shells
-        // started after it, a compiler installed while the program was up was nowhere for them
+        // started after it, a compiler installed while the program was up was nowhere for them. Defer the filesystem
+        // PATH scan lazily until the first prompt input / command lookup instead of scanning PATH at cold startup.
         Horizon.Core.Platform.PlatformPaths.RefreshPath();
-        TerminalCommandLookup.ScanPath();
+        TerminalCommandLookup.MarkPathStale();
     }
 
     /// <summary>
@@ -291,11 +292,13 @@ public sealed partial class TerminalHost : IDisposable
     {
         if (options.DiscoverProfiles)
         {
+            profilesVersion = TerminalProfiles.Version;
             foreach (TerminalProfile profile in TerminalProfiles.Discover())
             {
                 if (Settings.Wsl || !profile.Id.StartsWith("wsl:", StringComparison.Ordinal))
                     Panel.Profiles.Add(profile);
             }
+            profilesVersion = TerminalProfiles.Version;
         }
 
         if (!Panel.Profiles.Exists(profile => profile.Id == HIDL_PROFILE))
@@ -595,12 +598,13 @@ public sealed partial class TerminalHost : IDisposable
     {
         saveSettingsPending = true;
         saveSettingsWait = 0.25f;
-        Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestFrames();
+        Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestTickIn(saveSettingsWait);
     }
 
     private bool saveSettingsPending;
     private float saveSettingsWait;
     private string? writtenSettings;
+    private int profilesVersion;
 
     /* Plugins */
 
@@ -700,18 +704,59 @@ public sealed partial class TerminalHost : IDisposable
     {
         if (saveSettingsPending)
         {
-            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestFrames();
             if (Panel.Module?.Compositor.Pointer.Down == true)
+            {
                 saveSettingsWait = MathF.Max(saveSettingsWait, 0.05f);
+                Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestTickIn(saveSettingsWait);
+            }
             else if ((saveSettingsWait -= dt) <= 0.0f)
+            {
                 SaveSettings();
+            }
+            else
+            {
+                Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestTickIn(Math.Max(0.01, saveSettingsWait));
+            }
         }
+
+        if (options.DiscoverProfiles && profilesVersion != TerminalProfiles.Version)
+            SyncDiscoveredProfiles();
 
         TakeChanges();
 
         if (ticking.Count > 0)
             TickPlugins(dt);
     }
+
+    // Separate from Update so the lambda/LINQ-free merge never introduces a closure in the per-tick hot path
+    private void SyncDiscoveredProfiles()
+    {
+        profilesVersion = TerminalProfiles.Version;
+        List<TerminalProfile> discovered = TerminalProfiles.Discover();
+        for (int i = 0; i < discovered.Count; i++)
+        {
+            TerminalProfile profile = discovered[i];
+            if (!Settings.Wsl && profile.Id.StartsWith("wsl:", StringComparison.Ordinal))
+                continue;
+
+            bool exists = false;
+            for (int j = 0; j < Panel.Profiles.Count; j++)
+            {
+                if (string.Equals(Panel.Profiles[j].Id, profile.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    exists = true;
+                    break;
+                }
+            }
+
+            if (!exists)
+                Panel.Profiles.Add(profile);
+        }
+    }
+
+    // Cached NumberValue for dt so steady fixed-timestep ticks allocate 0 B in TickPlugins
+    private float lastTickDt = float.NaN;
+    private NumberValue? cachedTickDt;
 
     // The lambdas that take a plugin's functions away are in a method of their own, a method that runs every tick and
     // has a lambda using one of its locals makes an object for it every tick whether the lambda is reached or not
@@ -721,7 +766,18 @@ public sealed partial class TerminalHost : IDisposable
             tickingNow = new (TerminalPlugin, IRuntimeValue)[ticking.Count];
         ticking.CopyTo(tickingNow);
 
-        IRuntimeValue elapsed = new NumberValue(dt);
+        NumberValue elapsed;
+        if (cachedTickDt is { } cached && dt == lastTickDt)
+        {
+            elapsed = cached;
+        }
+        else
+        {
+            elapsed = new NumberValue(dt);
+            cachedTickDt = elapsed;
+            lastTickDt = dt;
+        }
+
         for (int i = 0; i < tickingNow.Length; i++)
         {
             var (plugin, function) = tickingNow[i];

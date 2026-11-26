@@ -79,13 +79,27 @@ public sealed partial class UITreeItem
     /// </summary>
     public bool Button { get; set; }
 
-    // The text cut short with dots to the room it had last, kept until the text or the room changes, and the detail's
+    // Cached truncation lengths for text and detail (-1 = fits whole, -2 = empty/hidden, >= 0 = trimmed prefix length before "...")
+    // so room/scale changes avoid allocating `text[..low].TrimEnd() + "..."` strings on the paint hot path.
     internal string? fittedOf;
     internal float fittedRoom;
-    internal string fitted = string.Empty;
+    internal UIFont? fittedFont;
+    internal float fittedScale;
+    internal int fittedCutLength = -1;
+    internal string fitted => fittedOf is null ? string.Empty
+        : fittedCutLength < 0 ? fittedOf
+        : string.Concat(fittedOf.AsSpan(0, fittedCutLength), "...");
+
     internal string? detailOf;
     internal float detailRoom;
-    internal string detailFitted = string.Empty;
+    internal UIFont? detailFont;
+    internal float detailScale;
+    internal bool detailMarkup;
+    internal string? detailPlain;
+    internal int detailCutLength = -2;
+    internal string detailFitted => detailCutLength == -2 || detailOf is null ? string.Empty
+        : detailCutLength < 0 ? detailOf
+        : string.Concat((detailPlain ?? detailOf).AsSpan(0, detailCutLength), "...");
 
     /// <summary>The rows under it, null for none.</summary>
     public List<UITreeItem>? Children { get; set; }
@@ -348,7 +362,7 @@ public partial class TreeView : UIComponent
             Flatten(item, null, 0);
 
         // The selected row went away, or into a row that closed
-        if (selected is not null && rows.FindIndex(row => row.Item == selected) < 0)
+        if (selected is not null && IndexOf(selected) < 0)
             selected = null;
         ForgetHidden();
     }
@@ -362,6 +376,7 @@ public partial class TreeView : UIComponent
             return;
         }
 
+        item.wrapLine = null;
         rows.Add((item, depth));
         if (!item.Expanded || item.Children is null)
             return;
@@ -867,9 +882,10 @@ public partial class TreeView : UIComponent
             float room = right - x - LEFT_PAD - badge;
             // The text, the detail and the note each measured once a row, the text only when there's one of the others to
             // fit beside it
+            string displayText = item.wrapLine ?? item.Text;
             float detailWidth = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale, item.DetailMarkup).X + DETAIL_GAP : 0.0f;
             Vector2 noteSize = item.Note.Length > 0 ? skin.Font.Measure(item.Note, scale, markup: false) : default;
-            float textWidth = detailWidth > 0.0f || item.Note.Length > 0 ? skin.Font.Measure(item.Text, scale, markup: false).X : 0.0f;
+            float textWidth = detailWidth > 0.0f || item.Note.Length > 0 ? skin.Font.Measure(displayText, scale, markup: false).X : 0.0f;
             if (detailWidth > 0.0f && textWidth + detailWidth > room)
                 detailWidth = MathF.Min(detailWidth, room * DETAIL_MOST);
 
@@ -877,10 +893,16 @@ public partial class TreeView : UIComponent
             float noteWidth = item.Note.Length > 0 ? noteSize.X + DETAIL_GAP : 0.0f;
             if (noteWidth > 0.0f && textWidth + detailWidth + noteWidth > room)
                 noteWidth = 0.0f;
-            string rowText = Fitted(item, skin, scale, room - detailWidth);
-            Vector2 size = item.Bold
-                ? new Vector2(skin.Font.MeasureLine(rowText, scale, UITextStyle.Bold, default), skin.Font.Measure(rowText, scale, markup: false).Y)
-                : skin.Font.Measure(rowText, scale, markup: false);
+            int cutLength = FittedCutLength(item, skin, scale, room - detailWidth);
+            bool truncated = cutLength >= 0;
+            ReadOnlySpan<char> rowPrefix = truncated ? displayText.AsSpan(0, cutLength) : displayText.AsSpan();
+            Vector2 prefixMeasure = skin.Font.Measure(rowPrefix, scale, markup: false);
+            float dotsWidth = truncated ? skin.Font.Measure(CUT, scale, markup: false).X : 0.0f;
+            float rowWidth = item.Bold
+                ? skin.Font.MeasureLine(rowPrefix, scale, UITextStyle.Bold, default) + (truncated ? skin.Font.MeasureLine(CUT, scale, UITextStyle.Bold, default) : 0.0f)
+                : prefixMeasure.X + dotsWidth;
+            float rowTextHeight = prefixMeasure.Y > 0.0f ? prefixMeasure.Y : skin.Font.LineHeight * scale;
+            Vector2 size = new(rowWidth, rowTextHeight);
             float baseline = MathF.Round(row.Center.Y + size.Y * 0.5f);
 
             // Cut off rather than fitted again, so the row's letters stay the same ones as the pointer comes and goes
@@ -889,23 +911,37 @@ public partial class TreeView : UIComponent
                 list.PushClip(new UIRect(row.Min, new Vector2(ActionsLeft(item, row, badge), row.Max.Y)));
 
             // What was found lit behind it, the colour of a selection, where it still is after any cut
-            if (item.Mark.Length > 0 && item.Mark.Start >= 0 && item.Mark.Start + item.Mark.Length <= rowText.Length)
+            if (item.Mark.Length > 0 && item.Mark.Start >= 0 && item.Mark.Start + item.Mark.Length <= rowPrefix.Length)
             {
-                float from = x + skin.Font.Measure(rowText.AsSpan(0, item.Mark.Start), scale, markup: false).X;
-                float width = skin.Font.Measure(rowText.AsSpan(item.Mark.Start, item.Mark.Length), scale, markup: false).X;
+                float from = x + skin.Font.Measure(rowPrefix[..item.Mark.Start], scale, markup: false).X;
+                float width = skin.Font.Measure(rowPrefix.Slice(item.Mark.Start, item.Mark.Length), scale, markup: false).X;
                 var found = new UIRect(new Vector2(from - 1.0f, row.Center.Y - size.Y * 0.5f - 1.0f), new Vector2(from + width + 1.0f, row.Center.Y + size.Y * 0.5f + 1.0f));
                 list.RoundRect(found, 3.0f, skin.Palette.Selection);
             }
 
             if (TypeToFind)
-                PaintFound(list, skin, rowText, x, row, scale, size.Y);
+                PaintFound(list, skin, rowPrefix, x, row, scale, size.Y);
 
             if (item.Lit is { Count: > 0 } pieces)
-                PaintLit(list, rowText, pieces, new Vector2(x, baseline), scale, item.Color ?? text, item.LitColor ?? skin.AccentColor);
+            {
+                PaintLit(list, rowPrefix, pieces, new Vector2(x, baseline), scale, item.Color ?? text, item.LitColor ?? skin.AccentColor);
+                if (truncated)
+                    list.Text(CUT, new Vector2(x + prefixMeasure.X, baseline), scale, item.Color ?? text, markup: false);
+            }
             else if (item.Bold)
-                list.Text(rowText, new Vector2(x, baseline), scale, item.Color ?? text, false, UITextStyle.Bold, default);
+            {
+                if (!rowPrefix.IsEmpty)
+                    list.Text(rowPrefix, new Vector2(x, baseline), scale, item.Color ?? text, false, UITextStyle.Bold, default);
+                if (truncated)
+                    list.Text(CUT, new Vector2(x + skin.Font.MeasureLine(rowPrefix, scale, UITextStyle.Bold, default), baseline), scale, item.Color ?? text, false, UITextStyle.Bold, default);
+            }
             else
-                list.Text(rowText, new Vector2(x, baseline), scale, item.Color ?? text, markup: false);
+            {
+                if (!rowPrefix.IsEmpty)
+                    list.Text(rowPrefix, new Vector2(x, baseline), scale, item.Color ?? text, markup: false);
+                if (truncated)
+                    list.Text(CUT, new Vector2(x + prefixMeasure.X, baseline), scale, item.Color ?? text, markup: false);
+            }
 
             // A changed one's bar down the left edge, the way a changed setting's row has it
             if (item.Edge is { } edge)
@@ -916,10 +952,28 @@ public partial class TreeView : UIComponent
                 list.Text(item.Note, new Vector2(x + size.X + DETAIL_GAP, MathF.Round(row.Center.Y + noteSize.Y * 0.5f)), scale, dim, markup: false);
             }
 
-            if (item.Detail.Length > 0 && FittedDetail(item, skin, scale, right - LEFT_PAD - badge - (x + size.X + noteWidth + DETAIL_GAP)) is { Length: > 0 } said)
+            if (item.Detail.Length > 0)
             {
-                Vector2 detail = skin.Font.Measure(said, scale, item.DetailMarkup);
-                list.Text(said, new Vector2(x + size.X + noteWidth + DETAIL_GAP, MathF.Round(row.Center.Y + detail.Y * 0.5f)), scale, item.DetailColor ?? dim, item.DetailMarkup);
+                int detailCut = FittedDetailCutLength(item, skin, scale, right - LEFT_PAD - badge - (x + size.X + noteWidth + DETAIL_GAP), out string detailSource);
+                if (detailCut != -2)
+                {
+                    float detailX = x + size.X + noteWidth + DETAIL_GAP;
+                    Vector4 detailCol = item.DetailColor ?? dim;
+                    if (detailCut < 0)
+                    {
+                        Vector2 detail = skin.Font.Measure(detailSource, scale, item.DetailMarkup);
+                        list.Text(detailSource, new Vector2(detailX, MathF.Round(row.Center.Y + detail.Y * 0.5f)), scale, detailCol, item.DetailMarkup);
+                    }
+                    else
+                    {
+                        ReadOnlySpan<char> detailPrefix = detailSource.AsSpan(0, detailCut);
+                        Vector2 detailPrefixSize = skin.Font.Measure(detailPrefix, scale, markup: false);
+                        float detailY = MathF.Round(row.Center.Y + (detailPrefixSize.Y > 0.0f ? detailPrefixSize.Y : skin.Font.LineHeight * scale) * 0.5f);
+                        if (!detailPrefix.IsEmpty)
+                            list.Text(detailPrefix, new Vector2(detailX, detailY), scale, detailCol, markup: false);
+                        list.Text(CUT, new Vector2(detailX + detailPrefixSize.X, detailY), scale, detailCol, markup: false);
+                    }
+                }
             }
 
             if (actions)
@@ -984,7 +1038,7 @@ public partial class TreeView : UIComponent
 
     // A row's text in runs, the lit pieces in their colour and the rest in the text's. Pieces past where the text was cut
     // short are left out, two that overlap make one run
-    private static void PaintLit(UIDrawList list, string rowText, IReadOnlyList<(int Start, int Length)> pieces, Vector2 at, float scale, Vector4 color, Vector4 litColor)
+    private static void PaintLit(UIDrawList list, ReadOnlySpan<char> rowText, IReadOnlyList<(int Start, int Length)> pieces, Vector2 at, float scale, Vector4 color, Vector4 litColor)
     {
         static bool IsLit(IReadOnlyList<(int Start, int Length)> pieces, int index)
         {
@@ -1006,8 +1060,8 @@ public partial class TreeView : UIComponent
             while (end < rowText.Length && IsLit(pieces, end) == lit)
                 end++;
 
-            float from = start == 0 ? 0.0f : skin.Font.Measure(rowText.AsSpan(0, start), scale, markup: false).X;
-            list.Text(rowText.AsSpan(start, end - start), new Vector2(at.X + from, at.Y), scale, lit ? litColor : color, markup: false);
+            float from = start == 0 ? 0.0f : skin.Font.Measure(rowText[..start], scale, markup: false).X;
+            list.Text(rowText.Slice(start, end - start), new Vector2(at.X + from, at.Y), scale, lit ? litColor : color, markup: false);
             start = end;
         }
     }
@@ -1018,92 +1072,130 @@ public partial class TreeView : UIComponent
     // The most of a row a detail gets when the row's too short for all of both
     private const float DETAIL_MOST = 0.34f;
 
+    // A row's detail cut length (-2 = hidden, -1 = full, >= 0 = trimmed prefix length before "..."), zero allocations on plain text.
+    private static int FittedDetailCutLength(UITreeItem item, UISkin skin, float scale, float room, out string source)
+    {
+        if (ReferenceEquals(item.detailOf, item.Detail) && item.detailRoom == room
+            && ReferenceEquals(item.detailFont, skin.Font) && item.detailScale == scale && item.detailMarkup == item.DetailMarkup)
+        {
+            source = item.detailCutLength >= 0 && item.detailPlain is not null ? item.detailPlain : item.Detail;
+            return item.detailCutLength;
+        }
+
+        int cut = -1;
+        string? plain = null;
+        string shown = item.Detail;
+        if (skin.Font.Measure(shown, scale, item.DetailMarkup).X > room)
+        {
+            if (skin.Font.Measure(CUT, scale, markup: false).X * 3.0f > room)
+            {
+                cut = -2;
+            }
+            else
+            {
+                plain = item.DetailMarkup ? WithoutIcons(shown) : null;
+                cut = CutLength(plain ?? shown, skin, scale, room);
+            }
+        }
+
+        (item.detailOf, item.detailRoom, item.detailFont, item.detailScale, item.detailMarkup, item.detailPlain, item.detailCutLength) =
+            (item.Detail, room, skin.Font, scale, item.DetailMarkup, plain, cut);
+        source = cut >= 0 && plain is not null ? plain : shown;
+        return cut;
+    }
+
     // A row's detail cut to its room with dots, kept like its text is, nothing when not even the dots fit
     private static string FittedDetail(UITreeItem item, UISkin skin, float scale, float room)
     {
-        if (ReferenceEquals(item.detailOf, item.Detail) && item.detailRoom == room)
-            return item.detailFitted;
-
-        // Icons in it are drawn whole or not at all, one too long for its room is cut short without them rather than in the
-        // middle of a tag
-        string shown = item.Detail;
-        if (skin.Font.Measure(shown, scale, item.DetailMarkup).X > room)
-            shown = skin.Font.Measure(CUT, scale, markup: false).X * 3.0f > room ? string.Empty : Cut(item.DetailMarkup ? WithoutIcons(shown) : shown, skin, scale, room);
-
-        (item.detailOf, item.detailRoom, item.detailFitted) = (item.Detail, room, shown);
-        return shown;
+        FittedDetailCutLength(item, skin, scale, room, out _);
+        return item.detailFitted;
     }
 
+    // Reusable builder for WithoutIcons so stripping icon tags does not allocate a StringBuilder per call
+    [ThreadStatic]
+    private static System.Text.StringBuilder? withoutIconsBuilder;
+
     // Some text with its icons taken out, $(name) and [icon:name] both
-    private static string WithoutIcons(string text)
+    internal static string WithoutIcons(string text)
     {
-        var plain = new System.Text.StringBuilder(text.Length);
+        if (text.Length == 0 || text.AsSpan().IndexOfAny('[', '$') < 0)
+            return text;
+
+        var plain = withoutIconsBuilder ??= new System.Text.StringBuilder(64);
+        plain.Clear();
+        bool stripped = false;
         for (int i = 0; i < text.Length; i++)
         {
             if (text[i] == '[' && text.AsSpan(i).StartsWith("[icon:") && text.IndexOf(']', i) is var end and > 0)
             {
                 i = end;
+                stripped = true;
                 continue;
             }
 
             if (text[i] == '$' && text.AsSpan(i).StartsWith("$(") && text.IndexOf(')', i) is var close and > 0)
             {
                 i = close;
+                stripped = true;
                 continue;
             }
 
             plain.Append(text[i]);
         }
 
-        return plain.ToString();
+        return stripped ? plain.ToString() : text;
     }
 
-    // As much of some text as fits with dots after it
-    private static string Cut(string text, UISkin skin, float scale, float room)
+    // Zero-allocation trimmed prefix length that fits before "..." in the given room
+    private static int CutLength(ReadOnlySpan<char> text, UISkin skin, float scale, float room)
     {
         float dots = skin.Font.Measure(CUT, scale, markup: false).X;
         int low = 0, high = text.Length;
         while (low < high)
         {
             int middle = (low + high + 1) / 2;
-            if (skin.Font.Measure(text.AsSpan(0, middle), scale, markup: false).X + dots <= room)
+            if (skin.Font.Measure(text[..middle], scale, markup: false).X + dots <= room)
                 low = middle;
             else
                 high = middle - 1;
         }
 
-        return text[..low].TrimEnd() + CUT;
+        while (low > 0 && char.IsWhiteSpace(text[low - 1]))
+            low--;
+        return low;
+    }
+
+    // As much of some text as fits with dots after it
+    private static string Cut(string text, UISkin skin, float scale, float room) =>
+        string.Concat(text.AsSpan(0, CutLength(text, skin, scale, room)), CUT);
+
+    /// <summary>
+    /// Zero-allocation helper returning the trimmed prefix length (-1 when full text fits) for a row's text,
+    /// cached on the item by text reference, room, font, and scale.
+    /// </summary>
+    private static int FittedCutLength(UITreeItem item, UISkin skin, float scale, float room)
+    {
+        string text = item.wrapLine ?? item.Text;
+        if (ReferenceEquals(item.fittedOf, text) && item.fittedRoom == room
+            && ReferenceEquals(item.fittedFont, skin.Font) && item.fittedScale == scale)
+            return item.fittedCutLength;
+
+        int cut = -1;
+        if (room > 0.0f && skin.Font.Measure(text, scale, markup: false).X > room)
+            cut = CutLength(text, skin, scale, room);
+
+        (item.fittedOf, item.fittedRoom, item.fittedFont, item.fittedScale, item.fittedCutLength) = (text, room, skin.Font, scale, cut);
+        return cut;
     }
 
     /// <summary>
     /// Helper method for a row's text as much as fits in so much room, cut with dots at the end, worked out once for the
-    /// text and the room and kept on the row.
+    /// text, room, font and scale and kept on the row.
     /// </summary>
     private static string Fitted(UITreeItem item, UISkin skin, float scale, float room)
     {
-        string text = item.Text;
-        if (ReferenceEquals(item.fittedOf, text) && item.fittedRoom == room)
-            return item.fitted;
-
-        string shown = text;
-        if (room > 0.0f && skin.Font.Measure(text, scale, markup: false).X > room)
-        {
-            float dots = skin.Font.Measure(CUT, scale, markup: false).X;
-            int low = 0, high = text.Length;
-            while (low < high)
-            {
-                int middle = (low + high + 1) / 2;
-                if (skin.Font.Measure(text.AsSpan(0, middle), scale, markup: false).X + dots <= room)
-                    low = middle;
-                else
-                    high = middle - 1;
-            }
-
-            shown = text[..low].TrimEnd() + CUT;
-        }
-
-        (item.fittedOf, item.fittedRoom, item.fitted) = (text, room, shown);
-        return shown;
+        FittedCutLength(item, skin, scale, room);
+        return item.fitted;
     }
 
     protected override void DefineScript()

@@ -34,8 +34,11 @@ public sealed partial class UITextDocument
             return;
         }
 
-        if (AtEveryCaret(() => CommentLines(wanted), EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            CommentLinesAtEvery(wanted);
             return;
+        }
 
         Record(EditKind.Other);
         var (first, last) = SelectedLines();
@@ -55,6 +58,7 @@ public sealed partial class UITextDocument
             return;
 
         bool taking = wanted is { } commenting ? !commenting : allComments;
+        RecordRange(first, last - first + 1, last - first + 1);
         int caretShift = 0, anchorShift = 0;
         for (int line = first; line <= last; line++)
         {
@@ -102,8 +106,11 @@ public sealed partial class UITextDocument
             return;
         }
 
-        if (AtEveryCaret(ToggleBlockComment, EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            ToggleBlockCommentAtEvery();
             return;
+        }
 
         Record(EditKind.Other);
 
@@ -142,6 +149,7 @@ public sealed partial class UITextDocument
             else
             {
                 int at = Caret.Column;
+                RecordSingleLine(Caret.Line);
                 lines[Caret.Line] = text.Insert(at, open + "  " + close);
                 Caret = Anchor = Caret with { Column = at + open.Length + 1 };
             }
@@ -155,8 +163,11 @@ public sealed partial class UITextDocument
     // thing on the last) wrapped in one, or unwrapped when that's what they are already
     private void ToggleLinesAsBlock()
     {
-        if (AtEveryCaret(ToggleLinesAsBlock, EditKind.Other))
+        if (extras.Count > 0 && !batching)
+        {
+            ToggleLinesAsBlockAtEvery();
             return;
+        }
 
         var (first, last) = SelectedLines();
         while (first < last && lines[first].Trim().Length == 0) first++;
@@ -227,6 +238,7 @@ public sealed partial class UITextDocument
     // Text put into a line, the carets on it after the place moved along with it (and the one right at it as well, when asked)
     private void InsertOnLine(int line, int column, string text, bool pushesAt)
     {
+        RecordSingleLine(line);
         lines[line] = lines[line].Insert(column, text);
         UITextPosition Pushed(UITextPosition at) =>
             at.Line == line && (at.Column > column || (pushesAt && at.Column == column)) ? at with { Column = at.Column + text.Length } : at;
@@ -237,10 +249,15 @@ public sealed partial class UITextDocument
     // Text taken out of a line, a caret inside of what went left where it was
     private void RemoveOnLine(int line, int column, int length)
     {
+        RecordSingleLine(line);
         lines[line] = lines[line].Remove(column, length);
         UITextPosition Pulled(UITextPosition at) =>
             at.Line == line && at.Column > column ? at with { Column = Math.Max(column, at.Column - length) } : at;
         Caret = Pulled(Caret);
         Anchor = Pulled(Anchor);
     }
+
+    private void CommentLinesAtEvery(bool? wanted) => EditAtEvery(EditKind.Other, () => CommentLines(wanted));
+    private void ToggleBlockCommentAtEvery() => EditAtEvery(EditKind.Other, ToggleBlockComment);
+    private void ToggleLinesAsBlockAtEvery() => EditAtEvery(EditKind.Other, ToggleLinesAsBlock);
 }

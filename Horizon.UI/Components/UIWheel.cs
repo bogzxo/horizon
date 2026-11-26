@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Text;
+
 namespace Horizon.UI.Components;
 
 /// <summary>
@@ -35,33 +38,108 @@ internal static class UIWheel
     private static long switchLooked;
     private static bool switchedOn;
 
+    // Buffered trace state: lazily allocated only when tracing is actually active so unset tracing has zero overhead.
+    internal const int TraceFlushThresholdChars = 8192;
+    internal const int TraceIdleFlushMs = 250;
+
+    private static readonly object traceLock = new();
+    private static StringBuilder? traceBuffer;
+    private static string? bufferedPath;
+    private static Timer? idleFlushTimer;
+    private static bool exitHooked;
+    private static string? tracePathOverride;
+
     private static string? PathNow
     {
         get
         {
+            if (tracePathOverride is { Length: > 0 } overridden)
+                return overridden;
             if (tracePath is not null)
                 return tracePath;
+            if (OperatingSystem.IsWindows())
+                return null;
 
             long now = Environment.TickCount64;
             if (now - switchLooked > 1000)
             {
                 switchLooked = now;
-                switchedOn = !OperatingSystem.IsWindows() && File.Exists(SWITCH);
+                switchedOn = File.Exists(SWITCH);
             }
 
             return switchedOn ? SWITCHED : null;
         }
     }
 
-    /// <summary>Writes a line of the trace, nothing without one.</summary>
+    /// <summary>Buffers a line of the trace and flushes when the buffer fills, after idle, or on shutdown; nothing when unset.</summary>
     public static void Trace(string line)
     {
         if (PathNow is not { } path)
             return;
 
+        AppendTraceLine(path, line);
+    }
+
+    /// <summary>Flushes any buffered scroll trace lines to disk immediately.</summary>
+    internal static void FlushTrace()
+    {
+        lock (traceLock)
+        {
+            idleFlushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+            FlushLocked();
+        }
+    }
+
+    /// <summary>Test hook to redirect scroll trace output without mutating process-wide environment variables.</summary>
+    internal static void SetTracePathOverride(string? path)
+    {
+        FlushTrace();
+        tracePathOverride = path is { Length: > 0 } ? path : null;
+    }
+
+    private static void AppendTraceLine(string path, string line)
+    {
+        string formatted = FormattableString.Invariant($"{Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency:F3} ui {line}\n");
+        lock (traceLock)
+        {
+            if (!exitHooked)
+            {
+                exitHooked = true;
+                AppDomain.CurrentDomain.ProcessExit += static (_, _) => FlushTrace();
+            }
+
+            if (bufferedPath is not null && !string.Equals(bufferedPath, path, StringComparison.Ordinal))
+                FlushLocked();
+
+            bufferedPath = path;
+            traceBuffer ??= new StringBuilder(TraceFlushThresholdChars);
+            traceBuffer.Append(formatted);
+
+            if (traceBuffer.Length >= TraceFlushThresholdChars)
+            {
+                idleFlushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+                FlushLocked();
+            }
+            else
+            {
+                idleFlushTimer ??= new Timer(static _ => FlushTrace(), null, Timeout.Infinite, Timeout.Infinite);
+                idleFlushTimer.Change(TraceIdleFlushMs, Timeout.Infinite);
+            }
+        }
+    }
+
+    private static void FlushLocked()
+    {
+        if (traceBuffer is null || traceBuffer.Length == 0 || bufferedPath is null)
+            return;
+
+        string payload = traceBuffer.ToString();
+        string path = bufferedPath;
+        traceBuffer.Clear();
+
         try
         {
-            File.AppendAllText(path, FormattableString.Invariant($"{System.Diagnostics.Stopwatch.GetTimestamp() * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F3} ui {line}\n"));
+            File.AppendAllText(path, payload);
         }
         catch (IOException)
         {

@@ -1,18 +1,30 @@
 ﻿using System.Numerics;
 
+using Horizon.Physics.Simulation;
+
 namespace Horizon.Physics.Fixtures;
 
 public class CirclePhysicsFixture(float radius, Vector2 position, string tag="") : IPhysicsFixture
 {
     public string Tag { get; init; } = tag;
     public bool IsTouching { get; set; }
-    public HashSet<IPhysicsFixture> ActiveContacts { get; } = new();
+    public HashSet<IPhysicsFixture> ActiveContacts { get; } = new(4);
     public Vector3? DebugColour { get; set; }
     public bool OneWay { get; init; }
 
     public float Radius { get; init; } = radius;
     public Vector2 Position { get; init; } = position;
     public PhysicsFixtureShape Shape { get; init; } = PhysicsFixtureShape.Circle;
+
+    private readonly PhysicsShape _localShape = new()
+    {
+        Min = position - new Vector2(radius),
+        Max = position + new Vector2(radius),
+        Radius = radius,
+        IsCircle = true
+    };
+
+    internal ref readonly PhysicsShape LocalShape => ref _localShape;
 
     public bool TestIntersection(in IPhysicsFixture other, Vector2 positionOffset, Vector2 otherPositionOffset)
     {

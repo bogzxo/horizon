@@ -121,6 +121,9 @@ internal sealed unsafe class VulkanContext : IDisposable
     /// <summary>Whether 1.4's maintenance5 and maintenance6 are on, buffer ranges by size and the *2 binding calls.</summary>
     public bool HasMaintenance56 { get; private set; }
 
+    /// <summary>Whether the card supports dual-source colour blending (Src1Color / OneMinusSrc1Color).</summary>
+    public bool SupportsDualSourceBlend { get; private set; }
+
     // The push descriptor extension's own functions, for a 1.3 card that has it
     private KhrPushDescriptor? khrPushDescriptor;
 
@@ -289,10 +292,10 @@ internal sealed unsafe class VulkanContext : IDisposable
 #if !DEBUG
         wantLabels = string.Equals(labels, "on", StringComparison.OrdinalIgnoreCase) || labels == "1";
 #endif
-        // Read the once, the loader looks through every layer it knows of each time it's asked, five to twenty
-        // milliseconds of every start for asking it a second time
-        HashSet<string> available = InstanceExtensions();
-        bool wantDebugUtils = (ValidationEnabled || wantLabels) && available.Contains(ExtDebugUtils.ExtensionName);
+        // Only enumerate instance extensions when validation, labels, or macOS portability need to check them;
+        // skipping it on Release Windows/Linux avoids a 5-20 ms loader scan over every installed layer.
+        HashSet<string>? available = ValidationEnabled || wantLabels || OperatingSystem.IsMacOS() ? InstanceExtensions() : null;
+        bool wantDebugUtils = (ValidationEnabled || wantLabels) && available is not null && available.Contains(ExtDebugUtils.ExtensionName);
 
         var extensions = new List<string>(windowExtensions);
         instanceExtensions = windowExtensions;
@@ -301,7 +304,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         // A Mac's Vulkan is MoltenVK, which the loader keeps out of sight as a "portability" driver unless it is
         // asked for by name. Without this a Mac says it has no GPU at all
         var flags = InstanceCreateFlags.None;
-        if (available.Contains(PORTABILITY_ENUMERATION))
+        if (available is not null && available.Contains(PORTABILITY_ENUMERATION))
         {
             extensions.Add(PORTABILITY_ENUMERATION);
             flags |= InstanceCreateFlags.EnumeratePortabilityBitKhr;
@@ -674,6 +677,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         IsPortability = deviceExtensions.Contains(PORTABILITY_SUBSET);
         HasDrawIndirectCount = available12.DrawIndirectCount;
         HasMultiDrawIndirect = available.Features.MultiDrawIndirect;
+        SupportsDualSourceBlend = available.Features.DualSrcBlend && Limits.MaxFragmentDualSrcAttachments >= 1;
 
         if (!available12.DescriptorIndexing || !available12.DescriptorBindingSampledImageUpdateAfterBind || !available12.ShaderSampledImageArrayNonUniformIndexing || !available12.RuntimeDescriptorArray)
             throw new InvalidOperationException($"{DeviceName} hasn't got descriptor indexing with update after bind, which the bindless textures can't do without.");
@@ -758,6 +762,7 @@ internal sealed unsafe class VulkanContext : IDisposable
                 ShaderStorageImageWriteWithoutFormat = available.Features.ShaderStorageImageWriteWithoutFormat,
                 ShaderStorageImageReadWithoutFormat = available.Features.ShaderStorageImageReadWithoutFormat,
                 IndependentBlend = available.Features.IndependentBlend,
+                DualSrcBlend = available.Features.DualSrcBlend,
                 ShaderInt64 = available.Features.ShaderInt64,
                 FillModeNonSolid = available.Features.FillModeNonSolid,
                 WideLines = available.Features.WideLines

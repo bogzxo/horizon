@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.Runtime.CompilerServices;
 
 using Horizon.Physics.Fixtures;
 
@@ -11,6 +12,7 @@ namespace Horizon.Physics.Simulation;
 internal sealed class PhysicsStaticGrid
 {
     public const float CELL_SIZE = 32.0f;
+    private const float INV_CELL_SIZE = 1.0f / CELL_SIZE;
 
     private PhysicsShape[] _shapes = [];
 
@@ -22,6 +24,9 @@ internal sealed class PhysicsStaticGrid
     private int[] _cellStart = [0];
     private int[] _cellShapes = [];
 
+    // Dense 1-cell dilation mask: 1 if this cell or any of its 8 neighbours has at least one static shape
+    private byte[] _nearMask = [];
+
     private Vector2 _origin;
     private int _width, _height;
     private int _builtFrom = -1;
@@ -30,6 +35,10 @@ internal sealed class PhysicsStaticGrid
     private int[] _stamps = [];
     private int[] _found = [];
     private int _stamp;
+    private bool _allRectangles;
+
+    /// <summary>True when every static shape in the grid is an axis-aligned rectangle (enables AABB-only fast paths).</summary>
+    public bool AllRectangles => _allRectangles;
 
     /// <summary>
     /// Goes up every time the grid is rebuilt, for whoever remembers things about the map (sleeping particles).
@@ -58,24 +67,56 @@ internal sealed class PhysicsStaticGrid
     public PhysicsShape[] Shapes => _shapes;
     public int[] CellStart => _cellStart;
     public int[] CellShapes => _cellShapes;
+    internal ReadOnlySpan<byte> NearMask => _nearMask;
 
     /// <summary>
-    /// Rebuilds the grid if fixtures were added to (or taken off) the static bodies since the last time.
-    /// Static bodies are expected to stay where they are, moving one is not picked up.
+    /// Rebuilds the grid if static bodies or fixtures were added, removed, swapped, moved or resized since the last time.
     /// </summary>
     public void Refresh(List<PhysicsBodyComponent2D> staticBodies)
     {
-        int fixtureCount = 0;
-        foreach (var body in staticBodies)
+        int index = 0;
+        bool changed = false;
+
+        for (int b = 0; b < staticBodies.Count; b++)
         {
-            fixtureCount += body.DynamicFixtures.Count;
+            var body = staticBodies[b];
+            Vector2 bodyPos = body.Position;
+            var fixtures = body.DynamicFixtures;
+
+            for (int f = 0; f < fixtures.Count; f++)
+            {
+                IPhysicsFixture fixture = fixtures[f];
+                if (!PhysicsShape.TryCreate(fixture, bodyPos, Vector2.Zero, out var shape)) continue;
+
+                if (!changed)
+                {
+                    if (index >= _shapes.Length ||
+                        !ReferenceEquals(_fixtures[index], fixture) ||
+                        _bodyPositions[index] != bodyPos ||
+                        !SameShape(in _shapes[index], in shape))
+                    {
+                        changed = true;
+                    }
+                }
+
+                index++;
+            }
         }
 
-        if (fixtureCount == _builtFrom) return;
-        _builtFrom = fixtureCount;
+        if (!changed && index == _shapes.Length && _builtFrom == index) return;
+        _builtFrom = index;
 
-        Build(staticBodies, fixtureCount);
+        Build(staticBodies, index);
     }
+
+    private static bool SameShape(in PhysicsShape a, in PhysicsShape b) =>
+        a.Min == b.Min &&
+        a.Max == b.Max &&
+        a.Radius == b.Radius &&
+        a.IsCircle == b.IsCircle &&
+        a.OutlineCount == b.OutlineCount &&
+        a.OutlineVersion == b.OutlineVersion &&
+        ReferenceEquals(a.Outline, b.Outline);
 
     private void Build(List<PhysicsBodyComponent2D> staticBodies, int fixtureCount)
     {
@@ -103,11 +144,22 @@ internal sealed class PhysicsStaticGrid
         _bodyPositions = [.. bodyPositions];
         _stamps = new int[_shapes.Length];
         _found = new int[_shapes.Length];
+        _stamp = 0;
+        bool allRects = true;
+        for (int i = 0; i < _shapes.Length; i++)
+        {
+            if (_shapes[i].IsCircle || _shapes[i].Outline is not null)
+            {
+                allRects = false;
+                break;
+            }
+        }
+        _allRectangles = allRects;
         _origin = min;
         Max = max;
         Version++;
-        _width = _shapes.Length == 0 ? 0 : (int)((max.X - min.X) / CELL_SIZE) + 1;
-        _height = _shapes.Length == 0 ? 0 : (int)((max.Y - min.Y) / CELL_SIZE) + 1;
+        _width = _shapes.Length == 0 ? 0 : (int)((max.X - min.X) * INV_CELL_SIZE) + 1;
+        _height = _shapes.Length == 0 ? 0 : (int)((max.Y - min.Y) * INV_CELL_SIZE) + 1;
 
         // First count how many shapes touch every cell, so they can all be packed into one array
         _cellStart = new int[_width * _height + 1];
@@ -139,6 +191,28 @@ internal sealed class PhysicsStaticGrid
                 }
             }
         }
+
+        // Mark every cell within 1 cell of any occupied cell so interior fluid queries reject in 1 byte load
+        _nearMask = new byte[_width * _height];
+        for (int y = 0; y < _height; y++)
+        {
+            int row = y * _width;
+            for (int x = 0; x < _width; x++)
+            {
+                if (_cellStart[row + x + 1] == _cellStart[row + x]) continue;
+
+                int ny0 = Math.Max(0, y - 1), ny1 = Math.Min(_height - 1, y + 1);
+                int nx0 = Math.Max(0, x - 1), nx1 = Math.Min(_width - 1, x + 1);
+                for (int ny = ny0; ny <= ny1; ny++)
+                {
+                    int nRow = ny * _width;
+                    for (int nx = nx0; nx <= nx1; nx++)
+                    {
+                        _nearMask[nRow + nx] = 1;
+                    }
+                }
+            }
+        }
     }
 
     public ref readonly PhysicsShape this[int shape] => ref _shapes[shape];
@@ -157,12 +231,166 @@ internal sealed class PhysicsStaticGrid
     {
         if (!TryGetCells(point, point, out int x, out int y, out _, out _)) return false;
 
+        if (_allRectangles)
+        {
+            foreach (int shape in GetShapes(x, y))
+            {
+                ref readonly PhysicsShape s = ref _shapes[shape];
+                if (point.X > s.Min.X && point.X < s.Max.X && point.Y > s.Min.Y && point.Y < s.Max.Y)
+                    return true;
+            }
+            return false;
+        }
+
         foreach (int shape in GetShapes(x, y))
         {
             if (_shapes[shape].Contains(point)) return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Resolves circle-vs-static-grid overlaps for a particle, deduplicating multi-cell static shapes and using the
+    /// fast AABB-only box check when every static shape in the grid is a rectangle.
+    /// </summary>
+    public void SeparateCircle(ref Vector2 position, float radius, ref Vector2 contact)
+    {
+        Vector2 reach = new(radius);
+        if (!TryGetCells(position - reach, position + reach, out int x0, out int y0, out int x1, out int y1)) return;
+
+        bool allRects = _allRectangles;
+        if (x0 == x1 && y0 == y1)
+        {
+            foreach (int index in GetShapes(x0, y0))
+            {
+                ref readonly PhysicsShape shape = ref _shapes[index];
+                bool hit = allRects
+                    ? shape.OverlapsRectangle(position, radius, out Vector2 normal, out float depth)
+                    : shape.Overlaps(position, radius, out normal, out depth);
+                if (!hit) continue;
+
+                position += normal * depth;
+                contact = normal;
+            }
+            return;
+        }
+
+        int stamp = NextStamp();
+        for (int y = y0; y <= y1; y++)
+        {
+            for (int x = x0; x <= x1; x++)
+            {
+                foreach (int index in GetShapes(x, y))
+                {
+                    if (_stamps[index] == stamp) continue;
+                    _stamps[index] = stamp;
+
+                    ref readonly PhysicsShape shape = ref _shapes[index];
+                    bool hit = allRects
+                        ? shape.OverlapsRectangle(position, radius, out Vector2 normal, out float depth)
+                        : shape.Overlaps(position, radius, out normal, out depth);
+                    if (!hit) continue;
+
+                    position += normal * depth;
+                    contact = normal;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tests whether the line segment from <paramref name="from"/> to <paramref name="to"/> enters or crosses
+    /// any shape in the grid, returning the earliest hit fraction and outward surface normal.
+    /// </summary>
+    public bool TryIntersectSegment(Vector2 from, Vector2 to, out float hitT, out Vector2 hitNormal)
+    {
+        hitT = float.MaxValue;
+        hitNormal = default;
+
+        Vector2 min = Vector2.Min(from, to), max = Vector2.Max(from, to);
+        if (!TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return false;
+
+        if (x0 == x1 && y0 == y1)
+        {
+            foreach (int index in GetShapes(x0, y0))
+            {
+                if (_shapes[index].TryIntersectSegment(from, to, out float t, out Vector2 normal) && t < hitT)
+                {
+                    hitT = t;
+                    hitNormal = normal;
+                }
+            }
+            return hitT <= 1.0f;
+        }
+
+        int stamp = NextStamp();
+        for (int y = y0; y <= y1; y++)
+        {
+            for (int x = x0; x <= x1; x++)
+            {
+                foreach (int index in GetShapes(x, y))
+                {
+                    if (_stamps[index] == stamp) continue;
+                    _stamps[index] = stamp;
+
+                    if (_shapes[index].TryIntersectSegment(from, to, out float t, out Vector2 normal) && t < hitT)
+                    {
+                        hitT = t;
+                        hitNormal = normal;
+                    }
+                }
+            }
+        }
+
+        return hitT <= 1.0f;
+    }
+
+    /// <summary>
+    /// Tests whether the line segment from <paramref name="from"/> to <paramref name="to"/> enters or crosses
+    /// any shape in the grid.
+    /// </summary>
+    public bool IntersectsSegment(Vector2 from, Vector2 to)
+    {
+        Vector2 min = Vector2.Min(from, to), max = Vector2.Max(from, to);
+        if (!TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return false;
+
+        if (x0 == x1 && y0 == y1)
+        {
+            foreach (int index in GetShapes(x0, y0))
+            {
+                if (_shapes[index].TryIntersectSegment(from, to, out _, out _)) return true;
+            }
+            return false;
+        }
+
+        int stamp = NextStamp();
+        for (int y = y0; y <= y1; y++)
+        {
+            for (int x = x0; x <= x1; x++)
+            {
+                foreach (int index in GetShapes(x, y))
+                {
+                    if (_stamps[index] == stamp) continue;
+                    _stamps[index] = stamp;
+
+                    if (_shapes[index].TryIntersectSegment(from, to, out _, out _)) return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private int NextStamp()
+    {
+        if (++_stamp == 0)
+        {
+            Array.Clear(_stamps);
+            _stamp = 1;
+        }
+        return _stamp;
     }
 
     /// <summary>
@@ -173,7 +401,7 @@ internal sealed class PhysicsStaticGrid
     {
         if (!TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return default;
 
-        _stamp++;
+        int stamp = NextStamp();
         int count = 0;
 
         for (int y = y0; y <= y1; y++)
@@ -182,9 +410,9 @@ internal sealed class PhysicsStaticGrid
             {
                 foreach (int shape in GetShapes(x, y))
                 {
-                    if (_stamps[shape] == _stamp) continue;
+                    if (_stamps[shape] == stamp) continue;
 
-                    _stamps[shape] = _stamp;
+                    _stamps[shape] = stamp;
                     _found[count++] = shape;
                 }
             }
@@ -219,11 +447,57 @@ internal sealed class PhysicsStaticGrid
         return _cellShapes.AsSpan(_cellStart[cell], _cellStart[cell + 1] - _cellStart[cell]);
     }
 
+    /// <summary>
+    /// Fast test for whether any static shape AABB is within <paramref name="reach"/> of <paramref name="position"/>.
+    /// When <paramref name="reach"/> &lt;= <see cref="CELL_SIZE"/>, interior empty cells reject in a single byte load.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool IsNearAnyShape(Vector2 position, float reach)
+    {
+        if (_width == 0) return false;
+
+        if (reach <= CELL_SIZE)
+        {
+            int cx = (int)MathF.Floor((position.X - _origin.X) * INV_CELL_SIZE);
+            int cy = (int)MathF.Floor((position.Y - _origin.Y) * INV_CELL_SIZE);
+
+            if ((uint)cx < (uint)_width && (uint)cy < (uint)_height)
+            {
+                if (_nearMask[cy * _width + cx] == 0) return false;
+            }
+            else if (cx < -1 || cx > _width || cy < -1 || cy > _height)
+            {
+                return false;
+            }
+        }
+
+        Vector2 min = position - new Vector2(reach), max = position + new Vector2(reach);
+        if (!TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return false;
+
+        for (int y = y0; y <= y1; y++)
+        {
+            int row = y * _width;
+            for (int x = x0; x <= x1; x++)
+            {
+                int cell = row + x;
+                int start = _cellStart[cell], end = _cellStart[cell + 1];
+                for (int entry = start; entry < end; entry++)
+                {
+                    ref readonly PhysicsShape shape = ref _shapes[_cellShapes[entry]];
+                    if (max.X >= shape.Min.X && min.X <= shape.Max.X && max.Y >= shape.Min.Y && min.Y <= shape.Max.Y)
+                        return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private void GetCells(Vector2 min, Vector2 max, out int x0, out int y0, out int x1, out int y1)
     {
-        x0 = Math.Clamp((int)((min.X - _origin.X) / CELL_SIZE), 0, _width - 1);
-        y0 = Math.Clamp((int)((min.Y - _origin.Y) / CELL_SIZE), 0, _height - 1);
-        x1 = Math.Clamp((int)((max.X - _origin.X) / CELL_SIZE), 0, _width - 1);
-        y1 = Math.Clamp((int)((max.Y - _origin.Y) / CELL_SIZE), 0, _height - 1);
+        x0 = Math.Clamp((int)((min.X - _origin.X) * INV_CELL_SIZE), 0, _width - 1);
+        y0 = Math.Clamp((int)((min.Y - _origin.Y) * INV_CELL_SIZE), 0, _height - 1);
+        x1 = Math.Clamp((int)((max.X - _origin.X) * INV_CELL_SIZE), 0, _width - 1);
+        y1 = Math.Clamp((int)((max.Y - _origin.Y) * INV_CELL_SIZE), 0, _height - 1);
     }
 }

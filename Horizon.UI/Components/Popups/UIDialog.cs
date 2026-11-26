@@ -71,6 +71,10 @@ public sealed class UIDialog : Panel
     /// <summary>Called once the dialog has closed, however it was closed.</summary>
     public Action? Closed { get; set; }
 
+    // Internal cleanup hook (e.g., UIChooser cancelling and disposing background search CTS) that cannot be
+    // overwritten when a caller assigns Closed.
+    internal Action? InternalClosed { get; set; }
+
     /// <summary>Whether the dialog is up, and not on its way out.</summary>
     public bool IsOpen => Parent is not null && !closing;
 
@@ -306,6 +310,7 @@ public sealed class UIDialog : Panel
             ownerModule.Compositor.Focus = CanRestore(focusBefore, ownerModule) && !Contains(focusBefore!) ? focusBefore : null;
 
         closing = true;
+        InternalClosed?.Invoke();
         Closed?.Invoke();
 
         // Faded out and shrunk a touch the way it came, then gone, or gone at once with less motion

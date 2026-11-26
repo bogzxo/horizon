@@ -431,9 +431,21 @@ public sealed partial class UIFileBrowser
 
     private (string Name, Vector4? Color) PlaceIcon(string item) => (placeIcons.TryGetValue(item, out string? icon) ? icon : "folder", null);
 
+    private string[] SelectedPatterns()
+    {
+        string wanted = filter.Value;
+        for (int i = 0; i < filters.Length; i++)
+        {
+            if (filters[i].Name == wanted)
+                return filters[i].Patterns;
+        }
+
+        return filters[0].Patterns;
+    }
+
     private bool Matches(string file)
     {
-        string[] patterns = filters[Math.Clamp(Array.IndexOf(filters.Select(pair => pair.Name).ToArray(), filter.Value), 0, filters.Length - 1)].Patterns;
+        string[] patterns = SelectedPatterns();
         foreach (string pattern in patterns)
         {
             if (pattern is "*" or "*.*")
@@ -747,7 +759,7 @@ public sealed partial class UIFileBrowser
         }
 
         // Saving: the extension the filter is for when the name has none, and over a file that's there only when asked twice
-        string[] patterns = filters[Math.Max(0, Array.IndexOf(filters.Select(pair => pair.Name).ToArray(), filter.Value))].Patterns;
+        string[] patterns = SelectedPatterns();
         if (!Path.HasExtension(full) && patterns.FirstOrDefault(pattern => pattern.StartsWith("*.", StringComparison.Ordinal) && pattern != "*.*") is { } first)
             full += first[1..];
 

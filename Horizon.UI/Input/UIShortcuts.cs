@@ -135,7 +135,7 @@ public sealed class UIShortcuts
         }
 
         // A first one after the first ones added before it, ahead of all the rest
-        int at = added.First ? shortcuts.FindIndex(shortcut => !shortcut.First) : -1;
+        int at = added.First ? shortcuts.FindIndex(static shortcut => !shortcut.First) : -1;
         if (at >= 0)
             shortcuts.Insert(at, added);
         else
@@ -178,7 +178,16 @@ public sealed class UIShortcuts
     public bool Has(Key key, bool control, bool shift, bool alt) => Has(new UIKeyStroke(key, control, shift, alt), null);
 
     /// <summary>Whether anything is on a chord, or on one key when there's no second.</summary>
-    public bool Has(UIKeyStroke first, UIKeyStroke? then) => shortcuts.Exists(shortcut => On(shortcut, first, then));
+    public bool Has(UIKeyStroke first, UIKeyStroke? then)
+    {
+        for (int i = 0; i < shortcuts.Count; i++)
+        {
+            if (On(shortcuts[i], first, then))
+                return true;
+        }
+
+        return false;
+    }
 
     private static bool On(Shortcut shortcut, UIKeyStroke first, UIKeyStroke? then) =>
         Is(shortcut, first.Key, first.Control, first.Shift, first.Alt) && Nullable.Equals(shortcut.Then, then);

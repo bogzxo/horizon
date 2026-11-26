@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 
 using Horizon.Content;
@@ -13,13 +15,18 @@ public readonly record struct ShaderPackStage(ShaderStage Stage, string EntryPoi
 /// </summary>
 public sealed class ShaderPackEntry
 {
+    private readonly ReadOnlyMemory<byte> spirvMemory;
+    private byte[]? spirvArray;
+
     /// <summary>The key the module is looked up by, see <see cref="ShaderCompiler.CompilerFingerprint"/>.</summary>
     public string Key { get; }
 
     /// <summary>A file (or an inline program's name) the module was made from, for messages and nothing else.</summary>
     public string Origin { get; }
 
-    public byte[] Spirv { get; }
+    public byte[] Spirv => spirvArray ??= spirvMemory.ToArray();
+    internal ReadOnlyMemory<byte> SpirvMemory => spirvMemory;
+    internal ReadOnlySpan<byte> SpirvSpan => spirvMemory.Span;
     public IReadOnlyList<ShaderPackStage> Stages { get; }
     public IReadOnlyList<UniformBlockLayout.Member> Params { get; }
 
@@ -27,18 +34,28 @@ public sealed class ShaderPackEntry
     {
         Key = key;
         Origin = origin;
-        Spirv = spirv;
+        spirvArray = spirv;
+        spirvMemory = spirv;
+        Stages = stages;
+        Params = parameters;
+    }
+
+    internal ShaderPackEntry(string key, string origin, ReadOnlyMemory<byte> spirv, IReadOnlyList<ShaderPackStage> stages, IReadOnlyList<UniformBlockLayout.Member> parameters)
+    {
+        Key = key;
+        Origin = origin;
+        spirvMemory = spirv;
         Stages = stages;
         Params = parameters;
     }
 
     internal static ShaderPackEntry FromModule(string key, string origin, ShaderModule module) => new(
-        key, origin, module.Stages[0].Spirv,
+        key, origin, module.Stages[0].SpirvMemory,
         [.. module.Stages.Select(stage => new ShaderPackStage(stage.Stage, stage.EntryPoint, Group(stage, 0), Group(stage, 1), Group(stage, 2)))],
         [.. module.Params.Members]);
 
     internal ShaderModule ToModule() => new(
-        [.. Stages.Select(stage => new CompiledStage(stage.Stage, stage.EntryPoint, Spirv, [stage.X, stage.Y, stage.Z]))],
+        [.. Stages.Select(stage => new CompiledStage(stage.Stage, stage.EntryPoint, this, [stage.X, stage.Y, stage.Z]))],
         UniformBlockLayout.FromMembers(Params));
 
     private static uint Group(CompiledStage stage, int axis) => stage.ThreadGroupSize.Length == 3 ? stage.ThreadGroupSize[axis] : 0;
@@ -46,7 +63,7 @@ public sealed class ShaderPackEntry
     /// <summary>What's different between two entries of the same key, empty when they're the same to the byte.</summary>
     public string DifferenceFrom(ShaderPackEntry other)
     {
-        if (!Spirv.AsSpan().SequenceEqual(other.Spirv)) return $"the SPIR-V differs ({Spirv.Length} and {other.Spirv.Length} bytes)";
+        if (!SpirvSpan.SequenceEqual(other.SpirvSpan)) return $"the SPIR-V differs ({SpirvSpan.Length} and {other.SpirvSpan.Length} bytes)";
         if (!Stages.SequenceEqual(other.Stages)) return $"the stages differ ({Describe(Stages)} and {Describe(other.Stages)})";
         if (!Params.SequenceEqual(other.Params)) return $"the Params layout differs ({Params.Count} and {other.Params.Count} members)";
         return string.Empty;
@@ -136,14 +153,41 @@ public sealed class ShaderPack
     /// <summary>Helper method to read a stream to its end, stopping with an error past so many bytes rather than reading forever.</summary>
     private static byte[] ReadBounded(Stream stream, string name, int maxBytes)
     {
-        var bytes = new MemoryStream();
-        byte[] buffer = new byte[64 * 1024];
-        int read;
-        while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+        if (stream.CanSeek)
         {
-            if (bytes.Length + read > maxBytes)
+            long remaining = stream.Length - stream.Position;
+            if (remaining > maxBytes)
                 throw new ShaderPackException($"The shader pack {name} is bigger than {maxBytes} bytes, which no pack is. It's the wrong file or a broken one.");
-            bytes.Write(buffer, 0, read);
+            if (remaining <= 0) return [];
+
+            int length = (int)remaining;
+            byte[] data = GC.AllocateUninitializedArray<byte>(length);
+            int offset = 0;
+            while (offset < length)
+            {
+                int chunk = stream.Read(data, offset, length - offset);
+                if (chunk == 0) break;
+                offset += chunk;
+            }
+
+            return offset == length ? data : data.AsSpan(0, offset).ToArray();
+        }
+
+        var bytes = new MemoryStream();
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
+        {
+            int read;
+            while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                if (bytes.Length + read > maxBytes)
+                    throw new ShaderPackException($"The shader pack {name} is bigger than {maxBytes} bytes, which no pack is. It's the wrong file or a broken one.");
+                bytes.Write(buffer, 0, read);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         return bytes.ToArray();
@@ -162,8 +206,9 @@ public sealed class ShaderPack
         if (format != FORMAT)
             throw new ShaderPackException($"The shader pack {name} is format {format} and this engine reads format {FORMAT}. Build it again with the Horizon.Shaders.Build of this engine.");
 
-        byte[] expected = SHA256.HashData(bytes.AsSpan(0, bytes.Length - HASH_BYTES));
-        if (!expected.AsSpan().SequenceEqual(bytes.AsSpan(bytes.Length - HASH_BYTES)))
+        Span<byte> expected = stackalloc byte[HASH_BYTES];
+        SHA256.HashData(bytes.AsSpan(0, bytes.Length - HASH_BYTES), expected);
+        if (!expected.SequenceEqual(bytes.AsSpan(bytes.Length - HASH_BYTES)))
             throw new ShaderPackException($"The shader pack {name} is corrupt or cut short, its checksum doesn't match ({bytes.Length} bytes).");
 
         string fingerprint = reader.String();
@@ -199,8 +244,9 @@ public sealed class ShaderPack
             for (int m = 0; m < members.Length; m++)
                 members[m] = new UniformBlockLayout.Member(reader.String(), reader.String(), reader.Int(), reader.Int(), reader.Int(), reader.Int());
 
-            byte[] spirv = reader.Bytes();
-            if (spirv.Length < 20 || spirv.Length % 4 != 0 || BitConverter.ToUInt32(spirv, 0) != 0x07230203)
+            ReadOnlyMemory<byte> spirv = reader.BytesMemory();
+            ReadOnlySpan<byte> spirvSpan = spirv.Span;
+            if (spirvSpan.Length < 20 || spirvSpan.Length % 4 != 0 || BinaryPrimitives.ReadUInt32LittleEndian(spirvSpan) != 0x07230203)
                 throw reader.Malformed($"{key} isn't SPIR-V");
 
             entries[i] = new ShaderPackEntry(key, origin, spirv, stages, members);
@@ -249,10 +295,15 @@ public sealed class ShaderPack
             return System.Text.Encoding.UTF8.GetString(Take((int)length));
         }
 
-        public byte[] Bytes()
+        public ReadOnlyMemory<byte> BytesMemory()
         {
             uint length = UInt();
-            return Take(length > int.MaxValue ? -1 : (int)length).ToArray();
+            int count = length > int.MaxValue ? -1 : (int)length;
+            if (count < 0 || count > end - At)
+                throw new ShaderPackException($"The shader pack {name} is cut short or malformed, it wants {count} bytes at {At} with {end - At} left.");
+            var slice = bytes.AsMemory(At, count);
+            At += count;
+            return slice;
         }
     }
 }

@@ -148,8 +148,9 @@ public sealed partial class DesktopWindow : IPlatformWindow
             if (!OperatingSystem.IsMacOS() && !TrySetIcon(windowIcon) && !UsesSdl)
                 _window.SetDefaultIcon();
 
-            // Silk's GLFW context goes through every controller there is as it is made, which a broken driver makes a minute
-            _input = readsGamepads || UsesSdl ? _window.CreateInput() : new GlfwInputWithoutGamepads(_window);
+            // On GLFW, always avoid Silk's synchronous 16-slot gamepad probe during window creation.
+            // When readsGamepads is true, gamepads are probed lazily on the window thread after the first frame presents.
+            _input = UsesSdl ? _window.CreateInput() : new GlfwInputWithoutGamepads(_window);
             bool focused = ListenForInput();
             SetUpWaiting();
 
@@ -440,6 +441,8 @@ public sealed partial class DesktopWindow : IPlatformWindow
     /// </summary>
     private void HandleEvents()
     {
+        // Consume any pending wake signal up front so a wakeup that unblocked the OS wait doesn't skip the next wait.
+        wakeGate.TryConsume();
         _window.DoEvents();
         FlushHitTestPress();
         HandOnFileDrops();

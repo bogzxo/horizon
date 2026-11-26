@@ -92,7 +92,10 @@ public sealed partial class DebugSession : IDisposable
     private readonly ConcurrentQueue<DebugEvent> happened = new();
     private readonly TaskCompletionSource initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private volatile DebugState state = DebugState.Starting;
+    private int ended;
     private int stoppedThread = -1;
+
+    internal TimeSpan ConfigureTimeout { get; set; } = TimeSpan.FromSeconds(20);
 
     /// <summary>Where it is.</summary>
     public DebugState State => state;
@@ -173,6 +176,8 @@ public sealed partial class DebugSession : IDisposable
         try
         {
             await Initialize(kind).ConfigureAwait(false);
+            if (state == DebugState.Ended)
+                throw new InvalidOperationException("The debug session has ended.");
 
             var args = new JsonArray();
             foreach (string argument in arguments)
@@ -259,6 +264,8 @@ public sealed partial class DebugSession : IDisposable
         try
         {
             await Initialize(kind).ConfigureAwait(false);
+            if (state == DebugState.Ended)
+                throw new InvalidOperationException("The debug session has ended.");
             // Adapter startup can take time. Revalidate a picker identity immediately before sending the PID.
             if (expectedStartTime is {} expected)
             {
@@ -311,24 +318,58 @@ public sealed partial class DebugSession : IDisposable
     /// </summary>
     private async Task Configure(Task<JsonNode?> started, IReadOnlyDictionary<string, IReadOnlyCollection<DebugBreakpoint>> breakpointsByFile)
     {
-        Task first = await Task.WhenAny(initialized.Task, started, Task.Delay(TimeSpan.FromSeconds(20))).ConfigureAwait(false);
-        if (first == started)
-            await started.ConfigureAwait(false);
+        using (var timeoutCts = new CancellationTokenSource())
+        {
+            Task timeout = Task.Delay(ConfigureTimeout, timeoutCts.Token);
+            Task first = await Task.WhenAny(initialized.Task, started, timeout).ConfigureAwait(false);
+            timeoutCts.Cancel();
+
+            if (started.IsFaulted || started.IsCanceled)
+                await started.ConfigureAwait(false);
+            if (first == timeout && !initialized.Task.IsCompleted && !started.IsCompleted)
+                throw new TimeoutException("Timed out waiting for the debugger to initialize.");
+            if (first == started)
+                await started.ConfigureAwait(false);
+        }
+
+        if (state == DebugState.Ended)
+            throw new InvalidOperationException("The debug session ended before configuration completed.");
 
         foreach (var (file, lines) in breakpointsByFile)
+        {
+            if (state == DebugState.Ended)
+                throw new InvalidOperationException("The debug session ended during configuration.");
             await SetBreakpointsNow(file, lines).ConfigureAwait(false);
+        }
+
+        if (state == DebugState.Ended)
+            throw new InvalidOperationException("The debug session ended during configuration.");
         await ConfigureExceptions().ConfigureAwait(false);
+
+        if (state == DebugState.Ended)
+            throw new InvalidOperationException("The debug session ended during configuration.");
         if (InitialFunctionBreakpoints.Count > 0 && Can("supportsFunctionBreakpoints"))
             await SetFunctionBreakpoints(InitialFunctionBreakpoints).ConfigureAwait(false);
+
+        if (state == DebugState.Ended)
+            throw new InvalidOperationException("The debug session ended during configuration.");
         await connection.Request("configurationDone").ConfigureAwait(false);
+
         if (threadBaseline is { } baseline)
         {
             // LLDB can return a cached startup list once, even if it has since stopped.
             // Drain it before any UI request for the current paused threads.
-            try { await connection.Request("threads").ConfigureAwait(false); }
+            try
+            {
+                if (state != DebugState.Ended)
+                    await connection.Request("threads").ConfigureAwait(false);
+            }
             catch (Exception) { } // A program may already have exited.
             finally { baseline.TrySetResult(); }
         }
+
+        if (state == DebugState.Ended)
+            throw new InvalidOperationException("The debug session ended during configuration.");
         await started.ConfigureAwait(false);
 
         if (state == DebugState.Starting)
@@ -423,8 +464,10 @@ public sealed partial class DebugSession : IDisposable
     /// <summary>The scopes of a frame, its locals and the rest.</summary>
     public async Task<IReadOnlyList<DebugScope>> Scopes(int frameId)
     {
+        if (state == DebugState.Ended)
+            return [];
         var scopes = new List<DebugScope>();
-        if (await connection.Request("scopes", new JsonObject { ["frameId"] = frameId }).ConfigureAwait(false) is JsonObject body && body["scopes"] is JsonArray list)
+        if (await connection.Request("scopes", new JsonObject { ["frameId"] = frameId }).ConfigureAwait(false) is JsonObject body && state != DebugState.Ended && body["scopes"] is JsonArray list)
         {
             foreach (JsonNode? scope in list)
             {
@@ -444,13 +487,15 @@ public sealed partial class DebugSession : IDisposable
 
     public async Task<IReadOnlyList<DebugVariable>> Variables(int reference, bool hexadecimal, int? start = null, int? count = null, string? filter = null)
     {
+        if (state == DebugState.Ended)
+            return [];
         var variables = new List<DebugVariable>();
         var arguments = new JsonObject { ["variablesReference"] = reference };
         if (start is not null) arguments["start"] = start.Value;
         if (count is not null) arguments["count"] = count.Value;
         if (filter is not null) arguments["filter"] = filter;
         if (hexadecimal && Can("supportsValueFormattingOptions")) arguments["format"] = new JsonObject { ["hex"] = true };
-        if (await connection.Request("variables", arguments).ConfigureAwait(false) is JsonObject body && body["variables"] is JsonArray list)
+        if (await connection.Request("variables", arguments).ConfigureAwait(false) is JsonObject body && state != DebugState.Ended && body["variables"] is JsonArray list)
         {
             foreach (JsonNode? variable in list)
             {
@@ -488,9 +533,13 @@ public sealed partial class DebugSession : IDisposable
     /// <summary>What an expression comes to in a frame, or what the debugger said it couldn't.</summary>
     public async Task<string> Evaluate(string expression, int frameId)
     {
+        if (state == DebugState.Ended)
+            return string.Empty;
         try
         {
             var body = await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = "repl" }).ConfigureAwait(false);
+            if (state == DebugState.Ended)
+                return string.Empty;
             return body?["result"]?.GetValue<string>() ?? string.Empty;
         }
         catch (Exception e)
@@ -512,9 +561,11 @@ public sealed partial class DebugSession : IDisposable
     /// </summary>
     public async Task<DebugEvaluation> EvaluateSaying(string expression, int frameId, string context = "watch")
     {
+        if (state == DebugState.Ended)
+            return new DebugEvaluation(null, "The debugger has gone.");
         try
         {
-            if (await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = context }).ConfigureAwait(false) is not JsonObject body)
+            if (await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = context }).ConfigureAwait(false) is not JsonObject body || state == DebugState.Ended)
                 return new DebugEvaluation(null, null);
 
             return new DebugEvaluation(new DebugVariable(expression, body["result"]?.GetValue<string>() ?? string.Empty, body["type"]?.GetValue<string>(), JsonNumbers.Int(body["variablesReference"], 0)) { ReadOnly = IsReadOnly(body), IndexedVariables = body["indexedVariables"] is {} indexed ? JsonNumbers.Int(indexed, 0) : null,
@@ -532,6 +583,9 @@ public sealed partial class DebugSession : IDisposable
     // The adapter's events, on the reading thread
     private void Happened(string name, JsonNode? body)
     {
+        if (state == DebugState.Ended)
+            return;
+
         switch (name)
         {
             case "module":
@@ -627,9 +681,13 @@ public sealed partial class DebugSession : IDisposable
         DebugConditionFailure? failed = null;
         if (!hitNative && reason == "breakpoint" && frames.Count > 0 && await GoesOnFrom(frames[0], why => failed = why).ConfigureAwait(false))
             return;
+        if (!Current())
+            return;
 
         try { await ClearRunTarget().ConfigureAwait(false); }
         catch (Exception error) { text = "Could not restore breakpoints: " + error.Message; }
+        if (!Current())
+            return;
 
         bool nativeThrow = windowsLldb && BreaksOnException("cpp_throw") && frames.Count > 0
             && frames[0].Name.Contains("_CxxThrowException", StringComparison.Ordinal);
@@ -645,12 +703,12 @@ public sealed partial class DebugSession : IDisposable
     // What the exception it stopped on was, asked of a debugger that answers exceptionInfo, null of one that doesn't
     private async Task<DebugException?> ExceptionNow()
     {
-        if (!Can("supportsExceptionInfoRequest"))
+        if (state == DebugState.Ended || !Can("supportsExceptionInfoRequest"))
             return null;
 
         try
         {
-            if (await connection.Request("exceptionInfo", new JsonObject { ["threadId"] = stoppedThread }).ConfigureAwait(false) is not JsonObject body)
+            if (await connection.Request("exceptionInfo", new JsonObject { ["threadId"] = stoppedThread }).ConfigureAwait(false) is not JsonObject body || state == DebugState.Ended)
                 return null;
 
             JsonNode? details = body["details"];
@@ -713,7 +771,7 @@ public sealed partial class DebugSession : IDisposable
     {
         try
         {
-            if (debuggee is { } program && program.WaitForExit(500))
+            if (debuggee is { } program && program.HasExited)
                 return program.ExitCode;
         }
         catch (Exception)
@@ -726,7 +784,7 @@ public sealed partial class DebugSession : IDisposable
 
     private void End(int exitCode, string why = "")
     {
-        if (state == DebugState.Ended)
+        if (Interlocked.Exchange(ref ended, 1) != 0)
             return;
 
         Interlocked.Increment(ref threadEpoch);

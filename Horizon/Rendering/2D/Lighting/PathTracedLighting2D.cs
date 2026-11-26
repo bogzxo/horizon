@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 using Horizon.Engine;
 using Horizon.Graphics;
@@ -163,9 +164,30 @@ public sealed class PathTracedLighting2D : IDisposable
     /// </summary>
     public float Responsiveness { get; set; } = 1.0f;
 
-    private static readonly TextureDefinition CascadeTexture = new(PixelFormat.Rgba16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
+    /// <summary>std140 Params block for gi_resolve.slang (80 bytes, with 4B alignment pad before uProbeOffset).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct ResolveParams
+    {
+        public Vector2 Size;           // offset 0
+        public Vector2 TraceSize;      // offset 8
+        public Vector2 CascadeSize;    // offset 16
+        public Vector2 ProbeCount;     // offset 24
+        public float ProbeSpacing;     // offset 32
+        private float pad0;            // offset 36 (std140 float2 alignment)
+        public Vector2 ProbeOffset;    // offset 40
+        public float Directions;       // offset 48
+        public float DirectionsSqrt;   // offset 52
+        public Vector2 Shift;          // offset 56
+        public float Settle;           // offset 64
+        public float FrameTime;        // offset 68
+        public float Sharpen;          // offset 72
+        public float Responsiveness;   // offset 76
+    }
 
-    private readonly List<Texture> cascades = [];
+    private static readonly TextureDefinition CascadeTexture = new(PixelFormat.Rgba16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
+    private static readonly TextureDefinition MomentsTexture = new(PixelFormat.Rg16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
+
+    private Texture? cascadeA, cascadeB;
     private Texture? resultA, resultB, radiance, air;
 
     // The air light smeared, see GlowSpread. The blur draws, so it keeps targets of its own
@@ -221,11 +243,12 @@ public sealed class PathTracedLighting2D : IDisposable
     {
         var device = GraphicsDevice.Current;
 
-        radiancePass ??= new Technique(Shader.Load("shaders/lighting", "gi_radiance"));
-        cascadePass ??= new Technique(Shader.Load("shaders/lighting", "gi_cascade"));
-        resolvePass ??= new Technique(Shader.Load("shaders/lighting", "gi_resolve"));
-        airPass ??= new Technique(Shader.Load("shaders/lighting", "gi_air"));
+        bool loadedAny = false;
+        if (radiancePass is not { IsValid: true }) { radiancePass = new Technique(Shader.Load("shaders/lighting", "gi_radiance")); loadedAny = true; }
+        if (cascadePass is not { IsValid: true }) { cascadePass = new Technique(Shader.Load("shaders/lighting", "gi_cascade")); loadedAny = true; }
+        if (resolvePass is not { IsValid: true }) { resolvePass = new Technique(Shader.Load("shaders/lighting", "gi_resolve")); loadedAny = true; }
         if (!radiancePass.IsValid || !cascadePass.IsValid || !resolvePass.IsValid) return;
+        if (loadedAny) device.WarmComputePipelines([radiancePass.Shader, cascadePass.Shader, resolvePass.Shader]);
 
         float scale = Math.Clamp(Scale, 0.1f, 1.0f);
         uint wanted = (uint)MathF.Max(1.0f, MathF.Ceiling(renderer.ViewportSize.X * scale));
@@ -238,7 +261,7 @@ public sealed class PathTracedLighting2D : IDisposable
         uint wantedOutputHeight = upscaling ? (uint)MathF.Max(wantedHeight, MathF.Ceiling(renderer.ViewportSize.Y * output)) : wantedHeight;
 
         Fit(wanted, wantedHeight, wantedOutput, wantedOutputHeight);
-        if (resultA is null || resultB is null || momentsA is null || momentsB is null || radiance is null || cascades.Count == 0) return;
+        if (resultA is null || resultB is null || momentsA is null || momentsB is null || radiance is null || cascadeA is null || cascadeB is null) return;
 
         Texture previous = writeB ? resultA : resultB;
         Texture result = writeB ? resultB : resultA;
@@ -249,23 +272,38 @@ public sealed class PathTracedLighting2D : IDisposable
         float pixelWorld = camera.Bounds.Width / width;
 
         // The lamps' glow through the air, shadowed at the tracer's size and smeared, see GlowSpread. Before the
-        // cascades, which have nothing to do with it, so the blur's drawing doesn't land between two dispatches
+        // cascades, which have nothing to do with it, so the blur's drawing doesn't land between two dispatches.
+        // Lazy-loaded so scenes without air glow never compile gi_air or allocate the air texture.
         float spread = GlowSpread;
         Air = null;
-        if (spread > 0.0f && airPass!.IsValid && air is not null)
+        if (spread > 0.0f)
         {
-            using var hazing = device.BeginGpuScope("air light");
-            airPass.Bind();
-            renderer.BindLighting(airPass);
-            airPass.SetUniform("uSize", Size);
-            device.BindStorageImage(0, air);
-            device.Dispatch((width + 7) / 8, (height + 7) / 8);
-            device.Barrier(BarrierTargets.ShaderImages);
-            airPass.Unbind();
-            device.BindStorageImage(0, null);
+            if (airPass is not { IsValid: true }) airPass = new Technique(Shader.Load("shaders/lighting", "gi_air"));
+            if (air is null || air.Width != width || air.Height != height)
+            {
+                air?.Dispose();
+                air = CreatePicture("air light", width, height);
+            }
 
-            airBlur ??= new PostProcessing.GaussianBlur();
-            Air = airBlur.Blur(air, Size, spread / MathF.Max(pixelWorld, 1e-4f), ref airBlurred).Texture;
+            if (airPass.IsValid && air is not null)
+            {
+                using var hazing = device.BeginGpuScope("air light");
+                airPass.Bind();
+                renderer.BindLighting(airPass);
+                airPass.SetUniform("uSize", Size);
+                device.BindStorageImage(0, air);
+                device.Dispatch((width + 7) / 8, (height + 7) / 8);
+                device.Barrier(BarrierTargets.ShaderImages);
+                airPass.Unbind();
+                device.BindStorageImage(0, null);
+
+                airBlur ??= new PostProcessing.GaussianBlur();
+                Air = airBlur.Blur(air, Size, spread / MathF.Max(pixelWorld, 1e-4f), ref airBlurred).Texture;
+                // Air is sampled bindlessly in deferred.slang (not bound to a texture unit), so transition it from
+                // ColorAttachmentOptimal to ShaderReadOnlyOptimal explicitly with a color-write -> shader-read barrier
+                if (Air is { IsValid: true })
+                    device.Transition(Air, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal, Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit, Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
+            }
         }
 
         // Whether last frame's light is worth anything, it is not the first time, the camera didn't cut, and the
@@ -323,62 +361,95 @@ public sealed class PathTracedLighting2D : IDisposable
         cascadePass.SetUniform("uPixelWorld", pixelWorld);
         cascadePass.SetUniform("uRotation", turn);
 
+        Vector2 upperProbes = default, upperOffset = default;
+        float upperSpacing = 0.0f, upperDirectionsSqrt = 0.0f;
+        Vector2 nearestProbes = default, nearestOffset = default;
+        float nearestSpacing = 0.0f, nearestDirections = 0.0f;
+
+        Texture nearestCascade = cascadeA;
         for (int i = cascadeCount - 1; i >= 0; i--)
         {
             Describe(i, out Vector2 probes, out float spacing, out float directions, out float start, out float end);
             bool hasUpper = i + 1 < cascadeCount;
-            Describe(hasUpper ? i + 1 : i, out Vector2 upperProbes, out float upperSpacing, out float upperDirections, out _, out _);
             Vector2 offset = Offset(topLeft, pixelWorld, spacing);
-            Vector2 upperOffset = Offset(topLeft, pixelWorld, upperSpacing);
-            if (!hasUpper) end = MathF.Max(end, diagonal);
+            float directionsSqrt = MathF.ScaleB(2.0f, i);
+            if (!hasUpper)
+            {
+                end = MathF.Max(end, diagonal);
+                upperProbes = probes;
+                upperSpacing = spacing;
+                upperOffset = offset;
+                upperDirectionsSqrt = directionsSqrt;
+            }
 
             cascadePass.SetUniform("uProbeCount", in probes);
             cascadePass.SetUniform("uProbeSpacing", spacing);
             cascadePass.SetUniform("uProbeOffset", in offset);
             cascadePass.SetUniform("uDirections", directions);
-            cascadePass.SetUniform("uDirectionsSqrt", MathF.Sqrt(directions));
+            cascadePass.SetUniform("uDirectionsSqrt", directionsSqrt);
             cascadePass.SetUniform("uIntervalStart", start);
             cascadePass.SetUniform("uIntervalEnd", end);
             cascadePass.SetUniform("uUpperProbeCount", in upperProbes);
             cascadePass.SetUniform("uUpperSpacing", upperSpacing);
             cascadePass.SetUniform("uUpperOffset", in upperOffset);
-            cascadePass.SetUniform("uUpperDirectionsSqrt", MathF.Sqrt(upperDirections));
+            cascadePass.SetUniform("uUpperDirectionsSqrt", upperDirectionsSqrt);
             cascadePass.SetUniform("uHasUpper", hasUpper);
 
+            // Two ping-pong textures carry every cascade from top down: read the upper cascade, write the current one
+            var (readIdx, writeIdx) = PingPongIndices(i, cascadeCount);
+            Texture readTex = readIdx == 0 ? cascadeA : cascadeB;
+            Texture writeTex = writeIdx == 0 ? cascadeA : cascadeB;
+
             // The top cascade has nothing above it, it is given something harmless to read
-            (hasUpper ? cascades[i + 1] : previous).Bind(UNIT_UPPER);
-            device.BindStorageImage(0, cascades[i]);
-            device.Dispatch((cascadeWidth + 7) / 8, (cascadeHeight + 7) / 8);
+            (hasUpper ? readTex : previous).Bind(UNIT_UPPER);
+            device.BindStorageImage(0, writeTex);
+            var (activeW, activeH) = ActiveCascadeSize(probes, directionsSqrt);
+            device.Dispatch((activeW + 7) / 8, (activeH + 7) / 8);
             device.Barrier(BarrierTargets.ShaderImages);
+
+            upperProbes = probes;
+            upperSpacing = spacing;
+            upperOffset = offset;
+            upperDirectionsSqrt = directionsSqrt;
+
+            if (i == 0)
+            {
+                nearestCascade = writeTex;
+                nearestProbes = probes;
+                nearestSpacing = spacing;
+                nearestOffset = offset;
+                nearestDirections = directions;
+            }
         }
 
         tracing.Dispose();
 
         // And what every pixel sees out of the nearest one
-        Describe(0, out Vector2 nearestProbes, out float nearestSpacing, out float nearestDirections, out _, out _);
-        Vector2 nearestOffset = Offset(topLeft, pixelWorld, nearestSpacing);
-
         using var resolving = device.BeginGpuScope("gi resolve");
         resolvePass.Bind();
-        cascades[0].Bind(0);
+        nearestCascade.Bind(0);
         previous.Bind(1);
         previousMoments.Bind(2);
-        resolvePass.SetUniform("uShift", in shift);
 
         // How many seconds' worth a pixel may hold on to, and how long this frame was, which is how much of the
         // frame goes in. A frame that took no time at all still counts for a bit
-        resolvePass.SetUniform("uSettle", settle);
-        resolvePass.SetUniform("uFrameTime", Math.Clamp(dt, 0.0001f, 0.25f));
-        resolvePass.SetUniform("uSharpen", sharpen ? 1.0f : 0.0f);
-        resolvePass.SetUniform("uResponsiveness", MathF.Max(Responsiveness, 0.0f));
-        resolvePass.SetUniform("uSize", OutputSize);
-        resolvePass.SetUniform("uTraceSize", Size);
-        resolvePass.SetUniform("uProbeCount", in nearestProbes);
-        resolvePass.SetUniform("uProbeSpacing", nearestSpacing);
-        resolvePass.SetUniform("uProbeOffset", in nearestOffset);
-        resolvePass.SetUniform("uDirections", nearestDirections);
-        resolvePass.SetUniform("uDirectionsSqrt", MathF.Sqrt(nearestDirections));
-        resolvePass.SetUniform("uCascadeSize", new Vector2(cascadeWidth, cascadeHeight));
+        var resolveParams = new ResolveParams
+        {
+            Size = OutputSize,
+            TraceSize = Size,
+            CascadeSize = new Vector2(cascadeWidth, cascadeHeight),
+            ProbeCount = nearestProbes,
+            ProbeSpacing = nearestSpacing,
+            ProbeOffset = nearestOffset,
+            Directions = nearestDirections,
+            DirectionsSqrt = 2.0f,
+            Shift = shift,
+            Settle = settle,
+            FrameTime = Math.Clamp(dt, 0.0001f, 0.25f),
+            Sharpen = sharpen ? 1.0f : 0.0f,
+            Responsiveness = MathF.Max(Responsiveness, 0.0f)
+        };
+        resolvePass.SetParamsBlock(in resolveParams);
         device.BindStorageImage(0, result);
         device.BindStorageImage(1, moments);
         device.Dispatch((outputWidth + 7) / 8, (outputHeight + 7) / 8);
@@ -512,6 +583,34 @@ public sealed class PathTracedLighting2D : IDisposable
         return MathF.Abs(shift.X) > 0.5f || MathF.Abs(shift.Y) > 0.5f ? null : shift;
     }
 
+    /// <summary>Exact active texel dimensions of a cascade (probes * directionsSqrt each way), skipping texture padding.</summary>
+    internal static (uint Width, uint Height) ActiveCascadeSize(Vector2 probes, float directionsSqrt)
+    {
+        uint sqrt = (uint)MathF.Max(1.0f, MathF.Round(directionsSqrt));
+        return ((uint)MathF.Max(1.0f, probes.X) * sqrt, (uint)MathF.Max(1.0f, probes.Y) * sqrt);
+    }
+
+    /// <summary>
+    /// Selects which of the two ping-pong cascade textures (0 or 1) is read as the upper cascade and which is written
+    /// for <paramref name="cascadeIndex"/> when iterating top-down from <paramref name="cascadeCount"/> - 1 to 0.
+    /// </summary>
+    internal static (int ReadIndex, int WriteIndex) PingPongIndices(int cascadeIndex, int cascadeCount)
+    {
+        int step = cascadeCount - 1 - cascadeIndex;
+        int writeIndex = step & 1;
+        return (writeIndex ^ 1, writeIndex);
+    }
+
+    private static Texture? CreatePicture(string name, uint across, uint down) =>
+        CreateTexture(name, across, down, CascadeTexture);
+
+    private static Texture? CreateTexture(string name, uint across, uint down, TextureDefinition definition)
+    {
+        if (!GameEngine.Instance.ObjectManager.Textures.TryCreate(new TextureDescription { Width = across, Height = down, Definition = definition }, out var made)) return null;
+        made.Asset.Name = name;
+        return made.Asset;
+    }
+
     /// <summary>Helper method to have every texture be the size that is wanted, made anew when it isn't.</summary>
     private void Fit(uint wantedWidth, uint wantedHeight, uint wantedOutput, uint wantedOutputHeight)
     {
@@ -545,29 +644,17 @@ public sealed class PathTracedLighting2D : IDisposable
             cascadeCount++;
         }
 
-        var objects = GameEngine.Instance.ObjectManager;
-        for (int i = 0; i < cascadeCount; i++)
-        {
-            if (!objects.Textures.TryCreate(new TextureDescription { Width = cascadeWidth, Height = cascadeHeight, Definition = CascadeTexture }, out var made)) return;
-            made.Asset.Name = $"cascade {i}";
-            cascades.Add(made.Asset);
-        }
+        // Only two ping-pong cascade textures are needed regardless of cascadeCount
+        cascadeA = CreatePicture("cascade a", cascadeWidth, cascadeHeight);
+        cascadeB = CreatePicture("cascade b", cascadeWidth, cascadeHeight);
 
         // Kept as they are made. A card that ran out of room halfway used to leave the ones it did make with
         // nobody holding them, and then try the whole lot again the next frame, and the next, god help it
-        resultA = Picture("path traced result a", outputWidth, outputHeight);
-        resultB = Picture("path traced result b", outputWidth, outputHeight);
-        momentsA = Picture("path traced wavering a", outputWidth, outputHeight);
-        momentsB = Picture("path traced wavering b", outputWidth, outputHeight);
-        radiance = Picture("wall radiance", width, height);
-        air = Picture("air light", width, height);
-
-        Texture? Picture(string name, uint across, uint down)
-        {
-            if (!objects.Textures.TryCreate(new TextureDescription { Width = across, Height = down, Definition = CascadeTexture }, out var made)) return null;
-            made.Asset.Name = name;
-            return made.Asset;
-        }
+        resultA = CreatePicture("path traced result a", outputWidth, outputHeight);
+        resultB = CreatePicture("path traced result b", outputWidth, outputHeight);
+        momentsA = CreateTexture("path traced wavering a", outputWidth, outputHeight, MomentsTexture);
+        momentsB = CreateTexture("path traced wavering b", outputWidth, outputHeight, MomentsTexture);
+        radiance = CreatePicture("wall radiance", width, height);
 
         originBefore = null;
         lastRun = 0;
@@ -576,8 +663,8 @@ public sealed class PathTracedLighting2D : IDisposable
 
     private void Release()
     {
-        foreach (Texture cascade in cascades) cascade.Dispose();
-        cascades.Clear();
+        cascadeA?.Dispose();
+        cascadeB?.Dispose();
         resultA?.Dispose();
         resultB?.Dispose();
         momentsA?.Dispose();
@@ -585,7 +672,7 @@ public sealed class PathTracedLighting2D : IDisposable
         radiance?.Dispose();
         air?.Dispose();
         airBlurred?.Dispose();
-        resultA = resultB = momentsA = momentsB = radiance = air = null;
+        cascadeA = cascadeB = resultA = resultB = momentsA = momentsB = radiance = air = null;
         airBlurred = null;
         Result = null;
         Air = null;

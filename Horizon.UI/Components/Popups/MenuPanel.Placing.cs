@@ -221,8 +221,9 @@ internal sealed partial class MenuPanel
         if (!bounds.Contains(pointer))
             return false;
 
-        ScrollBy(skin, -delta * WHEEL_ROWS * RowHeight(skin, textScale));
-        return true;
+        float was = scroll;
+        ScrollBy(skin, -UIWheel.Units(delta, WHEEL_ROWS * RowHeight(skin, textScale)));
+        return !UIWheel.Gliding || scroll != was;
     }
 
     private void ScrollBy(UISkin skin, float by)
@@ -254,21 +255,59 @@ internal sealed partial class MenuPanel
             ScrollBy(skin, by);
     }
 
+    // Cached truncated labels for narrow menus so Paint never allocates per frame
+    private readonly Dictionary<string, (UIFont Font, float Scale, float Room, string Fitted)> fittedLabels = [];
+
     // What an item says cut short with dots to fit, for a list narrower than its longest item
     private string Fitted(UISkin skin, string label, float room)
     {
         float scale = ScaleOf(skin);
-        if (naturalWidth <= bounds.Width + 0.5f || skin.Font.Measure(label, scale, markup: false).X <= room)
+        if (naturalWidth <= bounds.Width + 0.5f)
             return label;
 
-        for (int length = label.Length - 1; length > 0; length--)
+        if (fittedLabels.TryGetValue(label, out var cached) && cached.Font == skin.Font && cached.Scale == scale && cached.Room == room)
+            return cached.Fitted;
+
+        string result;
+        if (skin.Font.Measure(label, scale, markup: false).X <= room)
         {
-            string shorter = string.Concat(label.AsSpan(0, length).TrimEnd(), "...");
-            if (skin.Font.Measure(shorter, scale, markup: false).X <= room)
-                return shorter;
+            result = label;
+        }
+        else
+        {
+            const string DOTS = "...";
+            int length = label.Length - 1;
+            char[]? rented = null;
+            int needed = label.Length + DOTS.Length;
+            Span<char> buffer = needed <= 256 ? stackalloc char[needed] : rented = System.Buffers.ArrayPool<char>.Shared.Rent(needed);
+            try
+            {
+                label.CopyTo(buffer);
+                while (length > 0)
+                {
+                    int trimmed = length;
+                    while (trimmed > 0 && char.IsWhiteSpace(buffer[trimmed - 1]))
+                        trimmed--;
+                    DOTS.CopyTo(buffer.Slice(trimmed));
+                    if (skin.Font.Measure(buffer[..(trimmed + DOTS.Length)], scale, markup: false).X <= room)
+                    {
+                        length = trimmed;
+                        break;
+                    }
+                    length--;
+                }
+            }
+            finally
+            {
+                if (rented is not null)
+                    System.Buffers.ArrayPool<char>.Shared.Return(rented);
+            }
+
+            result = length > 0 ? string.Concat(label.AsSpan(0, length).TrimEnd(), DOTS) : DOTS;
         }
 
-        return "...";
+        fittedLabels[label] = (skin.Font, scale, room, result);
+        return result;
     }
 
     /// <summary>The lists open now, this one and the ones off it, for a test that they're all in the window.</summary>

@@ -16,6 +16,8 @@ public sealed partial class FrameScaler
     private int availabilityVersion, plannedAvailability = -1;
     private int probeRequested;
     private static readonly UpscalerAvailability unknown = new(UpscalerAvailabilityState.Unknown);
+    private static readonly Upscaler[] AllUpscalers = [Upscaler.Cas, Upscaler.Bilinear, Upscaler.Nearest, Upscaler.Gsr1, Upscaler.Fsr1];
+    private static readonly Upscaler[] FallbackUpscalers = [Upscaler.Cas, Upscaler.Bilinear];
 
     /// <summary>Reads the last probe result from any thread. Unknown means not tried yet, not unsupported.</summary>
     public UpscalerAvailability GetAvailability(Upscaler upscaler)
@@ -31,7 +33,7 @@ public sealed partial class FrameScaler
 
     private void ProbeAll()
     {
-        foreach (Upscaler upscaler in new[] { Upscaler.Cas, Upscaler.Bilinear, Upscaler.Nearest, Upscaler.Gsr1, Upscaler.Fsr1 })
+        foreach (Upscaler upscaler in AllUpscalers)
             EnsureAvailable(upscaler);
     }
 
@@ -48,7 +50,8 @@ public sealed partial class FrameScaler
             try
             {
                 using var global = AssetScope.EnterGlobal();
-                technique ??= new PostTechnique(name);
+                if (technique is not { IsValid: true })
+                    technique = new PostTechnique(name);
                 if (technique.IsValid) return true;
                 reason = $"shaders/post/{name}.slang is unavailable; see the shader load error";
             }
@@ -86,7 +89,7 @@ public sealed partial class FrameScaler
         // Native desktop frames never load shaders or allocate an intermediate target.
         if (!requested.Active || (available(requested.Effective) && (!requested.HasPrepass || available(Upscaler.Bilinear)))) return requested;
 
-        foreach (Upscaler candidate in new[] { Upscaler.Cas, Upscaler.Bilinear })
+        foreach (Upscaler candidate in FallbackUpscalers)
         {
             if (candidate == requested.Effective) continue;
             RenderScalePlan fallback = RenderScalePlan.For(settings with { Upscaler = candidate }, requested.OutputWidth, requested.OutputHeight, requested.Density, most);

@@ -9,7 +9,7 @@ namespace Horizon.Core.Threading;
 /// last stretch, where a sleep can't be trusted to end on time. So a thread with little to do costs little, rather
 /// than a whole core spent on asking what time it is.
 /// </summary>
-internal static class LoopTiming
+internal static partial class LoopTiming
 {
     // How close to the moment (in seconds) the thread stops sleeping and starts spinning. A sleep of a millisecond
     // is the shortest there is, and it can run a little over
@@ -73,26 +73,39 @@ internal static class LoopTiming
     private const double PRECISE_MARGIN = 0.0006;
 
     // The precise timer of this thread, made the first time it waits, 0 where there isn't one (before Windows 10 1803,
-    // or anywhere else), and whether that was found out already
-    [ThreadStatic] private static nint preciseTimer;
+    // or anywhere else), and whether that was found out already. Wrapped so the handle is closed when the thread exits.
+    [ThreadStatic] private static ThreadTimer? preciseTimer;
     [ThreadStatic] private static bool preciseTimerTried;
+
+    private sealed class ThreadTimer(nint handle)
+    {
+        public readonly nint Handle = handle;
+
+        ~ThreadTimer()
+        {
+            if (Handle != 0)
+                CloseHandle(Handle);
+        }
+    }
 
     private static nint PreciseTimer()
     {
         if (preciseTimerTried || !OperatingSystem.IsWindows())
-            return preciseTimer;
+            return preciseTimer?.Handle ?? 0;
 
         preciseTimerTried = true;
         try
         {
-            preciseTimer = CreateWaitableTimerExW(0, 0, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+            nint handle = CreateWaitableTimerExW(0, 0, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+            if (handle != 0)
+                preciseTimer = new ThreadTimer(handle);
         }
         catch (Exception)
         {
-            preciseTimer = 0;
+            preciseTimer = null;
         }
 
-        return preciseTimer;
+        return preciseTimer?.Handle ?? 0;
     }
 
     private const uint CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x2, TIMER_ALL_ACCESS = 0x1F0003;
@@ -156,17 +169,17 @@ internal static class LoopTiming
         }
     }
 
-    [DllImport("kernel32.dll")]
-    private static extern int CloseHandle(nint handle);
+    [LibraryImport("kernel32.dll")]
+    private static partial int CloseHandle(nint handle);
 
-    [DllImport("kernel32.dll")]
-    private static extern nint CreateWaitableTimerExW(nint attributes, nint name, uint flags, uint access);
+    [LibraryImport("kernel32.dll")]
+    private static partial nint CreateWaitableTimerExW(nint attributes, nint name, uint flags, uint access);
 
-    [DllImport("kernel32.dll")]
-    private static extern int SetWaitableTimer(nint timer, ref long due, int period, nint routine, nint argument, bool resume);
+    [LibraryImport("kernel32.dll")]
+    private static partial int SetWaitableTimer(nint timer, ref long due, int period, nint routine, nint argument, [MarshalAs(UnmanagedType.Bool)] bool resume);
 
-    [DllImport("kernel32.dll")]
-    private static extern uint WaitForSingleObject(nint handle, uint milliseconds);
+    [LibraryImport("kernel32.dll")]
+    private static partial uint WaitForSingleObject(nint handle, uint milliseconds);
 
     /// <summary>
     /// Has the system wake sleeping threads to the millisecond for as long as anybody who keeps time runs. Windows
@@ -221,9 +234,9 @@ internal static class LoopTiming
         }
     }
 
-    [DllImport("winmm.dll")]
-    private static extern uint timeBeginPeriod(uint milliseconds);
+    [LibraryImport("winmm.dll")]
+    private static partial uint timeBeginPeriod(uint milliseconds);
 
-    [DllImport("winmm.dll")]
-    private static extern uint timeEndPeriod(uint milliseconds);
+    [LibraryImport("winmm.dll")]
+    private static partial uint timeEndPeriod(uint milliseconds);
 }

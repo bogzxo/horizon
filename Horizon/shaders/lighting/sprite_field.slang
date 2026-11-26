@@ -19,7 +19,6 @@ struct Params
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
 
 BIND_TEXTURE(0) Sampler2D uMaterial;
-BIND_TEXTURE(1) Sampler2D uSurface;
 
 BIND_IMAGE(0) [[vk::image_format("rg32ui")]] RWTexture2D<uint2> uSeeds;
 BIND_IMAGE(1) [[vk::image_format("rg16f")]] RWTexture2D<float2> uField;
@@ -64,8 +63,9 @@ void csMain(uint3 id : SV_DispatchThreadID)
         nearest.y < 1e29 ? sqrt(nearest.y) : params.uFar);
 
     // The edge of what blocks is half a texel past the texels on it either way
-    bool blocks = uMaterial.Load(int3(texel, 0)).g > 0.5;
-    bool glows = (blocks && params.uSpritesBlock != 0) || uMaterial.Load(int3(texel, 0)).b > GLOWS_FROM;
+    float4 mat = uMaterial.Load(int3(texel, 0));
+    bool blocks = mat.g > 0.5;
+    bool glows = (blocks && params.uSpritesBlock != 0) || mat.b > GLOWS_FROM;
     float2 distance = float2(
         blocks ? -(toEdge.x + 0.5) : toEdge.x - 0.5,
         glows ? -(toEdge.y + 0.5) : toEdge.y - 0.5) * params.uPixelWorld;

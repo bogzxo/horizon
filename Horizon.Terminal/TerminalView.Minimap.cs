@@ -175,8 +175,8 @@ public partial class TerminalView
     /// </summary>
     private void KeepMinimapRow(TerminalRow row, int index, TerminalPalette palette)
     {
-        bool settled = index < screen.Scrollback.Count;
-        long stamp = ((long)minimapGeneration << 32) | (settled ? 0xFFFFFFFFL : (uint)screen.Version);
+        _ = index;
+        long stamp = ((long)minimapGeneration << 32) | (uint)row.Generation;
         if (row.MinimapStamp == stamp)
             return;
 

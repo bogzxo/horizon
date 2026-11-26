@@ -72,5 +72,12 @@ public partial class TreeView
     }
 
     // The rows that went out of sight (a folder closed over them) aren't selected any more
-    private void ForgetHidden() => alsoSelected.RemoveAll(item => IndexOf(item) < 0);
+    private void ForgetHidden()
+    {
+        for (int i = alsoSelected.Count - 1; i >= 0; i--)
+        {
+            if (IndexOf(alsoSelected[i]) < 0)
+                alsoSelected.RemoveAt(i);
+        }
+    }
 }

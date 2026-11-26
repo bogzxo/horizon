@@ -65,8 +65,13 @@ public sealed partial class LanguageServer : IDisposable
     /// <summary>The folder it was started in, the workspace as far as the server knows.</summary>
     public string RootDirectory { get; }
 
+    private string? failure;
+    private int disposed;
+
     /// <summary>Why it isn't running any more, null while it is or before it was started.</summary>
-    public string? Failure { get; private set; }
+    public string? Failure => Volatile.Read(ref failure);
+
+    private bool IsDisposed => Volatile.Read(ref disposed) != 0;
 
     /// <summary>The last 8192 characters of the server's error output, including startup failures.</summary>
     public string ErrorOutput => errorOutput?.Text ?? string.Empty;
@@ -294,6 +299,7 @@ public sealed partial class LanguageServer : IDisposable
         {
             JsonNode? started = await rpc.Request("initialize", parameters).ConfigureAwait(false);
             serverCapabilities = started?["capabilities"] as JsonObject;
+            UpdateSyncCapabilities();
             rpc.Notify("initialized", new JsonObject());
 
             // What it's told to be, for a server that has settings, said once it's up and asked for again as it wants
@@ -365,7 +371,8 @@ public sealed partial class LanguageServer : IDisposable
     // Helper method to say why it stopped, the first reason being the one kept, and answer what is still asked with nothing
     private void Fail(string why)
     {
-        Failure ??= why;
+        Interlocked.CompareExchange(ref failure, why, null);
+        DisposePullTimers();
         Woken?.Invoke();
         foreach (var answer in asking.Keys)
         {
@@ -438,6 +445,8 @@ public sealed partial class LanguageServer : IDisposable
     {
         lock (holding)
         {
+            if (IsDisposed || Failure is not null)
+                return false;
             if (held.Count == 0 && !Busy)
                 return false;
 
@@ -622,14 +631,15 @@ public sealed partial class LanguageServer : IDisposable
             return null;
 
         var offered = new List<(string Sort, UICompletion Item)>(items.Count);
-        foreach (JsonNode? node in items)
+        bool resolves = serverCapabilities?["completionProvider"] is JsonObject provider && provider["resolveProvider"]?.GetValue<bool>() == true;
+        for (int i = 0; i < items.Count; i++)
         {
-            if (node is JsonObject item && CompletionOf(item, line, character, start) is { } completion)
+            if (items[i] is JsonObject item && CompletionOf(item, line, character, start) is { } completion)
             {
-                if (serverCapabilities?["completionProvider"] is JsonObject provider && provider["resolveProvider"]?.GetValue<bool>() == true)
+                if (resolves)
                 {
-                    // Re-filtering the same list reuses one request per item, and only highlighted items
-                    // are resolved. Preserve the server's original data and edit fields in the request.
+                    // Detach the server's item so Lazy resolve can send it once without DeepClone.
+                    items[i] = null;
                     var resolved = new Lazy<Task<UICompletionDocumentation?>>(() => ResolveCompletionDocumentation(item));
                     completion = completion with { ResolveDocumentation = () => resolved.Value };
                 }
@@ -643,7 +653,7 @@ public sealed partial class LanguageServer : IDisposable
 
     private async Task<UICompletionDocumentation?> ResolveCompletionDocumentation(JsonObject item)
     {
-        if (await Ask("completionItem/resolve", item.DeepClone()).ConfigureAwait(false) is not JsonObject resolved)
+        if (await Ask("completionItem/resolve", item).ConfigureAwait(false) is not JsonObject resolved)
             return null;
         string label = item["label"]?.GetValue<string>() ?? "";
         string detail = resolved["detail"]?.GetValue<string>() is { Length: > 0 } said
@@ -953,7 +963,8 @@ public sealed partial class LanguageServer : IDisposable
             }
         }
 
-        KeepDiagnostics(path, published["diagnostics"] as JsonArray);
+        published.Remove("diagnostics", out JsonNode? keptDiagnostics);
+        KeepDiagnostics(path, keptDiagnostics as JsonArray);
         arrived.Enqueue((path, version, found));
         Woken?.Invoke();
     }
@@ -961,10 +972,14 @@ public sealed partial class LanguageServer : IDisposable
     /// <summary>Asks the server to shut down and ends its process, waiting a moment for it to go by itself.</summary>
     public void Dispose()
     {
+        Interlocked.Exchange(ref disposed, 1);
+        DisposePullTimers();
+
         lock (holding)
         {
             releaseTimer?.Dispose();
             releaseTimer = null;
+            held.Clear();
         }
 
         try

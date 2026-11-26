@@ -38,22 +38,47 @@ internal static class UITooltip
         return widest;
     }
 
-    // The width a text was last balanced to, so it's worked out once a tooltip and not every frame it's up
-    private static string? balancedText;
-    private static float balancedScale, balancedMost, balancedWidth;
+    // Small fixed LRU cache of plain tooltip layouts so alternating hovered items reuse wrapped lines and size without
+    // per-frame heap allocations or repeated binary-search wrapping.
+    private const int CACHE_SIZE = 8;
+
+    private struct TooltipCacheEntry
+    {
+        public UIFont? Font;
+        public string? Text;
+        public float Scale;
+        public float MaxFrameWidth;
+        public Vector2 MeasuredSize;
+        public (int Start, int Length)[]? Lines;
+        public int LineCount;
+        public long Stamp;
+    }
+
+    private static readonly TooltipCacheEntry[] layoutCache = new TooltipCacheEntry[CACHE_SIZE];
+    private static long cacheClock;
+
+    /// <summary>Cache hit and miss counters for plain tooltip layout lookups, for unit tests.</summary>
+    internal static int CacheHits { get; private set; }
+    internal static int CacheMisses { get; private set; }
+
+    /// <summary>Clears the plain tooltip layout cache and counters, for unit tests.</summary>
+    internal static void ResetCache()
+    {
+        Array.Clear(layoutCache);
+        cacheClock = 0;
+        CacheHits = 0;
+        CacheMisses = 0;
+    }
 
     /// <summary>
     /// Helper method for the narrowest width a text wraps to in as few lines as it does at its widest, so the lines come
     /// out about even. A tooltip of two lines had one word left on its own on the second.
     /// </summary>
-    private static float Balanced(UISkin skin, string text, float scale, float most, List<(int Start, int Length)> lines)
+    private static float Balanced(UISkin skin, string text, float scale, float longest, float most, List<(int Start, int Length)> lines)
     {
-        if (text == balancedText && scale == balancedScale && most == balancedMost)
-            return balancedWidth;
-
         skin.Font.Wrap(text, scale, most, lines, markup: false);
         int count = lines.Count;
-        float low = LongestWord(skin, text, scale), high = most;
+        float low = longest, high = most;
         if (count > 1)
         {
             // Halved a few times, a pixel or two out is nothing anybody sees
@@ -68,8 +93,82 @@ internal static class UITooltip
             }
         }
 
-        (balancedText, balancedScale, balancedMost, balancedWidth) = (text, scale, most, count > 1 ? high : most);
-        return balancedWidth;
+        return count > 1 ? high : most;
+    }
+
+    /// <summary>
+    /// Resolves wrapped lines and outer tooltip box size for plain text using the fixed 8-entry LRU cache.
+    /// </summary>
+    internal static Vector2 ResolvePlainLayout(UISkin skin, string text, float scale, float frameAvailWidth, List<(int Start, int Length)> lines)
+    {
+        UIFont font = skin.Font;
+        for (int i = 0; i < CACHE_SIZE; i++)
+        {
+            ref TooltipCacheEntry entry = ref layoutCache[i];
+            if (entry.Text is not null
+                && ReferenceEquals(entry.Font, font)
+                && entry.Scale == scale
+                && entry.MaxFrameWidth == frameAvailWidth
+                && string.Equals(entry.Text, text, StringComparison.Ordinal))
+            {
+                entry.Stamp = ++cacheClock;
+                CacheHits++;
+
+                int count = entry.LineCount;
+                lines.Clear();
+                if (count > 0 && entry.Lines is { } cachedLines)
+                {
+                    System.Runtime.InteropServices.CollectionsMarshal.SetCount(lines, count);
+                    cachedLines.AsSpan(0, count).CopyTo(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines));
+                }
+
+                return entry.MeasuredSize;
+            }
+        }
+
+        CacheMisses++;
+
+        // As wide as its longest word when that's wider than a tooltip usually is, so a word is never broken in two (a
+        // path came out as "RE/ADME.md"), never wider than the frame leaves
+        float longest = LongestWord(skin, text, scale);
+        float most = MathF.Max(MAX_WIDTH, MathF.Min(longest, frameAvailWidth));
+        float width = Balanced(skin, text, scale, longest, most, lines);
+        font.Wrap(text, scale, width, lines, markup: false);
+        Vector2 size = font.Measure(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), scale, markup: false) + new Vector2(PADDING * 2.0f);
+
+        int slot = 0;
+        long oldest = long.MaxValue;
+        for (int i = 0; i < CACHE_SIZE; i++)
+        {
+            if (layoutCache[i].Text is null)
+            {
+                slot = i;
+                break;
+            }
+            if (layoutCache[i].Stamp < oldest)
+            {
+                oldest = layoutCache[i].Stamp;
+                slot = i;
+            }
+        }
+
+        ref TooltipCacheEntry target = ref layoutCache[slot];
+        target.Font = font;
+        target.Text = text;
+        target.Scale = scale;
+        target.MaxFrameWidth = frameAvailWidth;
+        target.MeasuredSize = size;
+        target.LineCount = lines.Count;
+        target.Stamp = ++cacheClock;
+
+        if (lines.Count > 0)
+        {
+            if (target.Lines is null || target.Lines.Length < lines.Count)
+                target.Lines = new (int Start, int Length)[Math.Max(4, lines.Count)];
+            System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines).CopyTo(target.Lines);
+        }
+
+        return size;
     }
 
     /// <summary>
@@ -96,11 +195,8 @@ internal static class UITooltip
         }
         else
         {
-            // As wide as its longest word when that's wider than a tooltip usually is, so a word is never broken in two (a
-            // path came out as "RE/ADME.md"), never wider than the frame leaves
-            float most = MathF.Max(MAX_WIDTH, MathF.Min(LongestWord(skin, text, scale), module.Frame.Width - MARGIN * 2.0f - PADDING * 2.0f));
-            skin.Font.Wrap(text, scale, Balanced(skin, text, scale, most, lines), lines, markup: false);
-            size = skin.Font.Measure(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), scale, markup: false) + new Vector2(PADDING * 2.0f);
+            float frameAvailWidth = module.Frame.Width - MARGIN * 2.0f - PADDING * 2.0f;
+            size = ResolvePlainLayout(skin, text, scale, frameAvailWidth, lines);
         }
 
         // Its top left corner hangs off the pointer, under it, or over it when there's no room under it (a status bar's

@@ -64,20 +64,30 @@ public sealed class UIScriptedLayout(IUIScriptOwner owner, string kind, UILayout
     /// <summary>Whether it was taken away, a window closed or its file.</summary>
     public bool Closed { get; set; }
 
+    private readonly IRuntimeValue fileValue = file is { } path ? new StringValue(path) : Values.Null;
+    private IRuntimeValue? getFunction;
+    private IRuntimeValue? closeAction;
+
     public IRuntimeValue Get(string member) => member switch
     {
-        "get" => Natives.Function("get", args => Made.TryGet(args.Text(0), out UIComponent? part)
-            ? part.Object
-            : throw args.Wrong($"the layout has nothing called '{args.Text(0)}'.")),
-        "file" => File is { } path ? new StringValue(path) : Values.Null,
+        "get" => getFunction ??= CreateGetFunction(),
+        "file" => fileValue,
         "on_tick" => Tick ?? Values.Null,
         "on_key" => Key ?? Values.Null,
         "on_resize" => Resize ?? Values.Null,
         "visible" => Values.Bool(Root.Visible),
         "size" => new Vector2Value(Room),
-        "close" => Natives.Action("close", _ => close?.Invoke()),
+        "close" => closeAction ??= CreateCloseAction(),
         _ => Values.Null
     };
+
+    private IRuntimeValue CreateGetFunction() =>
+        Natives.Function("get", args => Made.TryGet(args.Text(0), out UIComponent? part)
+            ? part.Object
+            : throw args.Wrong($"the layout has nothing called '{args.Text(0)}'."));
+
+    private IRuntimeValue CreateCloseAction() =>
+        Natives.Action("close", _ => close?.Invoke());
 
     public void Set(string member, IRuntimeValue value)
     {
@@ -162,7 +172,9 @@ public sealed class UIScriptedLayout(IUIScriptOwner owner, string kind, UILayout
         if (Resize is { } resize && Room is var now && now != Sized && now.X > 0 && now.Y > 0)
         {
             Sized = now;
-            if (!Owner.Invoke(resize, [this, new Vector2Value(now)], out _))
+            tickArguments[0] = this;
+            tickArguments[1] = new Vector2Value(now);
+            if (!Owner.Invoke(resize, tickArguments, out _))
             {
                 failed(Owner);
                 return;
@@ -178,8 +190,9 @@ public sealed class UIScriptedLayout(IUIScriptOwner owner, string kind, UILayout
         }
     }
 
-    // What on_tick is handed, the view and the seconds since the last tick, the one array every tick
+    // What on_tick / on_resize and on_key are handed, reused per layout so ticks and key presses allocate no arrays
     private readonly IRuntimeValue[] tickArguments = new IRuntimeValue[2];
+    private readonly IRuntimeValue[] keyArguments = new IRuntimeValue[2];
 
     /// <summary>
     /// A key handed to it, true if it took it (its on_key handed back true), which is how a program lets Ctrl+Z undo a
@@ -190,7 +203,12 @@ public sealed class UIScriptedLayout(IUIScriptOwner owner, string kind, UILayout
         if (Key is not { } handler || Owner.Failed is not null)
             return false;
 
-        if (!Owner.Invoke(handler, [this, new StringValue(name)], out IRuntimeValue taken))
+        if (!KeyValues.TryGetValue(name, out StringValue keyValue))
+            KeyValues[name] = keyValue = new StringValue(name);
+
+        keyArguments[0] = this;
+        keyArguments[1] = keyValue;
+        if (!Owner.Invoke(handler, keyArguments, out IRuntimeValue taken))
         {
             failed(Owner);
             return false;
@@ -217,6 +235,7 @@ public sealed class UIScriptedLayout(IUIScriptOwner owner, string kind, UILayout
     }
 
     private static readonly Dictionary<(string, bool, bool), string> HeldNames = [];
+    private static readonly Dictionary<string, StringValue> KeyValues = new(StringComparer.Ordinal);
 
     /// <summary>
     /// The keys a scripted view is handed by name, the arrows and the like, letters, digits and a few signs, the ones

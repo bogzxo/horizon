@@ -21,6 +21,11 @@ public class CodeView : UIComponent
     private string[] lines = [];
     private List<SyntaxSpan>[] spans = [];
 
+    // Cached widest line measurement so Measure doesn't walk every line on every tick
+    private string? measuredText;
+    private UIFont? measuredFont;
+    private float measuredScale, measuredWidest;
+
     /// <summary>The code. It is cut up for colouring once, when it is set.</summary>
     public string Text
     {
@@ -60,6 +65,17 @@ public class CodeView : UIComponent
 
     private float ScaleFor(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
+    private static int DigitCount(int value)
+    {
+        int digits = 1;
+        while (value >= 10)
+        {
+            value /= 10;
+            digits++;
+        }
+        return digits;
+    }
+
     /// <summary>
     /// Helper method to work out how wide the numbers down the side are with the gap after them, nothing if there are none.
     /// </summary>
@@ -69,19 +85,22 @@ public class CodeView : UIComponent
             return 0.0f;
 
         // Room for the biggest number there is, every digit of a font is as wide as its zero
-        int digits = Math.Max(2, lines.Length.ToString().Length);
+        int digits = Math.Max(2, DigitCount(lines.Length));
         return skin.Font.Measure("0", scale, markup: false).X * (digits + GUTTER_GAP);
     }
 
     protected override Vector2 Measure(UISkin skin)
     {
         float scale = ScaleFor(skin);
-        float widest = 0.0f;
+        if (!ReferenceEquals(measuredText, text) || measuredFont != skin.Font || measuredScale != scale)
+        {
+            float widest = 0.0f;
+            foreach (string line in lines)
+                widest = MathF.Max(widest, skin.Font.Measure(line, scale, markup: false).X);
+            (measuredText, measuredFont, measuredScale, measuredWidest) = (text, skin.Font, scale, widest);
+        }
 
-        foreach (string line in lines)
-            widest = MathF.Max(widest, skin.Font.Measure(line, scale, markup: false).X);
-
-        return new Vector2(GutterWidth(skin, scale) + widest, skin.Font.LineHeight * scale * Math.Max(1, lines.Length)) + Padding.Total;
+        return new Vector2(GutterWidth(skin, scale) + measuredWidest, skin.Font.LineHeight * scale * Math.Max(1, lines.Length)) + Padding.Total;
     }
 
     protected override void Paint(UIDrawList list)

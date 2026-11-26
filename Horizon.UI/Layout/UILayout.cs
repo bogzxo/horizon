@@ -141,8 +141,7 @@ public sealed class UILayout
         if (container.Template.Length == 0)
             throw new Exception($"A container of the layout{Named(Path)} is meant to be filled in but doesn't say what from: it needs a template.");
 
-        foreach (var child in container.Children.ToArray())
-            container.Remove(child);
+        container.RemoveRange(container.ChildSpan);
 
         var items = new List<UILayout>(count);
         for (int i = 0; i < count; i++)
@@ -199,10 +198,9 @@ public sealed class UILayout
             throw new Exception($"A container of the layout{Named(Path)} is meant to be filled in but doesn't say what from: it needs a template.");
 
         // Start again if this is the first time, or something else has been at the container since (Populate, say)
-        if (!bound.TryGetValue(container, out var items) || items.Any(item => item.roots.Any(root => root.Parent != container)))
+        if (!bound.TryGetValue(container, out var items) || HasDetachedRoot(items, container))
         {
-            foreach (var child in container.Children.ToArray())
-                container.Remove(child);
+            container.RemoveRange(container.ChildSpan);
 
             bound[container] = items = [];
         }
@@ -362,6 +360,21 @@ public sealed class UILayout
         {
             throw new Exception($"The layout '{path}' can't be read: {e.Message}", e);
         }
+    }
+
+    private static bool HasDetachedRoot(List<UILayout> items, Panel container)
+    {
+        for (int i = 0; i < items.Count; i++)
+        {
+            List<UIComponent> itemRoots = items[i].roots;
+            for (int r = 0; r < itemRoots.Count; r++)
+            {
+                if (itemRoots[r].Parent != container)
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     private static string Named(string path) => path.Length > 0 ? $" '{path}'" : string.Empty;

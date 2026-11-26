@@ -51,7 +51,7 @@ public sealed record DensityRenderScale
         double budget = double.IsFinite(PixelBudget) && PixelBudget > 0.0 ? PixelBudget : Default.PixelBudget;
         float minimum = float.IsFinite(Minimum) ? Math.Clamp(Minimum, RenderScaleSettings.SMALLEST, 1.0f) : Default.Minimum;
         float step = float.IsFinite(Step) && Step > 0.0f ? MathF.Min(Step, 0.5f) : Default.Step;
-        float nativeFrom = float.IsFinite(NativeFrom) ? Math.Clamp(NativeFrom, minimum, 1.0f) : Default.NativeFrom;
+        float nativeFrom = Math.Clamp(float.IsFinite(NativeFrom) ? NativeFrom : Default.NativeFrom, minimum, 1.0f);
         if (!float.IsFinite(density) || density <= 0.0f)
             density = 1.0f;
 

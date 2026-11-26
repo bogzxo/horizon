@@ -36,11 +36,12 @@ public static partial class SemanticDeclarations
         if (found is null)
             return spans;
 
+        var foundBySpan = found.GetAlternateLookup<ReadOnlySpan<char>>();
         var refined = new List<SemanticSpan>(spans.Count);
         foreach (SemanticSpan span in spans)
         {
             if (span.Kind is SyntaxKind.Class or SyntaxKind.Method && span.Line < lines.Count && span.Start + span.Length <= lines[span.Line].Length
-                && found.TryGetValue(lines[span.Line].Substring(span.Start, span.Length), out SyntaxKind kind)
+                && foundBySpan.TryGetValue(lines[span.Line].AsSpan(span.Start, span.Length), out SyntaxKind kind)
                 && (kind == SyntaxKind.ExtensionMethod) == (span.Kind == SyntaxKind.Method))
                 refined.Add(span with { Kind = kind });
             else

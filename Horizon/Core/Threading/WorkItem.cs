@@ -23,9 +23,16 @@ public sealed class WorkItem
     private float? progress;
     private string message = string.Empty;
     private volatile WorkState state = WorkState.Waiting;
+    private object? result;
 
     internal readonly CancellationTokenSource Cancelling = new();
     internal readonly TaskCompletionSource Finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal object? Result
+    {
+        get => Volatile.Read(ref result);
+        set => Volatile.Write(ref result, value);
+    }
 
     // Bumped whenever anything about it changes, so whoever draws it can tell without comparing it all
     private int version;
@@ -187,4 +194,6 @@ public sealed class WorkContext
 
     /// <summary>Throws if it was asked to stop, for a loop to look at between steps.</summary>
     public void ThrowIfCancelled() => Token.ThrowIfCancellationRequested();
+
+    internal void SetResult(object? value) => item.Result = value;
 }

@@ -1,9 +1,16 @@
+using System.Runtime.CompilerServices;
+
 namespace Horizon.UI.Components;
 
 /// <summary>Directional TUI marks use the bundled symbol atlas, independent of the selected monospace font.</summary>
 internal static class TerminalSymbols
 {
-    internal static string? IconOf(int codePoint) => codePoint < 0x2000 ? null : codePoint switch
+    /// <summary>Lowest and highest Unicode code points mapped by <see cref="IconOf"/> so plain ASCII skips the lookup.</summary>
+    internal const int MIN_CODE_POINT = 0x2023;
+    internal const int MAX_CODE_POINT = 0x27A4;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static string? IconOf(int codePoint) => (uint)(codePoint - MIN_CODE_POINT) > (MAX_CODE_POINT - MIN_CODE_POINT) ? null : codePoint switch
     {
         0x2190 => "arrow-left",
         0x2191 => "arrow-up",

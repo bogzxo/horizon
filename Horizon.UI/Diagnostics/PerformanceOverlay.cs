@@ -126,6 +126,9 @@ public sealed class PerformanceOverlay : GameObject
 
         face = new PerformanceFace(module, sample);
         face.Pill.Visible = face.Card.Visible = false;
+        keyed = true;
+        capped = ToggleKey;
+        face.SetKey(KeyName(capped));
     }
 
     public override void UpdateState(float dt)
@@ -156,7 +159,7 @@ public sealed class PerformanceOverlay : GameObject
             {
                 keyed = true;
                 capped = ToggleKey;
-                face.SetKey(capped?.ToString() ?? string.Empty);
+                face.SetKey(KeyName(capped));
             }
 
             // Another level of detail is read at once, there is nothing sadder than a card of noughts, and it
@@ -169,17 +172,18 @@ public sealed class PerformanceOverlay : GameObject
                 up.SlideIn(Corner.ToVector() * 28.0f, 0.22f);
             }
 
+            bool full = detail == PerformanceDetail.Full;
             if ((refresh -= dt) <= 0.0f)
             {
                 refresh = REFRESH;
                 graphRefresh = GRAPH_REFRESH;
-                sample.Read(Engine);
+                sample.Read(Engine, full);
                 face.Show(detail);
             }
             else if ((graphRefresh -= dt) <= 0.0f)
             {
                 graphRefresh = GRAPH_REFRESH;
-                sample.ReadTimelines();
+                sample.ReadTimelines(full);
                 face.ShowGraphs(detail);
             }
         }
@@ -220,6 +224,25 @@ public sealed class PerformanceOverlay : GameObject
 
         wasDown = pointer.Down;
     }
+
+    // Zero-allocation names for common toggle keys so Tick 1 and key changes avoid enum.ToString() allocations.
+    private static string KeyName(Key? key) => key switch
+    {
+        null => string.Empty,
+        Key.F1 => "F1",
+        Key.F2 => "F2",
+        Key.F3 => "F3",
+        Key.F4 => "F4",
+        Key.F5 => "F5",
+        Key.F6 => "F6",
+        Key.F7 => "F7",
+        Key.F8 => "F8",
+        Key.F9 => "F9",
+        Key.F10 => "F10",
+        Key.F11 => "F11",
+        Key.F12 => "F12",
+        _ => key.Value.ToString()
+    };
 
     public override void Render(float dt)
     {

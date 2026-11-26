@@ -46,6 +46,7 @@ public sealed class RenderTarget : GpuResource, IDisposable
     internal readonly ulong FormatKey;
 
     internal readonly Vector4?[] PendingColor;
+    internal readonly bool[] PendingDiscard;
     internal bool PendingDepth;
     internal float PendingDepthValue = 1.0f;
     internal int PendingStencilValue;
@@ -66,6 +67,7 @@ public sealed class RenderTarget : GpuResource, IDisposable
         ColorTextures = new Texture?[colors];
         ColorFormats = new Format[colors];
         PendingColor = new Vector4?[colors];
+        PendingDiscard = new bool[colors];
 
         ulong key = 0x5245414C5441524UL;
         for (int i = 0; i < colors; i++)
@@ -132,6 +134,8 @@ public sealed class RenderTarget : GpuResource, IDisposable
     {
         for (int i = 0; i < ColorTextures.Length; i++)
         {
+            if (only is null || ReferenceEquals(only, ColorTextures[i]))
+                PendingDiscard[i] = false;
             if (PendingColor[i] is not { } color || ColorTextures[i] is not { } texture) continue;
             if (only is not null && !ReferenceEquals(only, texture)) continue;
 

@@ -66,6 +66,9 @@ public static class CodeComments
         ["vb"] = new("'", string.Empty, string.Empty)
     };
 
+    private static readonly Dictionary<string, CodeComment>.AlternateLookup<ReadOnlySpan<char>> knownBySpan =
+        known.GetAlternateLookup<ReadOnlySpan<char>>();
+
     private static readonly Lock gate = new();
 
     // What VS Code's language configurations said, by scope, kept for the run
@@ -104,11 +107,18 @@ public static class CodeComments
     // The words of a scope from the last back (text.html.markdown is markdown before html, source.json.comments is json)
     private static CodeComment? FromScope(string scope)
     {
-        string[] words = scope.Split('.');
-        for (int i = words.Length - 1; i >= 1; i--)
+        ReadOnlySpan<char> span = scope.AsSpan();
+        int end = span.Length;
+        while (end > 0)
         {
-            if (known.TryGetValue(words[i], out CodeComment comment))
+            int dot = span[..end].LastIndexOf('.');
+            if (dot < 0)
+                break;
+
+            if (knownBySpan.TryGetValue(span[(dot + 1)..end], out CodeComment comment))
                 return comment;
+
+            end = dot;
         }
 
         return null;

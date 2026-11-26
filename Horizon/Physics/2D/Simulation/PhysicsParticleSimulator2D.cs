@@ -31,6 +31,9 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
 
     private readonly PhysicsWorld world;
     private readonly PhysicsParticleFeed feed;
+    private readonly Lock gravityLock = new();
+    private Vector2 snapshotGravity;
+    private bool hasGravitySnapshot;
 
     private readonly PhysicsGpuShape[] bodies = new PhysicsGpuShape[PhysicsParticleFeed.MaxBodies];
     private readonly Vector4[] impulses = new Vector4[MaxImpulses];
@@ -85,6 +88,18 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
         feed = world.CreateParticleFeed();
     }
 
+    protected internal override void Update(float dt)
+    {
+        base.Update(dt);
+
+        Vector2 gravity = Renderer.Gravity;
+        lock (gravityLock)
+        {
+            snapshotGravity = gravity;
+            hasGravitySnapshot = true;
+        }
+    }
+
     protected override Shader? CreateShader() =>
         GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet("particle2d_simulate_physics", ShaderDescription.FromPath("shaders/particle", "simulate_physics"), out var shader)
             ? shader.Asset
@@ -115,7 +130,11 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
             technique.BindBuffer(MAP_CELL_BINDING, mapCellBuffer!);
 
             // A particle that gravity has taken past the edge of the map has nothing left to land on
-            Vector2 gravity = Renderer.Gravity;
+            Vector2 gravity;
+            lock (gravityLock)
+            {
+                gravity = hasGravitySnapshot ? snapshotGravity : Renderer.Gravity;
+            }
             if (gravity.X < 0) lostMin.X = uploadedMap.Min.X - LOST_MARGIN;
             if (gravity.X > 0) lostMax.X = uploadedMap.Max.X + LOST_MARGIN;
             if (gravity.Y < 0) lostMin.Y = uploadedMap.Min.Y - LOST_MARGIN;

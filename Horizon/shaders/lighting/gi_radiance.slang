@@ -41,12 +41,15 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float2 position = worldOf(picture);
     Field field = LIGHTING_FIELD(params);
 
-    // Only what a ray can land on, which is on or within a couple of pixels of something solid or glowing (the rays
-    // read this with a bilinear tap, so the neighbours of a wall count too). Most of a picture is air, and air
-    // costs one distance lookup and a write of nothing
-    if (!hasAnything(field) || wallDistance(position, field, true) > 2.0 * params.uPixelWorld)
+    // Always store the combined wall+sprite signed distance in alpha (clamped to Rgba16F finite range) so
+    // gi_cascade can step and fetch radiance in a single texture tap on-screen. Only texels on or within a couple of
+    // pixels of something solid or glowing pay for the direct-light evaluation.
+    float dist = hasAnything(field) ? wallDistance(position, field, true) : 65000.0;
+    float storedDist = clamp(dist, -65000.0, 65000.0);
+
+    if (!hasAnything(field) || dist > 2.0 * params.uPixelWorld)
     {
-        uRadiance[texel] = float4(0.0, 0.0, 0.0, 0.0);
+        uRadiance[texel] = float4(0.0, 0.0, 0.0, storedDist);
         return;
     }
 
@@ -77,5 +80,5 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float2 before = picture + params.uShift;
     float3 bounced = all(before >= 0.0) && all(before <= 1.0) ? uTexPrevious.SampleLevel(before, 0.0).rgb : float3(0.0, 0.0, 0.0);
 
-    uRadiance[texel] = float4(albedo * emissive + albedo * (direct + bounced) * params.uBounce, 1.0);
+    uRadiance[texel] = float4(albedo * emissive + albedo * (direct + bounced) * params.uBounce, storedDist);
 }

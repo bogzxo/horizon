@@ -229,7 +229,17 @@ public partial class MenuBar : UIComponent
     private readonly Menu more = new("\u2026");
     private int folded = int.MaxValue;
     private bool anyFolded;
-    private (float Room, UISkin? Skin, float Scale, ulong Shown, int Titles) foldedFor;
+    private (float Room, UIFont? Font, float Scale, int Count, int ShownHash, int TitlesHash) foldedFor;
+
+    // Cached shown titles, measured widths, and horizontal offsets for each bar slot (menus + more) so Paint,
+    // TitleBounds, ShownWidth, and Update never re-measure O(N^2) or allocate TitleShown strings per tick
+    private string[] cachedRawTitles = [];
+    private string[] cachedShownTitles = [];
+    private float[] cachedTitleWidths = [];
+    private float[] cachedTitleOffsets = [];
+    private UIFont? cachedMeasureFont;
+    private float cachedMeasureScale;
+    private float cachedTotalWidth;
 
     /// <summary>The menus that didn't fit on the bar and are in its last menu instead, how many.</summary>
     public int FoldedCount => anyFolded ? menus.Count - folded : 0;
@@ -248,44 +258,73 @@ public partial class MenuBar : UIComponent
     // Whether a word is on the bar right now, a menu that's shown and fits, or the last one while some didn't
     private bool OnBar(int index) => index < menus.Count ? index < folded && menus[index].Shown : anyFolded;
 
-    // Which menus fit in the room, and the last menu filled with the rest when that changed. Nothing measured while
-    // there's no room said
+    // Which menus fit in the room, and the last menu filled with the rest when that changed. Also refreshes cached
+    // shown titles, measured widths, and horizontal offsets in one O(N) pass.
     private void Fold(UISkin skin)
     {
-        // Measured again only when the room, the skin, the size of the words or which menus are shown changed. It was
-        // every word measured for every word painted
-        ulong shownMask = 0;
-        int titles = 0;
+        float scale = TextScaleOf(skin);
+        var shownHash = new HashCode();
+        var titlesHash = new HashCode();
         for (int i = 0; i < menus.Count; i++)
         {
-            if (i < 64 && menus[i].Shown)
-                shownMask |= 1UL << i;
-            titles = titles * 31 + menus[i].Title.GetHashCode();
+            shownHash.Add(menus[i].Shown);
+            titlesHash.Add(menus[i].Title);
         }
 
-        var key = (Room, skin, TextScaleOf(skin), shownMask, titles);
+        var key = (Room, skin.Font, scale, menus.Count, shownHash.ToHashCode(), titlesHash.ToHashCode());
         if (key == foldedFor)
             return;
         foldedFor = key;
+
+        int totalSlots = Count;
+        bool fontOrScaleChanged = cachedMeasureFont != skin.Font || cachedMeasureScale != scale;
+        if (cachedRawTitles.Length < totalSlots)
+        {
+            int previousLength = cachedRawTitles.Length;
+            Array.Resize(ref cachedRawTitles, totalSlots);
+            Array.Resize(ref cachedShownTitles, totalSlots);
+            Array.Resize(ref cachedTitleWidths, totalSlots);
+            Array.Resize(ref cachedTitleOffsets, totalSlots);
+            for (int i = previousLength; i < totalSlots; i++)
+            {
+                cachedRawTitles[i] = string.Empty;
+                cachedShownTitles[i] = string.Empty;
+            }
+        }
+
+        for (int i = 0; i < totalSlots; i++)
+        {
+            string raw = At(i).Title;
+            if (fontOrScaleChanged || !ReferenceEquals(cachedRawTitles[i], raw))
+            {
+                string shown = TitleShown(raw);
+                cachedRawTitles[i] = raw;
+                cachedShownTitles[i] = shown;
+                cachedTitleWidths[i] = skin.Font.Measure(shown, scale, markup: false).X + TITLE_PADDING * 2.0f;
+            }
+        }
+
+        cachedMeasureFont = skin.Font;
+        cachedMeasureScale = scale;
 
         int at = menus.Count;
         if (Room > 0.0f)
         {
             float whole = 0.0f;
-            foreach (Menu menu in menus)
+            for (int i = 0; i < menus.Count; i++)
             {
-                if (menu.Shown)
-                    whole += TitleWidth(skin, menu);
+                if (menus[i].Shown)
+                    whole += cachedTitleWidths[i];
             }
 
             if (whole > Room + 0.5f)
             {
-                float room = Room - TitleWidth(skin, more), used = 0.0f;
+                float room = Room - cachedTitleWidths[menus.Count], used = 0.0f;
                 for (at = 0; at < menus.Count; at++)
                 {
                     if (!menus[at].Shown)
                         continue;
-                    float width = TitleWidth(skin, menus[at]);
+                    float width = cachedTitleWidths[at];
                     if (used + width > room)
                         break;
                     used += width;
@@ -297,35 +336,38 @@ public partial class MenuBar : UIComponent
         for (int i = at; i < menus.Count && !any; i++)
             any = menus[i].Shown;
 
-        if (at == folded && any == anyFolded)
-            return;
-
-        // A menu open on the bar that went into the last one is shut, its word isn't there to hang from
-        if ((open >= at && open < menus.Count) || (open == menus.Count && !any))
+        if (at != folded || any != anyFolded)
         {
-            open = -1;
-            panel = null;
+            // A menu open on the bar that went into the last one is shut, its word isn't there to hang from
+            if ((open >= at && open < menus.Count) || (open == menus.Count && !any))
+            {
+                open = -1;
+                panel = null;
+            }
+
+            folded = at;
+            anyFolded = any;
+            more.Clear();
+            for (int i = at; i < menus.Count; i++)
+                more.Add(new MenuItem { Label = cachedShownTitles[i], Submenu = menus[i], IsVisible = menus[i].IsVisible });
         }
 
-        folded = at;
-        anyFolded = any;
-        more.Clear();
-        for (int i = at; i < menus.Count; i++)
-            more.Add(new MenuItem { Label = TitleShown(menus[i].Title), Submenu = menus[i], IsVisible = menus[i].IsVisible });
+        float offset = 0.0f;
+        for (int i = 0; i < totalSlots; i++)
+        {
+            cachedTitleOffsets[i] = offset;
+            if (OnBar(i))
+                offset += cachedTitleWidths[i];
+        }
+
+        cachedTotalWidth = offset;
     }
 
     /// <summary>How wide the words on the bar are now, the menus that fit the <see cref="Room"/> and the last one.</summary>
     public float ShownWidth(UISkin skin)
     {
         Fold(skin);
-        float width = 0.0f;
-        for (int i = 0; i < Count; i++)
-        {
-            if (OnBar(i))
-                width += TitleWidth(skin, At(i));
-        }
-
-        return width;
+        return cachedTotalWidth;
     }
 
     /// <summary>The scale of the text, or zero to use the skin's.</summary>
@@ -348,13 +390,25 @@ public partial class MenuBar : UIComponent
     }
 
     /// <summary>The menu with a title, null if the bar has none by it.</summary>
-    public Menu? Find(string title) => menus.Find(menu => menu.Title == title);
+    public Menu? Find(string title)
+    {
+        int index = IndexOfMenu(title);
+        return index >= 0 ? menus[index] : null;
+    }
+
+    private int IndexOfMenu(string title)
+    {
+        for (int i = 0; i < menus.Count; i++)
+        {
+            if (menus[i].Title == title)
+                return i;
+        }
+        return -1;
+    }
 
     private UISkin? Skin => Module?.Compositor.Skin;
 
     private float TextScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
-
-    private float TitleWidth(UISkin skin, Menu menu) => skin.Font.Measure(TitleShown(menu.Title), TextScaleOf(skin), markup: false).X + TITLE_PADDING * 2.0f;
 
     protected override Vector2 Measure(UISkin skin)
     {
@@ -371,18 +425,17 @@ public partial class MenuBar : UIComponent
         if (!OnBar(index))
             return default;
 
-        float left = Bounds.Min.X;
-        for (int i = 0; i < index; i++)
-        {
-            if (OnBar(i))
-                left += TitleWidth(skin, At(i));
-        }
+        return TitleBoundsCached(index);
+    }
 
-        return new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + TitleWidth(skin, At(index)), Bounds.Max.Y));
+    private UIRect TitleBoundsCached(int index)
+    {
+        float left = Bounds.Min.X + cachedTitleOffsets[index];
+        return new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + cachedTitleWidths[index], Bounds.Max.Y));
     }
 
     /// <summary>Where the word of a menu is on the bar, by what it says.</summary>
-    public UIRect TitleBounds(string title) => TitleBounds(menus.FindIndex(menu => menu.Title == title));
+    public UIRect TitleBounds(string title) => TitleBounds(IndexOfMenu(title));
 
     // The list of the open menu, made when it opens and again if the skin changes under it
     private MenuPanel? Panel
@@ -489,15 +542,16 @@ public partial class MenuBar : UIComponent
                 continue;
 
             Menu menu = At(i);
-            UIRect title = TitleBounds(i);
+            UIRect title = TitleBoundsCached(i);
             bool shown = OpenMenu == menu || (armed && hot == i);
 
             // The word of the open menu stays lit, the others light up under the pointer
             // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
             list.Box(title, shown ? skin.TextColor with { W = ListBox.PICKED } : IsHovered && title.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
-            list.Text(TitleShown(menu.Title), title, Origin.Center, scale, skin.TextColor, markup: false);
-            PaintMnemonic(list, skin, menu, title, scale);
+            string shownTitle = cachedShownTitles[i];
+            list.Text(shownTitle, title, Origin.Center, scale, skin.TextColor, markup: false);
+            PaintMnemonic(list, skin, menu, shownTitle, title, scale);
         }
 
         list.EndParts();

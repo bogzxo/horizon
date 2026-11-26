@@ -28,6 +28,8 @@ public abstract class IndexedContent : IContentFiles
     /// package comes through here, and nearly every path it is asked about is one already, which is handed back as it is.
     /// A path that isn't in the package is an answer here rather than an exception, asking whether one exists is no error.
     /// </summary>
+    private const int STACK_PATH_LIMIT = 512;
+
     private bool TryResolve(string path, out string resolved, out string? problem)
     {
         problem = null;
@@ -38,8 +40,8 @@ public abstract class IndexedContent : IContentFiles
         }
 
         resolved = string.Empty;
-        path = path.Replace('\\', '/');
-        if (Path.IsPathRooted(path))
+        ReadOnlySpan<char> source = path;
+        if (Path.IsPathRooted(source))
         {
             if (diskRoot is null)
             {
@@ -47,31 +49,75 @@ public abstract class IndexedContent : IContentFiles
                 return false;
             }
 
-            path = Path.GetRelativePath(diskRoot, path).Replace('\\', '/');
+            string relative = Path.GetRelativePath(diskRoot, path);
 
             // Another drive comes back as it was, which isn't anywhere in the package
-            if (Path.IsPathRooted(path))
+            if (Path.IsPathRooted(relative))
             {
                 problem = "The path is outside of the package.";
                 return false;
             }
+
+            source = relative;
         }
-        var parts = new List<string>();
-        foreach (string part in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+
+        if (source.Length <= STACK_PATH_LIMIT)
         {
-            if (part == ".") continue;
-            if (part == "..")
+            Span<char> buffer = stackalloc char[source.Length];
+            if (!TryNormalizeRelative(source, buffer, out int written, out problem))
+                return false;
+
+            resolved = written == 0 ? string.Empty : new string(buffer[..written]);
+            return true;
+        }
+
+        char[] rented = new char[source.Length];
+        if (!TryNormalizeRelative(source, rented, out int count, out problem))
+            return false;
+
+        resolved = count == 0 ? string.Empty : new string(rented, 0, count);
+        return true;
+    }
+
+    // Normalizes a relative path into destination using forward slashes, collapsing empty segments, '.' and '..' without allocating
+    private static bool TryNormalizeRelative(ReadOnlySpan<char> input, Span<char> destination, out int written, out string? problem)
+    {
+        written = 0;
+        problem = null;
+
+        int i = 0;
+        while (i < input.Length)
+        {
+            while (i < input.Length && (input[i] == '/' || input[i] == '\\')) i++;
+            if (i >= input.Length) break;
+
+            int start = i;
+            while (i < input.Length && input[i] != '/' && input[i] != '\\') i++;
+            ReadOnlySpan<char> part = input.Slice(start, i - start);
+
+            if (part.SequenceEqual("."))
+                continue;
+
+            if (part.SequenceEqual(".."))
             {
-                if (parts.Count == 0)
+                if (written == 0)
                 {
                     problem = "A package path cannot leave its root.";
                     return false;
                 }
-                parts.RemoveAt(parts.Count - 1);
+
+                int slash = destination[..written].LastIndexOf('/');
+                written = slash >= 0 ? slash : 0;
+                continue;
             }
-            else parts.Add(part);
+
+            if (written > 0)
+                destination[written++] = '/';
+
+            part.CopyTo(destination[written..]);
+            written += part.Length;
         }
-        resolved = string.Join('/', parts);
+
         return true;
     }
 
@@ -104,8 +150,31 @@ public abstract class IndexedContent : IContentFiles
         return true;
     }
 
-    public bool Exists(string path) => TryResolve(path, out string at) && files.Contains(at);
-    public bool DirectoryExists(string path) => TryResolve(path, out string at) && directories.Contains(at);
+    public bool Exists(string path)
+    {
+        if (IsCanonical(path)) return files.Contains(path);
+        if (!Path.IsPathRooted(path) && path.Length <= STACK_PATH_LIMIT)
+        {
+            Span<char> buffer = stackalloc char[path.Length];
+            return TryNormalizeRelative(path, buffer, out int written, out _)
+                && files.GetAlternateLookup<ReadOnlySpan<char>>().Contains(buffer[..written]);
+        }
+
+        return TryResolve(path, out string at) && files.Contains(at);
+    }
+
+    public bool DirectoryExists(string path)
+    {
+        if (IsCanonical(path)) return directories.Contains(path);
+        if (!Path.IsPathRooted(path) && path.Length <= STACK_PATH_LIMIT)
+        {
+            Span<char> buffer = stackalloc char[path.Length];
+            return TryNormalizeRelative(path, buffer, out int written, out _)
+                && directories.GetAlternateLookup<ReadOnlySpan<char>>().Contains(buffer[..written]);
+        }
+
+        return TryResolve(path, out string at) && directories.Contains(at);
+    }
 
     public Stream OpenRead(string path)
     {

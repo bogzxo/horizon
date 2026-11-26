@@ -39,7 +39,7 @@ internal sealed unsafe class BindlessTextures : IDisposable
         // on Metal is a thousand or so
         var limits = context.Limits;
         uint allowed = Math.Min(Math.Min(context.MaxUpdateAfterBindSampledImages, context.MaxUpdateAfterBindSamplers), Math.Min(limits.MaxDescriptorSetSampledImages, limits.MaxDescriptorSetSamplers));
-        Capacity = Math.Clamp(allowed, 256, MAX_CAPACITY);
+        Capacity = ComputeCapacity(allowed);
 
         var flags = DescriptorBindingFlags.PartiallyBoundBit | DescriptorBindingFlags.UpdateAfterBindBit;
         if (context.UpdateUnusedWhilePending) flags |= DescriptorBindingFlags.UpdateUnusedWhilePendingBit;
@@ -128,6 +128,12 @@ internal sealed unsafe class BindlessTextures : IDisposable
     {
         if (slot < Capacity) free.Push(slot);
     }
+
+    /// <summary>
+    /// Helper method to clamp the bindless table size to the card's actual descriptor limit without exceeding it
+    /// when a device reports fewer than 256 descriptors, while keeping at least one slot.
+    /// </summary>
+    internal static uint ComputeCapacity(uint allowed) => Math.Clamp(allowed, 1u, MAX_CAPACITY);
 
     public void Dispose()
     {

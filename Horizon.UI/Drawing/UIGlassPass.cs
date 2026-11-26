@@ -36,7 +36,7 @@ internal sealed class UIGlassPass : IDisposable
     private readonly GaussianBlur gaussian = new();
     private PostTechnique? copy, glass;
     private PostTarget? sharp, smeared;
-    private long smearedLastUsedFrame;
+    private long sharpLastUsedFrame, smearedLastUsedFrame;
 
     // The blur and sharp backdrop selected by the latest Capture, and how far it smeared, in pixels
     private PostTarget? current;
@@ -82,6 +82,12 @@ internal sealed class UIGlassPass : IDisposable
                 keptSharpValid[s] = false;
                 keptOf[s] = 0;
             }
+        }
+
+        if (sharp is not null && frameCounter - sharpLastUsedFrame > EVICT_AFTER_FRAMES)
+        {
+            sharp.Dispose();
+            sharp = null;
         }
 
         if (smeared is not null && frameCounter - smearedLastUsedFrame > EVICT_AFTER_FRAMES)
@@ -144,8 +150,18 @@ internal sealed class UIGlassPass : IDisposable
     public bool Capture(in UIGlassPane pane, ulong madeOf, (int X, int Y, int W, int H) region, Camera camera, Renderer2D? output, RenderTarget? layer, bool fresh)
     {
         Vector2 size = Renderer2D.OutputSize(output);
-        if (size.X < 1.0f || size.Y < 1.0f || pane.Opacity <= 0.0f)
+        if (size.X < 1.0f || size.Y < 1.0f || pane.Opacity <= 0.0f || region.W <= 0 || region.H <= 0)
             return false;
+
+        // Fold skin and glyph atlas generations into the backdrop key so atlas reallocations invalidate cached blurs.
+        if (madeOf != 0)
+        {
+            madeOf = UIGlass.MixBackdropGenerations(
+                madeOf,
+                Horizon.UI.Skinning.UISkin.AtlasGeneration,
+                Horizon.Rendering.Text.GlyphAtlas.Shared.Generation,
+                Horizon.Rendering.Text.GlyphAtlas.Subpixel.Generation);
+        }
 
         // Kept for as long as the UI is, whichever scene is drawing right now
         using var nobody = Horizon.Content.AssetScope.EnterGlobal();
@@ -395,12 +411,16 @@ internal sealed class UIGlassPass : IDisposable
     /// </summary>
     private void CaptureSharp(Renderer2D? output, RenderTarget? layer, Vector2 size, (int X, int Y, int W, int H) region)
     {
+        if (region.W <= 0 || region.H <= 0)
+            return;
+
         uint width = (uint)size.X, height = (uint)size.Y;
         if (sharp is null || !sharp.Fits(width, height))
         {
             sharp?.Dispose();
             sharp = new PostTarget(width, height);
         }
+        sharpLastUsedFrame = frameCounter;
 
         GraphicsDevice device = GraphicsDevice.Current;
         RenderState.Blend = false;

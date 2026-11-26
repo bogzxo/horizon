@@ -116,6 +116,8 @@ public class Renderer2D : GameObject
     /// <summary>Helper method to draw the picture into whatever is bound with the technique, one triangle over all of it.</summary>
     private void Resolve()
     {
+        if (technique is not { IsValid: true }) return;
+
         technique.Bind();
         PostProcessing.DrawScreen();
         technique.Unbind();
@@ -169,58 +171,69 @@ public class Renderer2D : GameObject
         // The rest of the frame (and of the engine) is drawn with whatever it had set, which is put back when we are done
         var before = RenderState.Save();
 
-        using var scope = Engine.Graphics.BeginGpuScope(ScopeLabel);
-
-        FrameBuffer.Bind();
-
-        // Everything is flat and drawn back to front, nothing is to be thrown out for being behind something
-        // (unless this is a 3D renderer, where that is the whole idea). What is see-through is blended over what is
-        // there already, in every attachment alike, the alpha that comes out of that is how much of the pixel is covered
-        RenderState.DepthTest = DepthForChildren;
-        RenderState.DepthWrite = true;
-        RenderState.Cull = CullMode.None;
-        RenderState.Blend = true;
-        RenderState.BlendMode = BlendMode.Alpha;
-
-        Clear();
-
-        // Draw all children. A renderer among them is shown in us, and goes back to whoever we are shown in after
-        outer = current;
-        current = this;
-        base.Render(dt);
-        current = outer;
-
-        // What we put on screen replaces what is there, it isn't laid over it
-        RenderState.Blend = false;
-        frameTime = dt;
-
-        // Whatever a renderer works out of the render target before the picture goes anywhere (the lighting)
-        long lighting = Core.Diagnostics.SlowRender.Start();
-        BeforeResolve(dt);
-        Core.Diagnostics.SlowRender.Stop(lighting, "the lighting (BeforeResolve)");
-
-        if (PostProcessing.Prepare())
+        try
         {
-            // Through the effects, the last of which draws to where we are shown
-            using var effects = Engine.Graphics.BeginGpuScope("post effects");
-            PostProcessing.Run(
-                ViewportSize,
-                dt,
-                HoldsPicture ? FrameBuffer.Color : null,
-                resolve,
-                bindOutput,
-                OutputSize(outer),
-                LogicalSize);
-        }
-        else
-        {
-            // Straight to where we are shown
-            using var shown = Engine.Graphics.BeginGpuScope("resolve");
-            BindOutput(outer);
-            Resolve();
-        }
+            using var scope = Engine.Graphics.BeginGpuScope(ScopeLabel);
 
-        RenderState.Restore(before);
+            FrameBuffer.Bind();
+
+            // Everything is flat and drawn back to front, nothing is to be thrown out for being behind something
+            // (unless this is a 3D renderer, where that is the whole idea). What is see-through is blended over what is
+            // there already, in every attachment alike, the alpha that comes out of that is how much of the pixel is covered
+            RenderState.DepthTest = DepthForChildren;
+            RenderState.DepthWrite = true;
+            RenderState.Cull = CullMode.None;
+            RenderState.Blend = true;
+            RenderState.BlendMode = BlendMode.Alpha;
+
+            Clear();
+
+            // Draw all children. A renderer among them is shown in us, and goes back to whoever we are shown in after
+            outer = current;
+            current = this;
+            try
+            {
+                base.Render(dt);
+            }
+            finally
+            {
+                current = outer;
+            }
+
+            // What we put on screen replaces what is there, it isn't laid over it
+            RenderState.Blend = false;
+            frameTime = dt;
+
+            // Whatever a renderer works out of the render target before the picture goes anywhere (the lighting)
+            long lighting = Core.Diagnostics.SlowRender.Start();
+            BeforeResolve(dt);
+            Core.Diagnostics.SlowRender.Stop(lighting, "the lighting (BeforeResolve)");
+
+            if (PostProcessing.Prepare())
+            {
+                // Through the effects, the last of which draws to where we are shown
+                using var effects = Engine.Graphics.BeginGpuScope("post effects");
+                PostProcessing.Run(
+                    ViewportSize,
+                    dt,
+                    HoldsPicture ? FrameBuffer.Color : null,
+                    resolve,
+                    bindOutput,
+                    OutputSize(outer),
+                    LogicalSize);
+            }
+            else
+            {
+                // Straight to where we are shown
+                using var shown = Engine.Graphics.BeginGpuScope("resolve");
+                BindOutput(outer);
+                Resolve();
+            }
+        }
+        finally
+        {
+            RenderState.Restore(before);
+        }
     }
 
     /// <summary>
@@ -273,6 +286,8 @@ public class Renderer2D : GameObject
         PostProcessing.Dispose();
 
         frameBuffer?.Dispose();
+        frameBuffer = null!;
+        technique = null!;
 
         base.DisposeOther();
     }

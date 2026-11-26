@@ -8,10 +8,81 @@ namespace Horizon.UI;
 
 public partial class UIModule
 {
-    private readonly Dictionary<string, IRuntimeValue> factories = [];
+    private readonly record struct KindEntry(Type Type, Func<UIComponent> Create, Action<UIModule, UIComponent>? Made);
 
-    // What every kind of component is called in a script, and how to make one. Shared by every module.
-    private static readonly Dictionary<string, (Type Type, Func<UIComponent> Create)> kinds = [];
+    private Dictionary<string, IRuntimeValue>? factories;
+    private HIDLRuntime? runtime;
+    private bool runtimeSetup;
+
+    // What every kind of component is called in a script, and how to make one. Shared by every module so C#-constructed
+    // UIModules allocate zero HIDLRuntimes and zero per-widget closures.
+    private static readonly Dictionary<string, KindEntry> kinds = CreateBuiltInKinds();
+
+    private static Dictionary<string, KindEntry> CreateBuiltInKinds()
+    {
+        var builtIn = new Dictionary<string, KindEntry>(48);
+
+        void Add<T>(string name, Action<UIModule, UIComponent>? made = null) where T : UIComponent, new() =>
+            builtIn[name] = new KindEntry(typeof(T), static () => new T(), made);
+
+        Add<Button>("button");
+        Add<ToggleButton>("toggle");
+        Add<ProgressBar>("progress_bar");
+        Add<Slider>("slider");
+        Add<TextBox>("textbox");
+        Add<Label>("label");
+        Add<Image>("image");
+        Add<Panel>("panel");
+        Add<Group>("group");
+
+        // `compositor.include({ parent: body, file: "shell/side_bar.hor" })` builds that file in here, its parts the
+        // including layout's as well, so a UI is written as parts in files of their own, see Include
+        Add<Include>("include", OnIncludeMade);
+        Add<TabPanel>("tabs");
+        Add<StackPanel>("stack");
+        Add<Collapsible>("collapsible");
+        Add<GridPanel>("grid");
+        Add<ScrollPanel>("scroll");
+        Add<NumberBox>("number_box");
+        Add<Selector>("selector");
+        Add<Dropdown>("dropdown");
+        Add<ListBox>("list");
+        Add<Divider>("divider");
+        Add<Spacer>("spacer");
+        Add<ColorPicker>("color_picker");
+        Add<MenuBar>("menu_bar");
+        Add<CodeView>("code");
+        Add<CodeEditor>("code_editor");
+        Add<Readout>("readout");
+        Add<Meter>("meter");
+        Add<Graph>("graph");
+        Add<SegmentBar>("segments");
+        Add<Symbol>("symbol");
+        Add<Badge>("badge");
+        Add<StatusBar>("status_bar");
+        Add<TabStrip>("tab_strip");
+        Add<Breadcrumbs>("breadcrumbs");
+        Add<TitleBar>("title_bar");
+        Add<WindowPanel>("window");
+        Add<TreeView>("tree_view");
+        Add<Notifications>("notifications");
+        Add<Sparks>("sparks");
+        Add<Table>("table");
+        Add<DrawingPanel>("drawing");
+        Add<FormPanel>("form");
+
+        return builtIn;
+    }
+
+    private static void OnIncludeMade(UIModule module, UIComponent component)
+    {
+        var include = (Include)component;
+        if (include.File.Length == 0)
+            throw new Exception("compositor.include needs the file to build in it, from the folder of this layout.");
+
+        UILayout inner = include.Reload(module, module.building);
+        module.building?.Absorb(inner);
+    }
 
     /// <summary>The names scripts make components by, as in compositor.name({ ... }).</summary>
     public static IReadOnlyCollection<string> Kinds
@@ -48,7 +119,28 @@ public partial class UIModule
             return kinds.TryGetValue(kind, out var known) ? known.Create() : null;
     }
 
-    public HIDLRuntime Runtime { get; init; } = new HIDLRuntime().ReadingContent();
+    /// <summary>Whether this module has instantiated its HIDL scripting runtime yet, for unit tests.</summary>
+    internal bool HasRuntime => runtime is not null;
+
+    /// <summary>
+    /// Lazily created HIDL scripting runtime for layout loading and scripting. C#-constructed modules that never
+    /// touch <see cref="Runtime"/> or <see cref="LoadLayout"/> allocate neither a runtime nor widget factories.
+    /// </summary>
+    public HIDLRuntime Runtime
+    {
+        get
+        {
+            runtime ??= new HIDLRuntime().ReadingContent();
+            if (!runtimeSetup)
+                SetupRuntime();
+            return runtime;
+        }
+        init
+        {
+            runtime = value;
+            runtimeSetup = false;
+        }
+    }
 
     // While a layout is being built, what the components it doesn't put anywhere go into (the screen if
     // nothing), and a note of each of them.
@@ -88,11 +180,18 @@ public partial class UIModule
 
     protected void SetupRuntime()
     {
-        Runtime.UserScope.DeclareSystem("compositor", new ObjectValue(factories));
+        if (runtimeSetup)
+            return;
+        runtimeSetup = true;
+
+        runtime ??= new HIDLRuntime().ReadingContent();
+        factories ??= [];
+
+        runtime.UserScope.DeclareSystem("compositor", new ObjectValue(factories));
 
         // `compositor.design({ size: vec(1600, 900), fit: "contain" })` says what screen the layout was made for. Only
         // means something for a layout that is the whole module (not one built inside a component, a template)
-        factories["design"] = new NativeFunctionValue((args, _) =>
+        factories.TryAdd("design", new NativeFunctionValue((args, _) =>
         {
             if (args.Length != 1 || args[0] is not ObjectValue { Properties: { } properties })
                 throw new Exception("compositor.design expects one object: { size: vec(1600, 900), fit: \"contain\" or \"stretch\" }.");
@@ -114,12 +213,12 @@ public partial class UIModule
             }
 
             return new NullValue();
-        });
+        }));
 
         // `compositor.hidden_layers(["code", "table"])` has the layers named start out hidden (see SetLayerVisible), the
         // screens of a menu that aren't the first, or the parts of an editor that take turns with each other, which an
         // editor shows and hides by the layer to work on each. Only for a layout that is the whole module, like design
-        factories["hidden_layers"] = new NativeFunctionValue((args, _) =>
+        factories.TryAdd("hidden_layers", new NativeFunctionValue((args, _) =>
         {
             if (args.Length != 1)
                 throw new Exception("compositor.hidden_layers expects one list of the layers that start out hidden: [\"code\", \"table\"].");
@@ -131,71 +230,49 @@ public partial class UIModule
             }
 
             return new NullValue();
-        });
+        }));
 
-        Register<Button>("button");
-        Register<ToggleButton>("toggle");
-        Register<ProgressBar>("progress_bar");
-        Register<Slider>("slider");
-        Register<TextBox>("textbox");
-        Register<Label>("label");
-        Register<Image>("image");
-        Register<Panel>("panel");
-        Register<Group>("group");
-
-        // `compositor.include({ parent: body, file: "shell/side_bar.hor" })` builds that file in here, its parts the
-        // including layout's as well, so a UI is written as parts in files of their own, see Include
-        Register<Include>("include", include =>
-        {
-            if (include.File.Length == 0)
-                throw new Exception("compositor.include needs the file to build in it, from the folder of this layout.");
-
-            UILayout inner = include.Reload(this, building);
-            building?.Absorb(inner);
-        });
-        Register<TabPanel>("tabs");
-        Register<StackPanel>("stack");
-        Register<Collapsible>("collapsible");
-        Register<GridPanel>("grid");
-        Register<ScrollPanel>("scroll");
-        Register<NumberBox>("number_box");
-        Register<Selector>("selector");
-        Register<Dropdown>("dropdown");
-        Register<ListBox>("list");
-        Register<Divider>("divider");
-        Register<Spacer>("spacer");
-        Register<ColorPicker>("color_picker");
-        Register<MenuBar>("menu_bar");
-        Register<CodeView>("code");
-        Register<CodeEditor>("code_editor");
-        Register<Readout>("readout");
-        Register<Meter>("meter");
-        Register<Graph>("graph");
-        Register<SegmentBar>("segments");
-        Register<Symbol>("symbol");
-        Register<Badge>("badge");
-        Register<StatusBar>("status_bar");
-        Register<TabStrip>("tab_strip");
-        Register<Breadcrumbs>("breadcrumbs");
-        Register<TitleBar>("title_bar");
-        Register<WindowPanel>("window");
-        Register<TreeView>("tree_view");
-        Register<Notifications>("notifications");
-        Register<Sparks>("sparks");
-        Register<Table>("table");
-        Register<DrawingPanel>("drawing");
-        Register<FormPanel>("form");
-
-        // The kinds other assemblies added (the terminal's), after the engine's own
-        Action<UIModule>[] others;
+        KeyValuePair<string, KindEntry>[] snapshot;
         lock (kinds)
-            others = [.. added];
-        foreach (Action<UIModule> add in others)
-            add(this);
+            snapshot = [.. kinds];
+
+        foreach (var (name, entry) in snapshot)
+        {
+            if (!factories.ContainsKey(name))
+                factories[name] = CreateFactory(this, name, entry);
+        }
     }
 
-    // What another assembly added to every module made after, see AddKind
-    private static readonly List<Action<UIModule>> added = [];
+    private static NativeFunctionValue CreateFactory(UIModule module, string name, KindEntry entry) =>
+        new((args, _) => module.InvokeFactory(name, entry.Create, entry.Made, args));
+
+    private IRuntimeValue InvokeFactory(string name, Func<UIComponent> create, Action<UIModule, UIComponent>? made, IRuntimeValue[] args)
+    {
+        if (args.Length > 1 || (args.Length == 1 && args[0] is not ObjectValue))
+            throw new Exception($"compositor.{name} expects nothing, or one object with the properties to set.");
+
+        UIComponent component = create();
+        try
+        {
+            if (args.Length == 1)
+                component.ApplyScript((ObjectValue)args[0]);
+        }
+        catch
+        {
+            // Don't leave a half configured component behind in whatever parent it was given.
+            component.Parent?.Remove(component);
+            throw;
+        }
+
+        if (component.Parent is null)
+        {
+            (captureParent ?? Root).Add(component);
+            captured?.Add(component);
+        }
+
+        made?.Invoke(this, component);
+        return component.Object;
+    }
 
     /// <summary>
     /// A kind of component of another assembly's (the terminal's) made known to layouts and scripts in every module made
@@ -204,10 +281,7 @@ public partial class UIModule
     public static void AddKind<T>(string name) where T : UIComponent, new()
     {
         lock (kinds)
-        {
-            kinds[name] = (typeof(T), static () => new T());
-            added.Add(module => module.Register<T>(name));
-        }
+            kinds[name] = new KindEntry(typeof(T), static () => new T(), null);
     }
 
     /// <summary>
@@ -220,36 +294,14 @@ public partial class UIModule
     /// <param name="made">What to do with one once the script's properties are on it and it is in its parent.</param>
     public void Register<T>(string name, Action<T>? made) where T : UIComponent, new()
     {
+        Action<UIModule, UIComponent>? callback = made is null ? null : (_, component) => made((T)component);
+        var entry = new KindEntry(typeof(T), static () => new T(), callback);
+
         lock (kinds)
-            kinds[name] = (typeof(T), static () => new T());
+            kinds[name] = entry;
 
-        factories[name] = new NativeFunctionValue((args, _) =>
-        {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ObjectValue))
-                throw new Exception($"compositor.{name} expects nothing, or one object with the properties to set.");
-
-            var component = new T();
-            try
-            {
-                if (args.Length == 1)
-                    component.ApplyScript((ObjectValue)args[0]);
-            }
-            catch
-            {
-                // Don't leave a half configured component behind in whatever parent it was given.
-                component.Parent?.Remove(component);
-                throw;
-            }
-
-            if (component.Parent is null)
-            {
-                (captureParent ?? Root).Add(component);
-                captured?.Add(component);
-            }
-
-            made?.Invoke(component);
-            return component.Object;
-        });
+        factories ??= [];
+        factories[name] = CreateFactory(this, name, entry);
     }
 
     /// <summary>

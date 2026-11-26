@@ -25,6 +25,9 @@ internal sealed class UIInBetween
     /// <summary>How many times the older-tick frame index map was rebuilt, for tests.</summary>
     internal int FrameMapRebuilds { get; private set; }
 
+    /// <summary>How many times a stationary frame bypassed per-quad frame resolution, for tests.</summary>
+    internal int StationaryBypasses { get; private set; }
+
     // How far every frame is moved to go where the pointer is, not a number for the ones that don't follow it
     private Vector2[] followed = [];
 
@@ -45,10 +48,24 @@ internal sealed class UIInBetween
     /// </summary>
     /// <param name="pointer">Where the pointer is now, for the frames that go where it goes (see <see cref="UIFrame.Follows"/>), null for them to stay where they were painted.</param>
     /// <param name="paintedItems">Optional painted <see cref="SpriteItem"/> buffer for <paramref name="b"/> so stationary frames can be copied directly.</param>
-    public void Frames(UIFrameList a, UIFrameList b, float alpha, Vector2? pointer = null, ReadOnlySpan<SpriteItem> paintedItems = default)
+    public void Frames(
+        UIFrameList a,
+        UIFrameList b,
+        float alpha,
+        Vector2? pointer = null,
+        ReadOnlySpan<SpriteItem> paintedItems = default,
+        ReadOnlySpan<UIDrawList.Run> paintedRuns = default,
+        ReadOnlySpan<UIGlassPane> paintedGlass = default,
+        bool hasPaintedGlass = false)
     {
+        bool following = pointer is not null && b.Follows;
+
+        // When alpha has reached the newer tick and no frame follows the pointer, every frame is stationary.
+        if (alpha >= 1.0f && !following && TryBypassStationary(b, paintedItems, paintedRuns, paintedGlass, hasPaintedGlass))
+            return;
+
         ReadOnlySpan<UIFrame> older = a.Span, newer = b.Span;
-        if (!ReferenceEquals(a, cachedOlder) || a.Stamp != cachedOlderStamp)
+        if (alpha < 1.0f && (!ReferenceEquals(a, cachedOlder) || a.Stamp != cachedOlderStamp))
         {
             framesBefore.Clear();
             for (int i = 0; i < older.Length; i++)
@@ -59,14 +76,118 @@ internal sealed class UIInBetween
         }
 
         between.Clear();
-        foreach (ref readonly UIFrame frame in newer)
-            between.Add(framesBefore.TryGetValue(frame.Key, out int was) ? Between(older[was], frame, alpha) : frame);
+        bool allStationary = true;
+        for (int i = 0; i < newer.Length; i++)
+        {
+            ref readonly UIFrame frame = ref newer[i];
+            UIFrame blended = alpha < 1.0f && framesBefore.TryGetValue(frame.Key, out int was)
+                ? Between(older[was], frame, alpha)
+                : frame;
+            if (allStationary && !FrameMatches(blended, frame))
+                allStationary = false;
+            between.Add(blended);
+        }
 
-        if (pointer is { } now && b.Follows)
-            Follow(b, now);
+        if (following && Follow(b, pointer!.Value))
+            allStationary = false;
+
+        if (allStationary && TryBypassStationary(b, paintedItems, paintedRuns, paintedGlass, hasPaintedGlass))
+            return;
 
         resolvedCount = b.Resolve(CollectionsMarshal.AsSpan(between), ref resolved, resolvedRuns, resolvedGlass, paintedItems);
     }
+
+    // Helper method to copy painted quads, runs, and glass directly when every frame in b is unchanged from how it was painted.
+    private bool TryBypassStationary(
+        UIFrameList b,
+        ReadOnlySpan<SpriteItem> paintedItems,
+        ReadOnlySpan<UIDrawList.Run> paintedRuns,
+        ReadOnlySpan<UIGlassPane> paintedGlass,
+        bool hasPaintedGlass)
+    {
+        if (b.QuadCount == 0 && paintedItems.IsEmpty)
+        {
+            if (hasPaintedGlass)
+            {
+                resolvedGlass.Clear();
+                if (!paintedGlass.IsEmpty)
+                    resolvedGlass.AddRange(paintedGlass);
+            }
+            else if (!b.ResolveStationaryGlass(resolvedGlass))
+            {
+                return false;
+            }
+
+            resolvedCount = 0;
+            resolvedRuns.Clear();
+            StationaryBypasses++;
+            return true;
+        }
+
+        // Caller did not supply paintedItems (e.g. full-resolve parity tests); run full Resolve.
+        if (paintedItems.IsEmpty && paintedRuns.IsEmpty && !hasPaintedGlass)
+            return false;
+
+        // Populate runs from paintedRuns if supplied, or directly from b.Runs using recorded ItemEnd boundaries.
+        resolvedRuns.Clear();
+        if (!paintedRuns.IsEmpty)
+        {
+            resolvedRuns.AddRange(paintedRuns);
+        }
+        else if (!paintedItems.IsEmpty)
+        {
+            ReadOnlySpan<UIFrameRun> runSpan = CollectionsMarshal.AsSpan(b.Runs);
+            if (runSpan.IsEmpty)
+                return false;
+
+            int runFirst = 0;
+            for (int i = 0; i < runSpan.Length; i++)
+            {
+                ref readonly UIFrameRun fr = ref runSpan[i];
+                int itemEnd = fr.ItemEnd >= 0
+                    ? fr.ItemEnd
+                    : (runSpan.Length == 1 && fr.End == b.QuadCount ? paintedItems.Length : -1);
+                if (itemEnd < runFirst || itemEnd > paintedItems.Length)
+                    return false;
+                if (itemEnd > runFirst)
+                    resolvedRuns.Add(new UIDrawList.Run(runFirst, itemEnd - runFirst, fr.Image0, fr.Image1));
+                runFirst = itemEnd;
+            }
+            if (runFirst != paintedItems.Length)
+                return false;
+        }
+
+        // Populate glass panes from paintedGlass if supplied, or resolve only the glass panes without touching quads.
+        if (hasPaintedGlass)
+        {
+            resolvedGlass.Clear();
+            if (!paintedGlass.IsEmpty)
+                resolvedGlass.AddRange(paintedGlass);
+        }
+        else if (!b.ResolveStationaryGlass(resolvedGlass))
+        {
+            return false;
+        }
+
+        if (!paintedItems.IsEmpty)
+        {
+            if (resolved.Length < paintedItems.Length)
+                resolved = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)paintedItems.Length)];
+            paintedItems.CopyTo(resolved);
+        }
+        resolvedCount = paintedItems.Length;
+        StationaryBypasses++;
+        return true;
+    }
+
+    private static bool FrameMatches(in UIFrame a, in UIFrame b) =>
+        a.Shift == b.Shift &&
+        a.Laid == b.Laid &&
+        a.VisualScale == b.VisualScale &&
+        a.VisualOffset == b.VisualOffset &&
+        a.Scale == b.Scale &&
+        a.Origin == b.Origin &&
+        a.Opacity == b.Opacity;
 
     public ReadOnlySpan<SpriteItem> FramedQuads => resolved.AsSpan(0, resolvedCount);
     public ReadOnlySpan<UIDrawList.Run> FramedRuns => CollectionsMarshal.AsSpan(resolvedRuns);
@@ -81,6 +202,9 @@ internal sealed class UIInBetween
     /// </summary>
     internal static UIFrame Between(in UIFrame older, in UIFrame b, float t)
     {
+        if (t >= 1.0f || FrameMatches(older, b))
+            return b;
+
         // A frame whose shift jumped this tick (a zoom keeping its place, see UIFrame.Jumped) has none of it to move by,
         // what's in it was laid out for the new shift, and only the rest of it is blended
         UIFrame a = b.Jumped ? older with { Shift = b.Shift, Laid = b.Laid } : older;
@@ -120,12 +244,13 @@ internal sealed class UIInBetween
     /// They're the newer tick's moved by whole pixels from there, never halfway between two ticks, the pointer is ahead
     /// of both.
     /// </summary>
-    private void Follow(UIFrameList b, Vector2 pointer)
+    private bool Follow(UIFrameList b, Vector2 pointer)
     {
         if (followed.Length < b.Frames.Count)
             followed = new Vector2[(int)BitOperations.RoundUpToPowerOf2((uint)b.Frames.Count)];
 
         // Parents come before what's inside of them, so a frame's parent is worked out by the time it is
+        bool moved = false;
         ReadOnlySpan<UIFrame> frames = b.Span;
         for (int i = 0; i < frames.Length; i++)
         {
@@ -133,7 +258,13 @@ internal sealed class UIInBetween
             bool inside = frame.Parent >= 0 && frame.Parent < i && float.IsFinite(followed[frame.Parent].X);
             followed[i] = frame.Follows ? Vector2.Round(pointer - frame.FollowFrom) : inside ? followed[frame.Parent] : new Vector2(float.NaN);
             if (float.IsFinite(followed[i].X))
+            {
                 between[i] = frame with { Origin = frame.Origin + followed[i] };
+                if (followed[i] != Vector2.Zero)
+                    moved = true;
+            }
         }
+
+        return moved;
     }
 }

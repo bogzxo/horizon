@@ -66,11 +66,72 @@ public sealed class TerminalProfile
 /// </summary>
 public static class TerminalProfiles
 {
-    /// <summary>The profiles of this machine, in the order a menu lists them, the usual shell first.</summary>
-    public static List<TerminalProfile> Discover() =>
-        OperatingSystem.IsWindows()
-            ? DiscoverWindows(File.Exists, Horizon.Core.Processes.ProcessEnvironment.Variable, () => wslAnswer.Value)
-            : DiscoverUnix(File.Exists, Environment.GetEnvironmentVariable);
+    private static readonly Lock discoverLock = new();
+    private static List<TerminalProfile>? cachedProfiles;
+    private static string? cachedEnvironmentKey;
+    private static bool cachedIncludesWsl;
+    private static int version;
+
+    /// <summary>Monotonic version that increments whenever asynchronously discovered profiles (such as WSL distributions) are merged.</summary>
+    public static int Version => Volatile.Read(ref version);
+
+    /// <summary>
+    /// The profiles of this machine, in the order a menu lists them, the usual shell first. Cached until the relevant
+    /// environment changes or <see cref="InvalidateCache"/> is called. On Windows, native shells are returned immediately
+    /// without blocking on <c>wsl.exe</c>; WSL distributions are merged asynchronously and increment <see cref="Version"/>.
+    /// </summary>
+    public static List<TerminalProfile> Discover()
+    {
+        string envKey = OperatingSystem.IsWindows()
+            ? Horizon.Core.Processes.ProcessEnvironment.Variable("PATH") ?? string.Empty
+            : Environment.GetEnvironmentVariable("SHELL") ?? string.Empty;
+
+        Task<string?>? task = OperatingSystem.IsWindows() ? EnsureWslPrefetch() : null;
+        bool wslReady = task is { IsCompletedSuccessfully: true };
+        string? wslResult = wslReady ? task!.Result : null;
+
+        lock (discoverLock)
+        {
+            if (cachedProfiles is null || !string.Equals(cachedEnvironmentKey, envKey, StringComparison.Ordinal))
+            {
+                cachedProfiles = OperatingSystem.IsWindows()
+                    ? DiscoverWindows(File.Exists, Horizon.Core.Processes.ProcessEnvironment.Variable, () => wslResult)
+                    : DiscoverUnix(File.Exists, Environment.GetEnvironmentVariable);
+                cachedEnvironmentKey = envKey;
+                cachedIncludesWsl = !OperatingSystem.IsWindows() || wslReady;
+            }
+            else if (OperatingSystem.IsWindows() && !cachedIncludesWsl && wslReady)
+            {
+                if (AppendWslProfilesLocked(cachedProfiles, wslResult, checkWslExists: true))
+                    Interlocked.Increment(ref version);
+                cachedIncludesWsl = true;
+            }
+
+            var copy = new List<TerminalProfile>(cachedProfiles.Count);
+            for (int i = 0; i < cachedProfiles.Count; i++)
+            {
+                TerminalProfile p = cachedProfiles[i];
+                copy.Add(new TerminalProfile(p.Name, p.Command, p.Icon, p.Id)
+                {
+                    WorkingDirectory = p.WorkingDirectory,
+                    Kind = p.Kind,
+                    Tag = p.Tag
+                });
+            }
+            return copy;
+        }
+    }
+
+    /// <summary>Clears the cached result of <see cref="Discover()"/> so the next call re-scans the machine.</summary>
+    public static void InvalidateCache()
+    {
+        lock (discoverLock)
+        {
+            cachedProfiles = null;
+            cachedEnvironmentKey = null;
+            cachedIncludesWsl = false;
+        }
+    }
 
     /// <summary>The Windows profiles, told what exists, what the environment says and what wsl lists.</summary>
     public static List<TerminalProfile> DiscoverWindows(Func<string, bool> exists, Func<string, string?> environment, Func<string?> wslList)
@@ -168,7 +229,8 @@ public static class TerminalProfiles
     {
         foreach (string folder in (environment("PATH") ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
-            if (exists(Path.Combine(folder.Trim('"'), file)))
+            string trimmed = folder.Trim().Trim('"');
+            if (trimmed.Length > 0 && exists(Path.Combine(trimmed, file)))
                 return true;
         }
 
@@ -180,18 +242,111 @@ public static class TerminalProfiles
     // there for minutes, on the main thread, before the editor or the terminal has drawn a thing
     private const int WSL_TIMEOUT_MS = 2000;
 
-    // Asked once a run, the distributions don't change while the program is up, and Dawn and Dusk both discover
-    private static readonly Lazy<string?> wslAnswer = new(AskWsl);
+    // Asked once a run on the pool, the distributions don't change while the program is up, and Dawn and Dusk both discover
+    private static Task<string?>? wslTask;
 
     /// <summary>
     /// Starts asking WSL for its distributions on the pool, for a program to call as it starts so the answer is there by
-    /// the time its terminal is made. Asked on the thread that made the terminal it was a wait of 65 ms or more at launch.
+    /// the time its terminal is made. <see cref="Discover"/> also starts this lazily without blocking; when the task
+    /// finishes, WSL profiles are merged and <see cref="Version"/> increments.
     /// </summary>
     public static void Prefetch()
     {
         if (OperatingSystem.IsWindows())
-            _ = Task.Run(() => wslAnswer.Value);
+            EnsureWslPrefetch();
     }
+
+    private static Task<string?> EnsureWslPrefetch()
+    {
+        Task<string?>? existing = Volatile.Read(ref wslTask);
+        if (existing is not null)
+            return existing;
+
+        lock (discoverLock)
+        {
+            if (wslTask is not null)
+                return wslTask;
+
+            wslTask = Task.Run(AskWslAndMerge);
+            return wslTask;
+        }
+    }
+
+    private static string? AskWslAndMerge()
+    {
+        string? output = AskWsl();
+        MergeWslOutput(output, checkWslExists: true);
+        return output;
+    }
+
+    private static void MergeWslOutput(string? output, bool checkWslExists)
+    {
+        bool changed = false;
+        lock (discoverLock)
+        {
+            if (cachedProfiles is not null && !cachedIncludesWsl)
+            {
+                changed = AppendWslProfilesLocked(cachedProfiles, output, checkWslExists);
+                cachedIncludesWsl = true;
+            }
+        }
+
+        if (changed)
+        {
+            Interlocked.Increment(ref version);
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.Wake();
+        }
+    }
+
+    private static bool AppendWslProfilesLocked(List<TerminalProfile> target, string? output, bool checkWslExists)
+    {
+        if (checkWslExists)
+        {
+            string system = Path.Combine(Horizon.Core.Processes.ProcessEnvironment.Variable("SystemRoot") ?? @"C:\Windows", "System32");
+            if (!File.Exists(Path.Combine(system, "wsl.exe")))
+                return false;
+        }
+
+        List<string> distributions = ParseWslList(output);
+        bool added = false;
+        for (int i = 0; i < distributions.Count; i++)
+        {
+            string distribution = distributions[i];
+            string id = $"wsl:{distribution}";
+            bool exists = false;
+            for (int j = 0; j < target.Count; j++)
+            {
+                if (string.Equals(target[j].Id, id, StringComparison.OrdinalIgnoreCase))
+                {
+                    exists = true;
+                    break;
+                }
+            }
+
+            if (!exists)
+            {
+                target.Add(new TerminalProfile(distribution, $"wsl.exe -d {distribution}", "terminal-linux", id));
+                added = true;
+            }
+        }
+
+        return added;
+    }
+
+    internal static Task<string?>? SwapWslTaskForTests(Task<string?>? replacement)
+    {
+        lock (discoverLock)
+        {
+            Task<string?>? previous = wslTask;
+            wslTask = replacement;
+            cachedProfiles = null;
+            cachedEnvironmentKey = null;
+            cachedIncludesWsl = false;
+            return previous;
+        }
+    }
+
+    internal static void MergeWslForTests(string? output) => MergeWslOutput(output, checkWslExists: false);
 
     /// <summary>Runs wsl -l -q and gives back what it wrote, as the bytes it wrote read one to a char, null when it couldn't be run, failed or took too long.</summary>
     private static string? AskWsl()

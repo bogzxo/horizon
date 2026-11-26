@@ -14,6 +14,10 @@ struct Params
     float2 uCellOrigin;   // where the grid starts in the world
     float2 uCellCount;    // cells across and up
     float uPixelSize;     // how big a cell is in world units
+    int uAoEnabled;
+    int uAoSamples;
+    float uAoRadius;
+    float uAoStrength;
 };
 
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
@@ -22,7 +26,8 @@ BIND_UNIFORM(1) ConstantBuffer<Params> params;
 BIND_TEXTURE(1) Sampler2D uTexSurface;
 BIND_TEXTURE(2) Sampler2D uTexMaterial;
 
-// What the lights throw straight on the cell, and what shows on top of the surface (the highlights and the glow)
+// What the lights throw straight on the cell (rgb) + AO with sprites (a),
+// and what shows on top of the surface (highlights and glow, rgb) + AO without sprites (a).
 BIND_IMAGE(0) [[vk::image_format("rgba16f")]] RWTexture2D<float4> uLight;
 BIND_IMAGE(1) [[vk::image_format("rgba16f")]] RWTexture2D<float4> uExtra;
 
@@ -38,21 +43,33 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float2 picture = pictureOf(position);
 
     float3 light = float3(0.0, 0.0, 0.0), highlights = float3(0.0, 0.0, 0.0), glow = float3(0.0, 0.0, 0.0);
+    float aoWithSprites = 1.0, aoWithoutSprites = 1.0;
     if (all(picture >= 0.0) && all(picture <= 1.0))
     {
-        float4 surface = uTexSurface.SampleLevel(picture, 0.0);
-        float shine = uTexMaterial.SampleLevel(picture, 0.0).r * params.uSpecularIntensity;
+        Field field = LIGHTING_FIELD(params);
+        if (params.uLightCount > 0)
+        {
+            float4 surface = uTexSurface.SampleLevel(picture, 0.0);
+            float shine = uTexMaterial.SampleLevel(picture, 0.0).r * params.uSpecularIntensity;
 
-        bool hasNormal;
-        float3 normal = surfaceNormal(surface, hasNormal);
+            bool hasNormal;
+            float3 normal = surfaceNormal(surface, hasNormal);
 
-        light = directLight(
-            position, picture, normal, hasNormal, shine,
-            params.uLightCount, params.uShadows != 0, params.uShininess, params.uShadowSoftness, params.uGlowScale,
-            LIGHTING_FIELD(params), params.uTileCounts, params.uTileScreen,
-            highlights, glow);
+            light = directLight(
+                position, picture, normal, hasNormal, shine,
+                params.uLightCount, params.uShadows != 0, params.uShininess, params.uShadowSoftness, params.uGlowScale,
+                field, params.uTileCounts, params.uTileScreen,
+                highlights, glow);
+        }
+
+        if (params.uAoEnabled != 0)
+        {
+            float2 ao = ambientOcclusionPair(position, field, params.uAoRadius, params.uAoSamples, params.uAoStrength);
+            aoWithSprites = ao.x;
+            aoWithoutSprites = ao.y;
+        }
     }
 
-    uLight[cell] = float4(light, 1.0);
-    uExtra[cell] = float4(highlights + glow, 1.0);
+    uLight[cell] = float4(light, aoWithSprites);
+    uExtra[cell] = float4(highlights + glow, aoWithoutSprites);
 }

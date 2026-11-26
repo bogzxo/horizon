@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text;
 
+using Horizon.Core.Platform;
 using Horizon.Logging;
 
 namespace Horizon.Graphics;
@@ -15,6 +17,28 @@ public static partial class ShaderCompiler
 
     private static string? cacheDirectory;
     private static bool checkedCacheDirectory;
+
+    // Lazily indexed .spv keys per cache folder so cache misses avoid repeated File.Exists syscalls
+    private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> cacheIndexes = new(PlatformPaths.Comparer);
+
+    private static ConcurrentDictionary<string, byte> IndexFor(string folder) =>
+        cacheIndexes.GetOrAdd(folder, static dir =>
+        {
+            var keys = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+            try
+            {
+                if (Directory.Exists(dir))
+                {
+                    foreach (string file in Directory.EnumerateFiles(dir, "*.spv"))
+                        keys[Path.GetFileNameWithoutExtension(file)] = 0;
+                }
+            }
+            catch (Exception)
+            {
+                // Unreadable directory simply leaves the index empty
+            }
+            return keys;
+        });
 
     /// <summary>Where compiled shaders (and the driver's pipeline cache) are kept, null if they aren't.</summary>
     public static string? CacheDirectory()
@@ -89,8 +113,15 @@ public static partial class ShaderCompiler
     internal static bool TryLoadCached(string folder, string key, out ShaderModule kept)
     {
         kept = null!;
+        var index = IndexFor(folder);
+        if (!index.ContainsKey(key)) return false;
+
         string spirvPath = Path.Combine(folder, key + ".spv"), notesPath = Path.Combine(folder, key + ".notes");
-        if (!File.Exists(spirvPath) || !File.Exists(notesPath)) return false;
+        if (!File.Exists(spirvPath) || !File.Exists(notesPath))
+        {
+            index.TryRemove(key, out _);
+            return false;
+        }
 
         try
         {
@@ -147,10 +178,11 @@ public static partial class ShaderCompiler
             // Written next to where they go and moved there whole, so a game that is closed halfway leaves no half a shader
             string spirvPath = Path.Combine(folder, key + ".spv"), notesPath = Path.Combine(folder, key + ".notes");
             string partial = "." + Environment.CurrentManagedThreadId + ".partial";
-            File.WriteAllBytes(spirvPath + partial, module.Stages[0].Spirv);
+            File.WriteAllBytes(spirvPath + partial, module.Stages[0].SpirvMemory.Span);
             File.WriteAllText(notesPath + partial, notes.ToString());
             File.Move(spirvPath + partial, spirvPath, overwrite: true);
             File.Move(notesPath + partial, notesPath, overwrite: true);
+            IndexFor(folder)[key] = 0;
         }
         catch (Exception)
         {

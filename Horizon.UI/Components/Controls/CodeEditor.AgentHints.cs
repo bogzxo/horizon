@@ -10,6 +10,7 @@ public readonly record struct UICodeAgentHint(string Id, int Line, int Column, s
 public partial class CodeEditor
 {
     private IReadOnlyList<UICodeAgentHint> agentHints = [];
+    private string[] agentHintCaptions = [];
     private int agentHintsVersion;
     private readonly List<(string Id, string Text, UIRect Box, UIRect Close)> agentHintBoxes = [];
 
@@ -22,6 +23,21 @@ public partial class CodeEditor
             agentHints = value ?? [];
             agentHintsVersion = document.Version;
             agentHintBoxes.Clear();
+            if (agentHints.Count == 0)
+            {
+                agentHintCaptions = [];
+            }
+            else
+            {
+                var captions = new string[agentHints.Count];
+                for (int i = 0; i < captions.Length; i++)
+                {
+                    string caption = agentHints[i].Text.ReplaceLineEndings(" ");
+                    if (caption.Length > 64) caption = caption[..61] + "...";
+                    captions[i] = "Agent: " + caption;
+                }
+                agentHintCaptions = captions;
+            }
         }
     }
 
@@ -86,14 +102,9 @@ public partial class CodeEditor
             list.Rect(new UIRect(new Vector2(anchor, top - lineHeight + 1), new Vector2(anchor + digit, top - lineHeight + 3)), skin.Palette.Link);
             float x = ends.GetValueOrDefault(hint.Line, left + EndX(skin, scale, hint.Line, length) + digit * 3
                 + LensWidthOn(hint.Line, digit) + ArtWidthOn(hint.Line));
-            for (int h = 0; h < inlineHints.Count; h++)
-            {
-                if (inlineHints[h].Line == hint.Line)
-                    x += EndHintWidth(skin, scale, inlineHints[h].Text, digit);
-            }
-            string caption = hint.Text.ReplaceLineEndings(" ");
-            if (caption.Length > 64) caption = caption[..61] + "...";
-            caption = "Agent: " + caption;
+            for (int h = FirstInlineHintAtOrAfter(hint.Line); h < inlineHintsSorted.Count && inlineHintsSorted[h].Line == hint.Line; h++)
+                x += EndHintWidth(skin, scale, inlineHintsSorted[h].Text, digit);
+            string caption = (uint)i < (uint)agentHintCaptions.Length ? agentHintCaptions[i] : string.Empty;
             float width = FontOf(skin).Measure(caption, scale, markup: false).X;
             float closeWidth = digit * 3;
             // Keep the dismiss control in sight even when the source line is wider than the viewport.

@@ -12,6 +12,9 @@ public sealed partial class DesktopWindow
     // Frames still to be presented before a cloaked window is uncovered, 0 for none waiting
     private int framesToReveal;
 
+    // Set once after the first frame presents so deferred GLFW gamepad probing runs after startup
+    private int firstFramePresented;
+
     // Two, the first may still be at the size the window had before it was shown (the resize is heard a frame late)
     private const int FRAMES_BEFORE_REVEAL = 2;
 
@@ -42,6 +45,9 @@ public sealed partial class DesktopWindow
     /// <summary>A frame was presented in the window, the one a cloaked window waits for. The thread that draws.</summary>
     public void FramePresented()
     {
+        if (Volatile.Read(ref firstFramePresented) == 0 && Interlocked.Exchange(ref firstFramePresented, 1) == 0)
+            host.OnFirstFramePresented();
+
         if (Volatile.Read(ref framesToReveal) > 0 && Interlocked.Decrement(ref framesToReveal) == 0)
             PostToWindow(Reveal);
     }

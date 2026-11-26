@@ -113,15 +113,19 @@ public sealed class UIScriptedScreens<TFile>(UIModule module, Action<string> pro
     public List<(TFile File, string Id)> Forget(IUIScriptOwner owner)
     {
         var taken = new List<(TFile, string)>();
-        foreach (var (key, made) in views.ToList())
+        foreach (var (key, made) in views)
         {
-            if (made.Owner != owner)
-                continue;
+            if (made.Owner == owner)
+                taken.Add(key);
+        }
 
+        for (int i = 0; i < taken.Count; i++)
+        {
+            var key = taken[i];
+            UIScriptedLayout made = views[key];
             made.Closed = true;
             made.Root.Parent?.Remove(made.Root);
             views.Remove(key);
-            taken.Add(key);
         }
 
         for (int i = windows.Count - 1; i >= 0; i--)
@@ -140,8 +144,19 @@ public sealed class UIScriptedScreens<TFile>(UIModule module, Action<string> pro
     /// <summary>The views a file had made for it taken away, as it closes.</summary>
     public void Forget(TFile closing)
     {
-        foreach (var key in views.Keys.Where(key => key.File == closing).ToList())
+        List<(TFile File, string Id)>? matching = null;
+        foreach (var key in views.Keys)
         {
+            if (key.File == closing)
+                (matching ??= []).Add(key);
+        }
+
+        if (matching is null)
+            return;
+
+        for (int i = 0; i < matching.Count; i++)
+        {
+            var key = matching[i];
             UIScriptedLayout made = views[key];
             made.Closed = true;
             made.Root.Parent?.Remove(made.Root);

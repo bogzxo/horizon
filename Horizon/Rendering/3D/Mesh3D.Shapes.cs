@@ -29,7 +29,12 @@ public partial class Mesh3D
             vertices.Add(new Vertex3D(middle + a + u, normal, new Vector2(1.0f, 0.0f)));
             vertices.Add(new Vertex3D(middle - a + u, normal, new Vector2(0.0f, 0.0f)));
 
-            indices.AddRange([first, first + 1, first + 2, first, first + 2, first + 3]);
+            indices.Add(first);
+            indices.Add(first + 1);
+            indices.Add(first + 2);
+            indices.Add(first);
+            indices.Add(first + 2);
+            indices.Add(first + 3);
         }
 
         Face(Vector3.UnitZ, Vector3.UnitX, Vector3.UnitY);
@@ -90,8 +95,19 @@ public partial class Mesh3D
 
                 // Round anticlockwise seen from outside. The top ring is all one point (the pole) and so is the
                 // bottom one, so the triangle that would have two corners there is left out, it has no area
-                if (ring > 0) indices.AddRange([a, a + 1, b]);
-                if (ring < rings - 1) indices.AddRange([a + 1, b + 1, b]);
+                if (ring > 0)
+                {
+                    indices.Add(a);
+                    indices.Add(a + 1);
+                    indices.Add(b);
+                }
+
+                if (ring < rings - 1)
+                {
+                    indices.Add(a + 1);
+                    indices.Add(b + 1);
+                    indices.Add(b);
+                }
             }
         }
 
@@ -104,8 +120,8 @@ public partial class Mesh3D
         segments = Math.Max(3, segments);
         float h = height * 0.5f;
 
-        var vertices = new List<Vertex3D>();
-        var indices = new List<uint>();
+        var vertices = new List<Vertex3D>(segments * 4 + 6);
+        var indices = new List<uint>(segments * 12);
 
         // The side, a ring of quads with the normals pointing out
         for (int segment = 0; segment <= segments; segment++)
@@ -120,7 +136,12 @@ public partial class Mesh3D
         for (int segment = 0; segment < segments; segment++)
         {
             uint top = (uint)segment * 2, bottom = top + 1;
-            indices.AddRange([top, top + 2, bottom, top + 2, bottom + 2, bottom]);
+            indices.Add(top);
+            indices.Add(top + 2);
+            indices.Add(bottom);
+            indices.Add(top + 2);
+            indices.Add(bottom + 2);
+            indices.Add(bottom);
         }
 
         // The two lids, a fan each from a vertex in the middle
@@ -140,8 +161,17 @@ public partial class Mesh3D
             for (uint segment = 0; segment < (uint)segments; segment++)
             {
                 uint a = middle + 1 + segment, b = a + 1;
-                if (side > 0) indices.AddRange([middle, b, a]);
-                else indices.AddRange([middle, a, b]);
+                indices.Add(middle);
+                if (side > 0)
+                {
+                    indices.Add(b);
+                    indices.Add(a);
+                }
+                else
+                {
+                    indices.Add(a);
+                    indices.Add(b);
+                }
             }
         }
 
@@ -185,7 +215,7 @@ public partial class Mesh3D
     private static Mesh3D Built(Vertex3D[] vertices, uint[] indices)
     {
         var mesh = new Mesh3D();
-        mesh.Upload(vertices, indices);
+        mesh.UploadOwned(vertices, indices);
         return mesh;
     }
 }

@@ -23,6 +23,9 @@ public readonly record struct BlendMode(
 
     /// <summary>The same as not blending at all.</summary>
     public static BlendMode Replace { get; } = new(BlendFactor.One, BlendFactor.Zero);
+
+    /// <summary>Dual-source blending for single-pass per-channel subpixel coverage and premultiplied colour.</summary>
+    public static BlendMode DualSource { get; } = new(BlendFactor.One, BlendFactor.OneMinusSrc1Color, BlendFactor.One, BlendFactor.OneMinusSrc1Alpha);
 }
 
 /// <summary>

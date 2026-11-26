@@ -44,6 +44,10 @@ public partial class TerminalView
 
     private void ClearEnded()
     {
+        Interlocked.Exchange(ref exitedState, 0L);
+        while (arrived.TryDequeue(out _)) { }
+        held.Clear();
+        heldFor = 0.0f;
         EndedWith = null;
         endedSaid = string.Empty;
     }

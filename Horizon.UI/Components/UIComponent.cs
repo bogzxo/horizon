@@ -82,13 +82,23 @@ public abstract partial class UIComponent
     /// The children as a span, for the code that walks them every update. Unlike enumerating
     /// <see cref="Children"/> it doesn't allocate.
     /// </summary>
-    protected ReadOnlySpan<UIComponent> ChildSpan => children;
+    protected internal ReadOnlySpan<UIComponent> ChildSpan => children;
 
     /// <summary>The module this component is part of, null while it isn't in one.</summary>
     public UIModule? Module
     {
-        get => module ?? Parent?.Module;
-        internal set => module = value;
+        get => module;
+        internal set => SetModule(value);
+    }
+
+    private void SetModule(UIModule? value)
+    {
+        if (ReferenceEquals(module, value))
+            return;
+
+        module = value;
+        foreach (var child in children)
+            child.SetModule(value);
     }
 
     /// <summary>The point of the parent this component is attached to.</summary>
@@ -281,6 +291,7 @@ public abstract partial class UIComponent
             children = [.. children, child];
 
         child.Parent = this;
+        child.SetModule(module);
         child.OnParentChanged();
         return child;
     }
@@ -317,6 +328,7 @@ public abstract partial class UIComponent
         foreach (UIComponent child in arriving)
         {
             child.Parent = this;
+            child.SetModule(module);
             child.OnParentChanged();
         }
     }
@@ -341,14 +353,21 @@ public abstract partial class UIComponent
             if (gone == 0)
                 return;
 
-            var left = new UIComponent[children.Length - gone];
-            int at = 0;
-            foreach (UIComponent child in children)
+            if (gone == children.Length)
             {
-                if (going.IndexOf(child, ReferenceEqualityComparer.Instance) < 0)
-                    left[at++] = child;
+                children = [];
             }
-            children = left;
+            else
+            {
+                var left = new UIComponent[children.Length - gone];
+                int at = 0;
+                foreach (UIComponent child in children)
+                {
+                    if (going.IndexOf(child, ReferenceEqualityComparer.Instance) < 0)
+                        left[at++] = child;
+                }
+                children = left;
+            }
         }
 
         foreach (UIComponent child in going)
@@ -356,6 +375,7 @@ public abstract partial class UIComponent
             if (child.Parent != this)
                 continue;
             child.Parent = null;
+            child.SetModule(null);
             child.OnParentChanged();
         }
     }
@@ -414,6 +434,7 @@ public abstract partial class UIComponent
         }
 
         child.Parent = null;
+        child.SetModule(null);
         child.OnParentChanged();
         return true;
     }
@@ -426,36 +447,46 @@ public abstract partial class UIComponent
 
     internal Vector2 MeasureTree(UISkin skin)
     {
-        bool timed = Diagnostics.UIPaintProfile.On;
-        if (timed)
-            Diagnostics.UIPaintProfile.Begin();
+        if (!Diagnostics.UIPaintProfile.On)
+            return MeasureTreeUntimed(skin);
+
+        Diagnostics.UIPaintProfile.Begin();
         Vector2 measured = MeasureTreeUntimed(skin);
-        if (timed)
-            Diagnostics.UIPaintProfile.End(this, measuring: true);
+        Diagnostics.UIPaintProfile.End(this, measuring: true);
         return measured;
     }
 
     private Vector2 MeasureTreeUntimed(UISkin skin)
     {
         if (LaysOutMoving && Visible)
-            Module?.NoteLayoutMoving();
+            module?.NoteLayoutMoving();
 
-        foreach (var child in children)
-            child.MeasureTree(skin);
+        var snapshot = children;
+        if (Diagnostics.UIPaintProfile.On)
+        {
+            for (int i = 0; i < snapshot.Length; i++)
+                snapshot[i].MeasureTree(skin);
+        }
+        else
+        {
+            for (int i = 0; i < snapshot.Length; i++)
+                snapshot[i].MeasureTreeUntimed(skin);
+        }
 
         Vector2 automatic = Measure(skin) * Scale;
-        DesiredSize = new Vector2(
+        Vector2 desired = new(
             Size.X > 0.0f ? Size.X : automatic.X,
             Size.Y > 0.0f ? Size.Y : automatic.Y);
 
         // One that folds part of itself away asks for what's left of it, see Folding
-        DesiredSize = Folding(DesiredSize);
+        desired = Folding(desired);
 
         // Sliding in or out it asks for as much of that as is out, see UIComponent.Sliding
         if (slideWanted is not null)
-            DesiredSize = SlidSize(DesiredSize);
+            desired = SlidSize(desired);
 
-        return DesiredSize;
+        DesiredSize = desired;
+        return desired;
     }
 
     /// <summary>The component and everything in it put in a place, the second half of a layout pass after measuring.</summary>
@@ -593,15 +624,18 @@ public abstract partial class UIComponent
         long version = children.Length == 0 ? PaintVersion : -1;
 
         // The ring round a control the keyboard is on, said before the paint might be taken as it was, which has it in
-        bool ringed = TabStop && !Focusable && IsFocused && EnabledInHierarchy && Module!.Compositor.FocusVisible;
+        UICompositor? compositor = module?.Compositor;
+        bool focusVisible = compositor is { FocusVisible: true };
+        bool isFocused = compositor is not null && ReferenceEquals(compositor.Focus, this);
+        bool ringed = TabStop && !Focusable && isFocused && EnabledInHierarchy && focusVisible;
         if (ringed)
-            Module!.Compositor.FocusShownOn = this;
+            compositor!.FocusShownOn = this;
         bool recorded = version >= 0 && offset == Vector2.Zero && scale == Vector2.One && Opacity >= 1.0f && slideWanted is null && !FollowsPointer && !list.LayoutMoves;
         int context = 0;
         if (recorded)
         {
             version = HashCode.Combine(
-                HashCode.Combine(version, IsFocused, IsHovered, EnabledInHierarchy, Module?.Compositor.FocusVisible ?? false, Resizable, Lift, CompositionPaintStamp),
+                HashCode.Combine(version, isFocused, IsHovered, EnabledInHierarchy, focusVisible, ResizePaintStamp, Lift, CompositionPaintStamp),
                 Glass);
             context = list.PaintContext(Bounds);
             if (list.TryReuse(PaintId, version, context))
@@ -698,6 +732,23 @@ public abstract partial class UIComponent
     /// worth trusting once <c>HORIZON_UI_REUSE_CHECK=1</c> has run it through everything and found nothing.
     /// </summary>
     protected virtual long PaintVersion => -1;
+
+    /// <summary>Tries to reuse a previously recorded sub-slice for this component under <paramref name="version"/> and <paramref name="bounds"/>.</summary>
+    protected bool TryReuseSlice(UIDrawList list, UIRect bounds, long version, out int context)
+    {
+        context = list.PaintContext(bounds);
+        return PaintId != 0.0f && list.TryReuse(-PaintId, version, context);
+    }
+
+    /// <summary>Starts recording a component sub-slice after <see cref="TryReuseSlice"/> returns false.</summary>
+    protected static void BeginSliceRecord(UIDrawList list) => list.BeginRecord();
+
+    /// <summary>Ends a sub-slice recording started by <see cref="BeginSliceRecord"/>.</summary>
+    protected void EndSliceRecord(UIDrawList list, long version, int context)
+    {
+        if (PaintId != 0.0f)
+            list.EndRecord(-PaintId, version, context, this);
+    }
 
     /// <summary>
     /// Whether its layout is on its way somewhere (sliding in or out, folding), which moves it and what's round it about

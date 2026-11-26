@@ -14,9 +14,9 @@ internal static partial class WindowsClipboard
     private const uint CF_UNICODETEXT = 13;
     private const uint GMEM_MOVEABLE = 0x0002;
 
-    // How many times it's asked for while somebody else has it open, and how long apart, a tenth of a second at most
-    private const int TRIES = 10;
-    private const int APART = 10;
+    // Pure Win32 user32 clipboard APIs (no COM/OLE STA requirement). Retried with short progressive backoff while
+    // another process briefly holds the clipboard, without sleeping after the final attempt.
+    private const int TRIES = 8;
 
     /// <summary>The text on the clipboard, empty for none or for one that wouldn't open.</summary>
     public static string Text
@@ -40,10 +40,16 @@ internal static partial class WindowsClipboard
                 {
                     // To its end or the size of the memory, whichever comes first, a program that left no end on it
                     // isn't read past what it gave
-                    int most = (int)Math.Min(int.MaxValue, (long)GlobalSize(data)) / 2;
-                    string said = Marshal.PtrToStringUni(text, most);
-                    int end = said.IndexOf('\0');
-                    return end >= 0 ? said[..end] : said;
+                    int most = (int)Math.Min((ulong)int.MaxValue, (ulong)GlobalSize(data)) / 2;
+                    if (most <= 0)
+                        return string.Empty;
+
+                    unsafe
+                    {
+                        ReadOnlySpan<char> span = new((void*)text, most);
+                        int end = span.IndexOf('\0');
+                        return end >= 0 ? new string(span[..end]) : new string(span);
+                    }
                 }
                 finally
                 {
@@ -62,26 +68,47 @@ internal static partial class WindowsClipboard
 
             try
             {
-                EmptyClipboard();
+                if (!EmptyClipboard())
+                    return;
+
                 string text = value ?? string.Empty;
                 IntPtr memory = GlobalAlloc(GMEM_MOVEABLE, (nuint)((text.Length + 1) * 2));
                 if (memory == IntPtr.Zero)
                     return;
 
-                IntPtr into = GlobalLock(memory);
-                if (into == IntPtr.Zero)
+                bool transferred = false;
+                try
                 {
-                    GlobalFree(memory);
-                    return;
+                    IntPtr into = GlobalLock(memory);
+                    if (into == IntPtr.Zero)
+                        return;
+
+                    try
+                    {
+                        unsafe
+                        {
+                            fixed (char* src = text)
+                            {
+                                nuint byteCount = (nuint)(text.Length * sizeof(char));
+                                if (byteCount > 0)
+                                    Buffer.MemoryCopy(src, (void*)into, byteCount, byteCount);
+                                *((char*)into + text.Length) = '\0';
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        GlobalUnlock(memory);
+                    }
+
+                    // The clipboard owns it once it's taken, it's ours to let go of only when it wasn't
+                    transferred = SetClipboardData(CF_UNICODETEXT, memory) != IntPtr.Zero;
                 }
-
-                Marshal.Copy(text.ToCharArray(), 0, into, text.Length);
-                Marshal.WriteInt16(into, text.Length * 2, 0);
-                GlobalUnlock(memory);
-
-                // The clipboard owns it once it's taken, it's ours to let go of only when it wasn't
-                if (SetClipboardData(CF_UNICODETEXT, memory) == IntPtr.Zero)
-                    GlobalFree(memory);
+                finally
+                {
+                    if (!transferred)
+                        GlobalFree(memory);
+                }
             }
             finally
             {
@@ -201,14 +228,31 @@ internal static partial class WindowsClipboard
         return Horizon.Graphics.ImageFile.EncodePng(rgba, width, rows);
     }
 
-    // Opened for the thread asking, tried again for a moment while another program has it
+    /// <summary>Progressive retry delay in milliseconds after a failed <c>OpenClipboard</c> attempt, or 0 on the final attempt.</summary>
+    internal static int RetryDelayMs(int attempt, int maxAttempts = TRIES)
+    {
+        if (attempt < 0 || attempt + 1 >= maxAttempts)
+            return 0;
+
+        return attempt switch
+        {
+            0 => 1,
+            1 or 2 => 2,
+            _ => 5
+        };
+    }
+
+    // Opened for the thread asking, tried again briefly while another program holds it
     private static bool Open()
     {
         for (int i = 0; i < TRIES; i++)
         {
             if (OpenClipboard(IntPtr.Zero))
                 return true;
-            Thread.Sleep(APART);
+
+            int delay = RetryDelayMs(i, TRIES);
+            if (delay > 0)
+                Thread.Sleep(delay);
         }
 
         return false;

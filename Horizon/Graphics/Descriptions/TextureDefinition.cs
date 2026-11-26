@@ -31,6 +31,9 @@ public readonly record struct TextureDefinition(
     /// <summary>Sixteen bits a channel, blended between the texels. For a picture that is blended into itself frame after frame.</summary>
     public static TextureDefinition Rgba16Float { get; } = new(PixelFormat.Rgba16F, Smooth: true);
 
+    /// <summary>Packed 11-11-10 unsigned float RGB, blended between the texels. Half the bandwidth of <see cref="Rgba16Float"/> for HDR colour without alpha.</summary>
+    public static TextureDefinition R11G11B10Float { get; } = new(PixelFormat.R11G11B10F, Smooth: true);
+
     /// <summary>One half a texel, blended between the texels, written by compute. A field of distances.</summary>
     public static TextureDefinition DistanceField { get; } = new(PixelFormat.R16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
 
@@ -64,6 +67,7 @@ public readonly record struct TextureDefinition(
         PixelFormat.R8 => 1,
         PixelFormat.R16F => 2,
         PixelFormat.Rg16F => 4,
+        PixelFormat.R11G11B10F => 4,
         PixelFormat.Rg32F => 8,
         PixelFormat.Rg32Uint => 8,
         PixelFormat.Rgba16F => 8,
