@@ -86,11 +86,18 @@ Directory: `Horizon.Platform.Desktop/`.
   window, `PlatformFeatures.DropDown`), `.Waiting.cs` (event-wait loop).
 - `Input/` - `DesktopInput`, GLFW wrappers (`Glfw/GlfwKeyboard|Mouse|Cursor`, `GlfwInputWithoutGamepads`), `SilkInputSource`,
   `SilkGamepadSource`, `WindowsClipboard`, `WindowsTouch`.
+- `Linux/` - `LinuxTouchpadState` (pure state machine tested in `Horizon.Tests/Input/LinuxTouchpadTests.cs`), `WaylandTouchpad`
+  (native `libwayland-client.so.0` `wl_pointer` + `zwp_pointer_gestures_v1` v3 pinch/swipe/hold monitor attached to SDL's
+  `wl_display` for 1:1 pixel scrolling, `axis_stop` release phase for glide/overscroll, hold-to-stop momentum, pinch zoom,
+  and 3+ finger swipe), `X11Touchpad` (`libXi.so.6` XInput 2.4 `XI_GesturePinch*` / `XI_GestureSwipe*` via `SDL_SYSWMEVENT`).
 - `SdlAudioOutput.cs` - SDL audio, `IAudioOutput`.
 
 Windowing backend choice (`Window/DesktopWindow.Sdl.cs:15`): `HORIZON_WINDOWING=glfw|sdl`; default is **GLFW on Windows,
 SDL on everything else**. GLFW has no Vulkan on macOS; SDL goes through a Metal surface with `Silk.NET.MoltenVK.Native`
-bundled so users need no Vulkan SDK. SDL needs a loadable Vulkan loader on Linux (`"The window has no Vulkan surface, is the Vulkan loader installed?"`, `DesktopHost.cs`).
+bundled so users need no Vulkan SDK. On Linux, `ConfigureLinuxSdlLoader` prepends a `Silk.NET.Core.Loader.DefaultPathResolver`
+hook that prefers the system's Wayland-capable `libSDL2-2.0.so.0` under Wayland sessions (Silk.NET's bundled `libSDL2-2.0.so`
+lacks the Wayland video driver) and also resolves `runtimes/linux-<arch>/native/libSDL2-2.0.so` in Debug builds without
+`LD_LIBRARY_PATH`. SDL needs a loadable Vulkan loader on Linux (`"The window has no Vulkan surface, is the Vulkan loader installed?"`, `DesktopHost.cs`).
 `InternalsVisibleTo Horizon.Tests`. `IsPublishable=false`.
 
 Env vars read by head/engine (verified in code): `HORIZON_WINDOWING`, `HORIZON_AUDIO=off`.

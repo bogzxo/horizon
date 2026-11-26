@@ -98,7 +98,7 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
         }
 
         var context = window.NativeInput ?? throw new InvalidOperationException("The desktop window loaded without an input context.");
-        input = new DesktopInput(this, context, window.PointerToPixels, window.Win32Handle, window.CocoaHandle);
+        input = new DesktopInput(this, context, window.PointerToPixels, window.Win32Handle, window.CocoaHandle, window.SdlWindowHandle);
 
         // On a Mac making the surface is SDL putting a Metal view into the window, which only the main thread may do,
         // see SilkSurface

@@ -1,3 +1,6 @@
+using System.Runtime.InteropServices;
+
+using Silk.NET.Core.Loader;
 using Silk.NET.SDL;
 
 using Horizon.Core;
@@ -11,6 +14,8 @@ namespace Horizon.Platform.Desktop;
 // made. HORIZON_WINDOWING=glfw or sdl says otherwise, for finding out which of them something is down to.
 public sealed partial class DesktopWindow
 {
+    private static int linuxSdlResolverInstalled;
+
     /// <summary>Whether the window is SDL's, rather than GLFW's.</summary>
     public static bool UsesSdl { get; } = Environment.GetEnvironmentVariable("HORIZON_WINDOWING")?.ToLowerInvariant() switch
     {
@@ -30,6 +35,7 @@ public sealed partial class DesktopWindow
         {
             LoadMoltenVK();
             ConfigureSdl(appId);
+            ConfigureLinuxSdlLoader();
             Silk.NET.Windowing.Sdl.SdlWindowing.RegisterPlatform();
             Silk.NET.Input.Sdl.SdlInput.RegisterPlatform();
         }
@@ -38,6 +44,54 @@ public sealed partial class DesktopWindow
             Silk.NET.Windowing.Glfw.GlfwWindowing.RegisterPlatform();
             Silk.NET.Input.Glfw.GlfwInput.RegisterPlatform();
         }
+    }
+
+    /// <summary>
+    /// Ensures SDL2 loads reliably on Linux in both Debug and Release builds, and prefers the system's Wayland-capable
+    /// <c>libSDL2-2.0.so.0</c> under Wayland sessions because Silk.NET's bundled <c>libSDL2-2.0.so</c> is built without
+    /// the Wayland video driver. Falls back cleanly to the bundled native binary when no system SDL2 is installed.
+    /// </summary>
+    private static void ConfigureLinuxSdlLoader()
+    {
+        if (!OperatingSystem.IsLinux() || Interlocked.Exchange(ref linuxSdlResolverInstalled, 1) != 0)
+            return;
+
+        if (PathResolver.Default is not DefaultPathResolver resolver)
+            return;
+
+        string rid = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.Arm64 => "linux-arm64",
+            Architecture.Arm => "linux-arm",
+            _ => "linux-x64"
+        };
+
+        resolver.Resolvers.Insert(0, name => ResolveLinuxSdl(name, rid));
+    }
+
+    private static IEnumerable<string> ResolveLinuxSdl(string name, string rid)
+    {
+        if (!name.Contains("SDL2", StringComparison.OrdinalIgnoreCase))
+            yield break;
+
+        string? videoDriver = Environment.GetEnvironmentVariable("SDL_VIDEODRIVER");
+        bool wantWayland = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"))
+            && !string.Equals(videoDriver, "x11", StringComparison.OrdinalIgnoreCase);
+
+        string beside = Path.Combine(AppContext.BaseDirectory, "libSDL2-2.0.so");
+        string inRuntimes = Path.Combine(AppContext.BaseDirectory, "runtimes", rid, "native", "libSDL2-2.0.so");
+
+        // On Wayland, prefer the distro's libSDL2-2.0.so.0 which includes the Wayland driver (Silk's bundled copy only has X11).
+        if (wantWayland)
+            yield return "libSDL2-2.0.so.0";
+
+        if (File.Exists(beside))
+            yield return beside;
+        if (File.Exists(inRuntimes))
+            yield return inRuntimes;
+
+        if (!wantWayland)
+            yield return "libSDL2-2.0.so.0";
     }
 
     /// <summary>
@@ -142,4 +196,7 @@ public sealed partial class DesktopWindow
     /// <summary>The SDL window underneath, null when the window isn't SDL's (or isn't made yet).</summary>
     private unsafe Silk.NET.SDL.Window* SdlWindow =>
         UsesSdl && _window.Native?.Sdl is { } handle && handle != 0 ? (Silk.NET.SDL.Window*)handle : null;
+
+    /// <summary>The native SDL_Window pointer, or 0 when the window isn't SDL's.</summary>
+    internal unsafe nint SdlWindowHandle => (nint)SdlWindow;
 }

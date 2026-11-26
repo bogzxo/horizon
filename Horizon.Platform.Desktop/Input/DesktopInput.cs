@@ -20,10 +20,14 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
     // Fingers on a Windows touch screen, which GLFW would only ever hand over as the mouse
     private readonly WindowsTouch? touch;
 
+    // Native Linux laptop touchpad scroll/phase and gesture monitors (Wayland wl_pointer + zwp_pointer_gestures_v1, or X11 XI 2.4)
+    private readonly WaylandTouchpad? waylandTouchpad;
+    private readonly X11Touchpad? x11Touchpad;
+
     // Last IME candidate rect sent to SDL, so unchanged caret frames allocate nothing
     private int lastImeX = int.MinValue, lastImeY, lastImeW, lastImeH;
 
-    public DesktopInput(DesktopHost host, IInputContext context, Func<Vector2, Vector2> toPixels, nint windowHandle = 0, nint cocoaWindow = 0)
+    public DesktopInput(DesktopHost host, IInputContext context, Func<Vector2, Vector2> toPixels, nint windowHandle = 0, nint cocoaWindow = 0, nint sdlWindow = 0)
     {
         this.host = host;
         this.context = context;
@@ -39,6 +43,17 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
                 source.Raise(input);
                 host.Events.InputHeard();
             });
+        }
+        if (OperatingSystem.IsLinux() && DesktopWindow.UsesSdl && sdlWindow != 0)
+        {
+            Action<InputEvent> onLinuxTouchpad = input =>
+            {
+                source.Raise(input);
+                host.Events.InputHeard();
+            };
+            waylandTouchpad = WaylandTouchpad.TryCreate(sdlWindow, onLinuxTouchpad);
+            if (waylandTouchpad is null)
+                x11Touchpad = X11Touchpad.TryCreate(sdlWindow, onLinuxTouchpad);
         }
         if (OperatingSystem.IsWindows() && windowHandle != 0) touch = new WindowsTouch(windowHandle, toPixels);
     }
@@ -109,6 +124,11 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
 
     public void Dispose()
     {
+        if (OperatingSystem.IsLinux())
+        {
+            waylandTouchpad?.Dispose();
+            x11Touchpad?.Dispose();
+        }
         source.Dispose();
         if (OperatingSystem.IsWindows()) touch?.Dispose();
     }

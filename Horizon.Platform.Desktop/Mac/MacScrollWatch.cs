@@ -101,6 +101,12 @@ internal static unsafe class MacScrollWatch
                 if (precise && monitorWindow != 0)
                     x = y = 0.0f;
             }
+            else if (OperatingSystem.IsLinux())
+            {
+                // SDL2 horizontal wheel is positive to the right, whereas Horizon ScrollX is negative to the right
+                // (matching macOS NSEvent.scrollingDeltaX so content tracks the finger).
+                x = -x;
+            }
 
             turns.Add(wheel.X, wheel.Y, new ScrollTurn(x, y, precise));
             if (tracePath is not null)

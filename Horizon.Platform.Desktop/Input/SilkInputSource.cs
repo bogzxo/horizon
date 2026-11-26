@@ -77,6 +77,15 @@ internal sealed class SilkInputSource : IInputSource, IDisposable
     private void OnMouseUp(IMouse device, Silk.NET.Input.MouseButton button) => EventReceived?.Invoke(InputEvent.Pointer(InputEventKind.PointerUp, toPixels(device.Position), button: (MouseButton)button));
     private void OnScroll(IMouse device, ScrollWheel wheel)
     {
+        // Under Wayland, WaylandTouchpad already emitted the exact 1:1 pixel touchpad scroll with phase;
+        // drain MacScrollWatch's turn queue to stay aligned and drop SDL's duplicate wheel copy.
+        if (OperatingSystem.IsLinux() && WaylandTouchpad.SuppressesSdlWheel)
+        {
+            if (DesktopWindow.UsesSdl && MacScrollWatch.Active)
+                MacScrollWatch.TryTake(wheel.X, wheel.Y, out _);
+            return;
+        }
+
         // GLFW (Windows) stays as it was, notches. Under SDL Silk only says the whole notches SDL has added up, so the turn
         // is the one the event watch saw (MacScrollWatch): a Mac's says whether a trackpad or Magic Mouse made it, and its
         // points; elsewhere SDL's fractional deltas are a trackpad's or momentum's
