@@ -89,7 +89,10 @@ public enum BarrierTargets
     VertexAttributes = 4,
 
     /// <summary>Images written by a shader.</summary>
-    ShaderImages = 8
+    ShaderImages = 8,
+
+    /// <summary>Indirect draw command buffers read by a previous draw before a compute shader writes them again.</summary>
+    Indirect = 16
 }
 
 /// <summary>How much the device's own debugging (the validation layer, the driver) is worried about something it was asked to do.</summary>

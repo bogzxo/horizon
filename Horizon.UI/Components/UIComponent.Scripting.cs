@@ -75,7 +75,7 @@ public abstract partial class UIComponent
         Expose("intro_offset", () => IntroOffset, value => IntroOffset = value);
         Expose(
             "intro_easing",
-            () => IntroEasing is { } easing ? UIScript.FromEnum(easing) : (IRuntimeValue)new NullValue(),
+            () => IntroEasing is { } easing ? UIScript.FromEnum(easing) : Values.Null,
             value => IntroEasing = value is NullValue ? null : UIScript.ToEnum<Horizon.Core.Tweening.Easing>(value, "intro_easing"));
 
         DefineHoverScript();
@@ -84,7 +84,7 @@ public abstract partial class UIComponent
 
         Expose(
             "parent",
-            () => Parent is { } parent ? parent.Object : (IRuntimeValue)new NullValue(),
+            () => Parent is { } parent ? parent.ScriptValue : Values.Null,
             value =>
             {
                 var parent = FromScript(value) ?? throw new Exception("parent has to be a component.");
@@ -97,10 +97,10 @@ public abstract partial class UIComponent
         script![name] = new NativeValue(get, set);
 
     protected void Expose(string name, Func<float> get, Action<float> set) =>
-        Expose(name, () => new NumberValue(get()), value => set(UIScript.ToNumber(value, name)));
+        Expose(name, () => Values.Number(get()), value => set(UIScript.ToNumber(value, name)));
 
     protected void Expose(string name, Func<bool> get, Action<bool> set) =>
-        Expose(name, () => new BooleanValue(get()), value => set(UIScript.ToBoolean(value, name)));
+        Expose(name, () => Values.Bool(get()), value => set(UIScript.ToBoolean(value, name)));
 
     protected void Expose(string name, Func<string> get, Action<string> set) =>
         Expose(name, () => new StringValue(get()), value => set(UIScript.ToText(value, name)));
@@ -115,11 +115,74 @@ public abstract partial class UIComponent
         Expose(name, () => new Vector4Value(get()), value => set(UIScript.ToColor(value, name)));
 
     /// <summary>
+    /// Sets one layout/script property directly when the script dictionary has not yet been built.
+    /// Returns false only if the property belongs to an override that still relies on <see cref="DefineScript"/>.
+    /// </summary>
+    protected virtual bool TrySetScriptProperty(string name, IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "pos": Position = UIScript.ToVector2(value, name); return true;
+            case "size": Size = UIScript.ToVector2(value, name); return true;
+            case "scale": Scale = UIScript.ToVector2(value, name); return true;
+            case "visible": Visible = UIScript.ToBoolean(value, name); return true;
+            case "z": ZOffset = Math.Max(0, (int)UIScript.ToNumber(value, name)); return true;
+            case "lift": Lift = MathF.Max(0.0f, UIScript.ToNumber(value, name)); return true;
+            case "glass":
+            {
+                float blur = UIScript.ToNumber(value, name);
+                Glass = blur > 0.0f ? (Glass ?? UIGlass.Frosted) with { Blur = blur } : null;
+                return true;
+            }
+            case "layer": Layer = UIScript.ToText(value, name).Trim(); return true;
+            case "enabled": Enabled = UIScript.ToBoolean(value, name); return true;
+            case "tooltip": Tooltip = UIScript.ToText(value, name); return true;
+            case "anchor": Anchor = UIScript.ToEnum<Origin>(value, name); return true;
+            case "pivot": Pivot = UIScript.ToEnum<Origin>(value, name); return true;
+            case "fill": Fill = UIScript.ToEnum<UIFill>(value, name); return true;
+            case "padding": Padding = UIScript.ToEdges(value, name); return true;
+            case "intro": Intro = UIScript.ToEnum<UIIntro>(value, name); return true;
+            case "intro_time": IntroTime = MathF.Max(0.0f, UIScript.ToNumber(value, name)); return true;
+            case "intro_delay": IntroDelay = MathF.Max(0.0f, UIScript.ToNumber(value, name)); return true;
+            case "intro_offset": IntroOffset = UIScript.ToVector2(value, name); return true;
+            case "intro_easing":
+                IntroEasing = value is NullValue ? null : UIScript.ToEnum<Horizon.Core.Tweening.Easing>(value, name);
+                return true;
+            case "parent":
+            {
+                var parent = FromScript(value) ?? throw new Exception("parent has to be a component.");
+                parent.Add(this);
+                return true;
+            }
+            default:
+                return TrySetHoverScriptProperty(name, value)
+                    || TrySetSlideScriptProperty(name, value)
+                    || TrySetResizeScriptProperty(name, value);
+        }
+    }
+
+    /// <summary>
     /// Sets every property named in an object a script wrote, <c>{ label: "Play", pos: vec(0, 32) }</c> say.
     /// </summary>
     internal void ApplyScript(ObjectValue values)
     {
-        var properties = Object.Properties;
+        Dictionary<string, IRuntimeValue>? properties = script;
+        if (properties is null)
+        {
+            foreach (var (name, value) in values.Properties)
+            {
+                if (TrySetScriptProperty(name, value))
+                    continue;
+
+                properties ??= Object.Properties;
+                if (!properties.TryGetValue(name, out var property) || property is not NativeValue native)
+                    throw new Exception($"{GetType().Name} has no property called '{name}'.");
+
+                native.MutatorCallback(value);
+            }
+
+            return;
+        }
 
         foreach (var (name, value) in values.Properties)
         {

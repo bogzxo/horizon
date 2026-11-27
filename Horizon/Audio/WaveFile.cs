@@ -55,13 +55,84 @@ public static class WaveFile
 
         int frameCount = (int)frames;
         var samples = new short[frameCount * 2];
-        for (int frame = 0; frame < frameCount; frame++)
+        int dataBytes = frameCount * (int)frameBytes;
+        ReadOnlySpan<byte> payload = data[..dataBytes];
+
+        if (BitConverter.IsLittleEndian && format == 1 && bytes == 2)
         {
-            int at = (int)(frame * frameBytes);
-            short left = Sample(data[at..], format, bytes);
-            short right = channels > 1 ? Sample(data[(at + bytes)..], format, bytes) : left;
-            samples[frame * 2] = left;
-            samples[frame * 2 + 1] = right;
+            ReadOnlySpan<short> src = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, short>(payload);
+            const short minSample = -short.MaxValue;
+            if (channels == 1)
+            {
+                for (int frame = 0; frame < frameCount; frame++)
+                {
+                    short s = src[frame];
+                    if (s < minSample) s = minSample;
+                    int dst = frame * 2;
+                    samples[dst] = s;
+                    samples[dst + 1] = s;
+                }
+            }
+            else if (channels == 2)
+            {
+                for (int i = 0; i < samples.Length; i++)
+                {
+                    short s = src[i];
+                    samples[i] = s < minSample ? minSample : s;
+                }
+            }
+            else
+            {
+                for (int frame = 0; frame < frameCount; frame++)
+                {
+                    int at = frame * channels;
+                    short left = src[at];
+                    short right = src[at + 1];
+                    int dst = frame * 2;
+                    samples[dst] = left < minSample ? minSample : left;
+                    samples[dst + 1] = right < minSample ? minSample : right;
+                }
+            }
+        }
+        else if (BitConverter.IsLittleEndian && format == 3 && bytes == 4)
+        {
+            ReadOnlySpan<float> src = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(payload);
+            if (channels == 1)
+            {
+                for (int frame = 0; frame < frameCount; frame++)
+                {
+                    short s = Sound.ToSample(src[frame]);
+                    int dst = frame * 2;
+                    samples[dst] = s;
+                    samples[dst + 1] = s;
+                }
+            }
+            else if (channels == 2)
+            {
+                for (int i = 0; i < samples.Length; i++)
+                    samples[i] = Sound.ToSample(src[i]);
+            }
+            else
+            {
+                for (int frame = 0; frame < frameCount; frame++)
+                {
+                    int at = frame * channels;
+                    int dst = frame * 2;
+                    samples[dst] = Sound.ToSample(src[at]);
+                    samples[dst + 1] = Sound.ToSample(src[at + 1]);
+                }
+            }
+        }
+        else
+        {
+            for (int frame = 0; frame < frameCount; frame++)
+            {
+                int at = (int)(frame * frameBytes);
+                short left = Sample(data[at..], format, bytes);
+                short right = channels > 1 ? Sample(data[(at + bytes)..], format, bytes) : left;
+                samples[frame * 2] = left;
+                samples[frame * 2 + 1] = right;
+            }
         }
 
         return new Sound(samples, rate, name);

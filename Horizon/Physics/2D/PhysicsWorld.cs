@@ -60,6 +60,7 @@ public sealed class PhysicsWorld : GameComponent
     // The particles simulated on the GPU can't be stepped from here, they are told what there is to run into instead
     private readonly List<PhysicsParticleFeed> particleFeeds = [];
     private readonly PhysicsStaticGrid staticGrid = new();
+    private readonly List<IPhysicsFixture> touchedStaticFixtures = [];
     private PhysicsShape[] dynamicShapes = new PhysicsShape[16];
     private Vector2[] dynamicMin = [];
     private Vector2[] dynamicMax = [];
@@ -245,20 +246,13 @@ public sealed class PhysicsWorld : GameComponent
         }
         radialForces.Clear();
 
-        // 1. Reset contact state across static, dynamic and kinematic fixtures
-        foreach (var body in StaticBodies)
+        // 1. Reset contact state across static (only those touched last step), dynamic and kinematic fixtures
+        foreach (var fixture in touchedStaticFixtures)
         {
-            foreach (var fixture in body.DynamicFixtures)
-            {
-                fixture.IsTouching = false;
-                fixture.ActiveContacts.Clear();
-            }
-            foreach (var fixture in body.KinematicFixtures)
-            {
-                fixture.IsTouching = false;
-                fixture.ActiveContacts.Clear();
-            }
+            fixture.IsTouching = false;
+            fixture.ActiveContacts.Clear();
         }
+        touchedStaticFixtures.Clear();
 
         foreach (var body in dynamicBodies)
         {
@@ -358,7 +352,11 @@ public sealed class PhysicsWorld : GameComponent
                             }
 
                             fixture.IsTouching = true;
-                            otherFixture.IsTouching = true;
+                            if (!otherFixture.IsTouching)
+                            {
+                                otherFixture.IsTouching = true;
+                                touchedStaticFixtures.Add(otherFixture);
+                            }
                             fixture.ActiveContacts.Add(otherFixture);
                             otherFixture.ActiveContacts.Add(fixture);
                         }
@@ -460,7 +458,11 @@ public sealed class PhysicsWorld : GameComponent
                             }
 
                             fixture.IsTouching = true;
-                            otherFixture.IsTouching = true;
+                            if (!otherFixture.IsTouching)
+                            {
+                                otherFixture.IsTouching = true;
+                                touchedStaticFixtures.Add(otherFixture);
+                            }
                             fixture.ActiveContacts.Add(otherFixture);
                             otherFixture.ActiveContacts.Add(fixture);
                         }
@@ -548,7 +550,11 @@ public sealed class PhysicsWorld : GameComponent
                         if (fixture.TestIntersection(otherFixture, nextPositionY, staticGrid.GetBodyPosition(candidate)))
                         {
                             fixture.IsTouching = true;
-                            otherFixture.IsTouching = true;
+                            if (!otherFixture.IsTouching)
+                            {
+                                otherFixture.IsTouching = true;
+                                touchedStaticFixtures.Add(otherFixture);
+                            }
                             fixture.ActiveContacts.Add(otherFixture);
                             otherFixture.ActiveContacts.Add(fixture);
                         }

@@ -237,6 +237,13 @@ public sealed unsafe partial class GraphicsDevice
             dstAccess |= AccessFlags2.VertexAttributeReadBit | AccessFlags2.IndexReadBit | AccessFlags2.IndirectCommandReadBit;
         }
 
+        if ((targets & BarrierTargets.Indirect) != 0)
+        {
+            srcStage |= PipelineStageFlags2.DrawIndirectBit;
+            dstStage |= PipelineStageFlags2.ComputeShaderBit;
+            dstAccess |= AccessFlags2.ShaderStorageWriteBit;
+        }
+
         if (srcStage == PipelineStageFlags2.None)
         {
             srcStage = PipelineStageFlags2.AllCommandsBit;

@@ -372,3 +372,34 @@
   - `fluid`: `295 ms` / `0.067 ms` GPU / `6163.3 Hz` (`0.163 ms`, Physics `0.633 ms`) / `133.2 MiB` WS (`202.2 MiB` Private)
   - `meshes`: `302 ms` / `0.090 ms` GPU / `7130.0 Hz` (`0.143 ms`) / `132.0 MiB` WS (`199.6 MiB` Private)
   - `ui-controls`: `361 ms` / `0.060 ms` GPU / `7360.3 Hz` (`0.137 ms`) / `145.5 MiB` WS (`215.5 MiB` Private)
+
+## Pass 12 — HIDL Unboxed Numerics & Scope Pooling, Allocation-Free UI Script Apply, Indirect WAR Barrier, Row-Major TileMap/SDF & Sparse Physics/Audio (`results-pass12.json`)
+
+- **Binaries**:
+  - `Horizon.Testing.exe`: `25.09 MiB` | `Hex.exe`: `60.53 MiB`
+- **Changes**:
+  - **HIDL Runtime & Writer (`Horizon.HIDL`)**: Expanded `Values.SmallNumbers` cache to `[-16..512]` (keeping `-0.0f` separate) and made `Values.Number` public (`Values.cs`); added side-effect-free `TryEvaluateNumber` + unboxed arithmetic (`+ - * / %`), unary `+`/`-`, and numeric comparisons (`< > <= >= == !=`), `Environment.Captured` closure tracking with `MarkCaptured()`, and interpreter-local `scopePool` reuse in `Run` and `EvaluateForIn` (`Environment.cs`, `HIDLInterpreter.cs`); replaced `Lexer.Tokenize` in `HIDLWriter.IsIdentifier` with zero-alloc character scanning and switched `Vector2`/`3`/`4` serialization to `stackalloc float` (`HIDLWriter.cs`).
+  - **UI Script Property Application (`Horizon.UI`)**: Added cached boxed `UIComponent.ScriptValue` (`UIComponent.cs`, `.Scripting.cs`, `Label.cs`) and virtual `TrySetScriptProperty` fast paths across `UIComponent` (`Scripting`/`Hover`/`Sliding`/`Resizing`), `Panel`, `StackPanel`, `GridPanel`, `ScrollPanel`, `Label`, `Image`, and `Button` so `ApplyScript` updates built-in properties without allocating the lazy `script` dictionary or closures unless unknown/accessed.
+  - **Graphics, TileMap Occlusion & SDF Envelopes (`Horizon`)**: Added `BarrierTargets.Indirect` (`DrawIndirectBit` -> `ComputeShaderBit` / `ShaderStorageWriteBit`) for `TileMapBatch` indirect command buffer WAR hazards (`GraphicsEnums.cs`, `GraphicsDevice.Commands.cs`, `TileMapBatch.cs`); replaced strided column `Smear` in `TileMapGeometryOcclusion.cs` with row-major `SmearVertical` running column sums; added float-precision `OcclusionMap2D.EnvelopeFloat` for grids with `Math.Max(width, height) <= 2048`.
+  - **Sparse Physics Contact Reset & Audio Fast Paths (`Horizon`)**: Tracked touched static fixtures in `PhysicsWorld.touchedStaticFixtures` so step resets touch only static fixtures contacted in the prior step (`PhysicsWorld.cs`); added little-endian bulk `MemoryMarshal.Cast` decoding loops for 16-bit PCM and 32-bit float mono/stereo/multi-channel WAV payloads (`WaveFile.cs`); made `AudioDevice.IsPaused` lock-free via `volatile bool paused` (`AudioDevice.cs`); added `Pass12HidlTileMapPhysicsTests.cs`.
+- **Verification**:
+  - `Horizon.Tests` Release: `2,679 / 2,679` passed (`0` failed, `0` skipped, `19 s`)
+  - `Hex.Tests` Debug: `3,419 / 3,421` passed (`0` failed, `2` skipped, `2 m 9 s`)
+  - `Horizon.Testing --checks`: `848 / 848` passed (`0` failed, `MedianWallMs: 37126.9`)
+  - `Hex --selftest`: passed (`WallMs: 51804.9`)
+- **`HexStartup`** (3 cold runs, median):
+  - `Dawn`: `379 ms` | WS `155.8 MiB` | Priv `172.4 MiB` | Idle CPU `0.493%`
+  - `Dusk`: `286 ms` | WS `128.4 MiB` | Priv `146.2 MiB` | Idle CPU `8.398%`
+- **`HexSelfTest`** (`uicost`, `typing`, `garbage`):
+  - `idle`: Paint `0.232 ms` (`Layout 0.029`, `Compare 0.014`, `Draw 0.066`), `3439` quads/tick, `11/35` frames uploaded, `FrameGpu 1.338 ms`
+  - `typing`: Paint `0.251 ms` (`Layout 0.015`, `Compare 0.009`, `Draw 0.040`), `3481` quads/tick, `134/331` frames uploaded, `FrameGpu 1.443 ms`
+  - `wheel`: Paint `0.258 ms` (`Layout 0.015`, `Compare 0.001`, `Draw 0.044`), `3477` quads/tick, `282/579` frames uploaded, `FrameGpu 1.181 ms`
+  - `drag`: Paint `0.379 ms` (`Layout 0.062`, `Compare 0.012`, `Draw 0.085`), `4554` quads/tick, `55/65` frames uploaded, `FrameGpu 3.056 ms`
+  - `notebook`: Paint `0.442 ms` (`Layout 0.031`, `Compare 0.001`, `Draw 0.041`), `2513` quads/tick, `222/435` frames uploaded, `FrameGpu 1.271 ms`
+  - `typing csharp`: `Avg 4.2 / Med 4.2 / P95 4.4 / Worst 14.0 ms` | `typing hor`: `Avg 4.2 / Med 4.2 / P95 4.3 / Worst 24.6 ms`
+  - `garbage`: `designer 70 B/tick` | `code 112 B/tick` | `layoutCode 98 B/tick`
+- **`Horizon.TestingScenes`** (medians):
+  - `dungeon`: `460 ms` / `2.033 ms` GPU / `584.0 Hz` (`1.737 ms`) / `146.7 MiB` WS (`315.4 MiB` Private)
+  - `fluid`: `319 ms` / `0.067 ms` GPU / `6413.0 Hz` (`0.157 ms`, Physics `0.620 ms`, `0.0 B` Physics alloc) / `146.9 MiB` WS (`217.3 MiB` Private)
+  - `meshes`: `296 ms` / `0.090 ms` GPU / `6597.7 Hz` (`0.150 ms`) / `141.1 MiB` WS (`209.2 MiB` Private)
+  - `ui-controls`: `323 ms` / `0.070 ms` GPU / `8343.0 Hz` (`0.120 ms`) / `146.4 MiB` WS (`215.6 MiB` Private)

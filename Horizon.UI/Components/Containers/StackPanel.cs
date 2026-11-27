@@ -102,6 +102,17 @@ public class StackPanel : Panel
         }
     }
 
+    protected override bool TrySetScriptProperty(string name, Horizon.HIDL.Runtime.IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "spacing": Spacing = Horizon.UI.Scripting.UIScript.ToNumber(value, name); return true;
+            case "stretch": Stretch = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "direction": Direction = Horizon.UI.Scripting.UIScript.ToEnum<UIDirection>(value, name); return true;
+            default: return base.TrySetScriptProperty(name, value);
+        }
+    }
+
     protected override void DefineScript()
     {
         base.DefineScript();

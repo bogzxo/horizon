@@ -281,6 +281,19 @@ public partial class ScrollPanel : Panel
     protected internal override bool KeepsTouchDrag(Vector2 point) =>
         (MaxOffset > 0.0f && TrackBounds.Shrink(new UIEdges(-BarWidth)).Contains(point)) || base.KeepsTouchDrag(point);
 
+    protected override bool TrySetScriptProperty(string name, Horizon.HIDL.Runtime.IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "offset": Offset = Horizon.UI.Scripting.UIScript.ToNumber(value, name); return true;
+            case "wheel_step": WheelStep = Horizon.UI.Scripting.UIScript.ToNumber(value, name); return true;
+            case "bar_width": BarWidth = MathF.Max(1.0f, Horizon.UI.Scripting.UIScript.ToNumber(value, name)); return true;
+            case "bar_gap": BarGap = Horizon.UI.Scripting.UIScript.ToNumber(value, name); return true;
+            case "fade": Fade = MathF.Max(0.0f, Horizon.UI.Scripting.UIScript.ToNumber(value, name)); return true;
+            default: return base.TrySetScriptProperty(name, value);
+        }
+    }
+
     protected override void DefineScript()
     {
         base.DefineScript();

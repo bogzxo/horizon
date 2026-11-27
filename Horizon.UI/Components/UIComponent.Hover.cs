@@ -176,6 +176,17 @@ public abstract partial class UIComponent
         list.Box(Bounds, glow with { W = MathF.Min(1.0f, glow.W * HoverStrength * hoverness) });
     }
 
+    private bool TrySetHoverScriptProperty(string name, Horizon.HIDL.Runtime.IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "hover": Hover = UIScript.ToEnum<UIHover>(value, name); return true;
+            case "hover_amount": HoverAmount = UIScript.ToNumber(value, name); return true;
+            case "hover_time": HoverTime = MathF.Max(0.0f, UIScript.ToNumber(value, name)); return true;
+            default: return false;
+        }
+    }
+
     private void DefineHoverScript()
     {
         Expose(

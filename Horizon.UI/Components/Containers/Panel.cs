@@ -152,6 +152,28 @@ public class Panel : UIComponent
         }
     }
 
+    protected override bool TrySetScriptProperty(string name, Horizon.HIDL.Runtime.IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "background": Background = Horizon.UI.Scripting.UIScript.ToText(value, name); return true;
+            case "template": Template = Horizon.UI.Scripting.UIScript.ToText(value, name); return true;
+            case "preview_count": PreviewCount = Math.Max(0, (int)Horizon.UI.Scripting.UIScript.ToNumber(value, name)); return true;
+            case "stagger": Stagger = MathF.Max(0.0f, Horizon.UI.Scripting.UIScript.ToNumber(value, name)); return true;
+            case "color": Color = Horizon.UI.Scripting.UIScript.ToColor(value, name); return true;
+            case "radius": Radius = MathF.Max(0.0f, Horizon.UI.Scripting.UIScript.ToNumber(value, name)); return true;
+            case "inset": Inset = MathF.Max(0.0f, Horizon.UI.Scripting.UIScript.ToNumber(value, name)); return true;
+            case "clip": Clip = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "outline":
+            {
+                Vector4 outline = Horizon.UI.Scripting.UIScript.ToColor(value, name);
+                Outline = outline.W > 0.0f ? outline : null;
+                return true;
+            }
+            default: return base.TrySetScriptProperty(name, value);
+        }
+    }
+
     protected override void DefineScript()
     {
         base.DefineScript();

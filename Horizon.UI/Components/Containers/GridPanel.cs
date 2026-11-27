@@ -84,6 +84,16 @@ public class GridPanel : Panel
         }
     }
 
+    protected override bool TrySetScriptProperty(string name, Horizon.HIDL.Runtime.IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "columns": Columns = (int)Horizon.UI.Scripting.UIScript.ToNumber(value, name); return true;
+            case "spacing": Spacing = Horizon.UI.Scripting.UIScript.ToNumber(value, name); return true;
+            default: return base.TrySetScriptProperty(name, value);
+        }
+    }
+
     protected override void DefineScript()
     {
         base.DefineScript();

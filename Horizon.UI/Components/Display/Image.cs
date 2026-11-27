@@ -179,6 +179,18 @@ public class Image : UIComponent
         list.NineSlice(first, Bounds, Tint);
     }
 
+    protected override bool TrySetScriptProperty(string name, Horizon.HIDL.Runtime.IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "region": Region = Horizon.UI.Scripting.UIScript.ToText(value, name); return true;
+            case "file": File = Horizon.UI.Scripting.UIScript.ToText(value, name); return true;
+            case "animated": Animated = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "tint": Tint = Horizon.UI.Scripting.UIScript.ToColor(value, name); return true;
+            default: return base.TrySetScriptProperty(name, value);
+        }
+    }
+
     protected override void DefineScript()
     {
         base.DefineScript();

@@ -384,6 +384,42 @@ public class Label : UIComponent
             list.Text(text, TextBounds, Align, ScaleOf(skin), color);
     }
 
+    protected override bool TrySetScriptProperty(string name, Horizon.HIDL.Runtime.IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "text": Text = Horizon.UI.Scripting.UIScript.ToText(value, name); return true;
+            case "text_scale": TextScale = Horizon.UI.Scripting.UIScript.ToNumber(value, name); return true;
+            case "bold": Bold = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "color": Color = Horizon.UI.Scripting.UIScript.ToColor(value, name); return true;
+            case "dim": Dim = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "wrap": Wrap = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "markdown": Markdown = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "code_language":
+            {
+                string lang = Horizon.UI.Scripting.UIScript.ToText(value, name);
+                CodeLanguage = string.IsNullOrWhiteSpace(lang) ? null : lang;
+                return true;
+            }
+            case "wrap_around":
+            {
+                WrapAround.Clear();
+                if (value is Horizon.HIDL.Runtime.ListValue { Items: { } items })
+                {
+                    foreach (var item in items)
+                        WrapAround.Add(FromScript(item) ?? throw new Exception("wrap_around has to be components."));
+                }
+                else if (value is not Horizon.HIDL.Runtime.NullValue)
+                {
+                    WrapAround.Add(FromScript(value) ?? throw new Exception("wrap_around has to be a component or a list of them."));
+                }
+                return true;
+            }
+            case "align": Align = Horizon.UI.Scripting.UIScript.ToEnum<Origin>(value, name); return true;
+            default: return base.TrySetScriptProperty(name, value);
+        }
+    }
+
     protected override void DefineScript()
     {
         base.DefineScript();
@@ -398,7 +434,7 @@ public class Label : UIComponent
         Expose("code_language", () => CodeLanguage ?? string.Empty, value => CodeLanguage = string.IsNullOrWhiteSpace(value) ? null : value);
         Expose(
             "wrap_around",
-            () => new Horizon.HIDL.Runtime.ListValue([.. WrapAround.Select(other => other.Object)]),
+            () => new Horizon.HIDL.Runtime.ListValue([.. WrapAround.Select(other => other.ScriptValue)]),
             value =>
             {
                 // One component or a list of them

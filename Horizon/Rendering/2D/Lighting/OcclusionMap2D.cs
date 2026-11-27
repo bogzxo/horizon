@@ -350,27 +350,90 @@ public sealed class OcclusionMap2D : IDisposable
             }
         });
 
-        Parallel.For(0, width, Spare, () => new Envelope(height), (x, _, envelope) =>
+        if (Math.Max(width, height) <= 2048)
         {
-            for (int y = 0; y < height; y++)
+            Parallel.For(0, width, Spare, () => new EnvelopeFloat(height), (x, _, envelope) =>
             {
-                float d = along[x + y * width];
-                envelope.Heights[y] = (double)d * d;
-            }
+                for (int y = 0; y < height; y++)
+                {
+                    float d = along[x + y * width];
+                    envelope.Heights[y] = d * d;
+                }
 
-            envelope.Lower(height);
+                envelope.Lower(height);
 
-            for (int y = 0; y < height; y++)
-                along[x + y * width] = (float)envelope.Distances[y];
+                for (int y = 0; y < height; y++)
+                    along[x + y * width] = envelope.Distances[y];
 
-            return envelope;
-        }, static _ => { });
+                return envelope;
+            }, static _ => { });
+        }
+        else
+        {
+            Parallel.For(0, width, Spare, () => new Envelope(height), (x, _, envelope) =>
+            {
+                for (int y = 0; y < height; y++)
+                {
+                    float d = along[x + y * width];
+                    envelope.Heights[y] = (double)d * d;
+                }
+
+                envelope.Lower(height);
+
+                for (int y = 0; y < height; y++)
+                    along[x + y * width] = (float)envelope.Distances[y];
+
+                return envelope;
+            }, static _ => { });
+        }
 
         return along;
     }
 
+    // Float-precision lower envelope when dimensions fit cleanly, halving per-core scratch cache footprint
+    internal sealed class EnvelopeFloat(int size)
+    {
+        public readonly float[] Heights = new float[size];
+        public readonly float[] Distances = new float[size];
+        private readonly int[] apexes = new int[size];
+        private readonly float[] bounds = new float[size + 1];
+
+        public void Lower(int n)
+        {
+            int k = 0;
+            apexes[0] = 0;
+            bounds[0] = float.NegativeInfinity;
+            bounds[1] = float.PositiveInfinity;
+
+            for (int q = 1; q < n; q++)
+            {
+                float s;
+                while (true)
+                {
+                    int p = apexes[k];
+                    s = (Heights[q] + (float)q * q - (Heights[p] + (float)p * p)) / (2.0f * (q - p));
+                    if (s > bounds[k]) break;
+                    k--;
+                }
+
+                k++;
+                apexes[k] = q;
+                bounds[k] = s;
+                bounds[k + 1] = float.PositiveInfinity;
+            }
+
+            k = 0;
+            for (int q = 0; q < n; q++)
+            {
+                while (bounds[k + 1] < q) k++;
+                int p = apexes[k];
+                Distances[q] = (float)(q - p) * (q - p) + Heights[p];
+            }
+        }
+    }
+
     // The scratch of one column of the lower envelope, one a core
-    private sealed class Envelope(int size)
+    internal sealed class Envelope(int size)
     {
         public readonly double[] Heights = new double[size];
         public readonly double[] Distances = new double[size];

@@ -257,10 +257,10 @@ colours if `skin.TryGetRegion` fails.
 - No invalidation API: everything repainted every tick; savings come from (1) `Retained` picture overlay when nothing
   changed (invalidated by `pictureGlassGeneration` / `ForgetGlass`), (2) `FrameRateLimit` + `WindowManager.PaceCalmFrames()` in `RunMode.Application`, (3) **per-component paint reuse** (`Drawing/UIDrawList.Reuse.cs`): override
   `protected virtual long PaintVersion` (return a number that changes whenever what you paint changes; -1 = never
-  reuse; leaf components only — `UIComponent.cs:593`). If version and `PaintContext` (bounds, clip, offsets) match last tick, the component's quads are copied from
-  the previous list; glass panes participate in `PaintRecord` reuse by rebasing `Under` and `Start`. Worth it for heavy painters (`CodeEditor`, `Label` via `UIRichText` layout version, `TerminalView.PaintVersion` in `horizon/Horizon.Terminal/TerminalView.cs`); verify with `HORIZON_UI_REUSE_CHECK=1`
+  reuse; leaf components only — `UIComponent.cs:593`). If version and `PaintContext` (or whole-pixel shifted bounds/origin via `TranslationFreeContext`) match last tick, the component's quads are copied and rebased from
+  the previous list; glass panes participate in `PaintRecord` reuse by rebasing `Under` and `Start`. Worth it for heavy painters (`CodeEditor`, `Label` via `UIRichText` layout version, `TabStrip` tab measurement cache, `TerminalView.PaintVersion` in `horizon/Horizon.Terminal/TerminalView.cs`); verify with `HORIZON_UI_REUSE_CHECK=1`
   (paints anyway and logs differences). Call `list.Uncacheable()` for things that can't be replayed (raised
-  components, animated icons).
+  components, animated icons). Note: built-in layout properties also apply via `UIComponent.TrySetScriptProperty` without materializing the lazy `script` dictionary, and `UIComponent.ScriptValue` caches the boxed wrapper.
 - **Terminal memory & paint efficiency**: `TerminalCell` (`horizon/Horizon.Terminal/TerminalCell.cs`) is packed to
   32 bytes with scrollback blank-tail compaction, paired with `TerminalView.PaintVersion` reuse.
 - **Settings virtualization**: `SettingsPage.RowsStack` (`Components/Controls/Settings/SettingsPage.Rows.cs`) keeps only viewport-visible rows (+ buffer and focused/flashing/popup rows) attached as live children when a page exceeds 24 items, avoiding ~1,500-component measure/arrange/update overhead per tick. `SettingsPage.RowItems` exposes the full list (attached and detached) for tests/automation (e.g. `DawnScene.SelfTest.cs:Descendants`).

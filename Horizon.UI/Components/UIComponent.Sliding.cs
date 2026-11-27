@@ -143,6 +143,17 @@ public abstract partial class UIComponent
         _ => bounds
     };
 
+    private bool TrySetSlideScriptProperty(string name, Horizon.HIDL.Runtime.IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "slide": Slide = UIScript.ToEnum<UISlide>(value, name); return true;
+            case "slide_time": SlideTime = MathF.Max(0.0f, UIScript.ToNumber(value, name)); return true;
+            case "shown": Show(UIScript.ToBoolean(value, name)); return true;
+            default: return false;
+        }
+    }
+
     private void DefineSlideScript()
     {
         Expose(

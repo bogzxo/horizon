@@ -475,7 +475,7 @@ internal sealed class TileMapGpu : IDisposable
 
         // Guard against WAR when reusing an indirect buffer pair that a previous DrawIndirectCount read
         if (activeCommands.LastUse != 0)
-            device.Barrier(BarrierTargets.ShaderStorage);
+            device.Barrier(BarrierTargets.ShaderStorage | BarrierTargets.Indirect);
 
         // Which chunks are in view, worked out by the GPU into a draw for every chunk, empty for one that isn't,
         // in the order the chunks were packed, which is the order of the layers

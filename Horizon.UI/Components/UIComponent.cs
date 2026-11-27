@@ -268,6 +268,14 @@ public abstract partial class UIComponent
         }
     }
 
+    private IRuntimeValue? scriptValue;
+
+    /// <summary>Cached boxed <see cref="IRuntimeValue"/> wrapper for <see cref="Object"/>.</summary>
+    [Horizon.Core.HideInInspector]
+    public IRuntimeValue ScriptValue => scriptValue ??= Object;
+
+    internal bool HasScriptDictionary => script is not null;
+
     /// <summary>The component a script object belongs to, null if it isn't one of ours.</summary>
     public static UIComponent? FromScript(IRuntimeValue? value) =>
         value is ObjectValue { Properties: not null } obj && scripted.TryGetValue(obj.Properties, out var component)

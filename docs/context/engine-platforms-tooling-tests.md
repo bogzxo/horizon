@@ -303,7 +303,7 @@ dotnet test Horizon.Tests/Horizon.Tests.csproj
 dotnet test Horizon.Tests/Horizon.Tests.csproj --filter "FullyQualifiedName~Horizon.Tests.Shaders"     # tasks.hor test_shaders
 dotnet test Horizon.Tests --no-build --configuration Release --verbosity normal --blame-hang-timeout 3m --blame-hang-dump-type none   # CI
 ```
-Pass 7 counts: `Horizon.Tests` = 2,640 unit tests; `Horizon.Testing --checks` = 848 self-checks. Self-test suite note: run from the real build output, not a copy (copies lose `hex-extensions`; memory note), and avoid heredocs that mangle escapes.
+Pass 12 counts: `Horizon.Tests` = 2,679 Release unit tests; `Horizon.Testing --checks` = 848 self-checks. Self-test suite note: run from the real build output, not a copy (copies lose `hex-extensions`; memory note), and avoid heredocs that mangle escapes.
 
 ## 11. CI (`.github/workflows/`)
 
@@ -397,7 +397,7 @@ Mirror Android/iOS: `IPlatform` + `IPlatformHost` + `IPlatformSurface` + `IPlatf
 | VT parsing / screen | `Horizon.Terminal/VtParser.cs`, `TerminalScreen.cs` (`TerminalView` one-shot `requestedVersion` & `RequestTickIn` resize debounce) |
 | Terminal embedding in an app | `Horizon.Terminal/Hosting/TerminalHost.cs`, `TerminalHost.Watching.cs` (`IsWatchedPath` filter before `Wake()`, non-recursive settings/keys watchers, `RequestTickIn` settle), `ITerminalHostUi.cs`, `ITerminalProgram.cs` |
 | Terminal plugins/keys/shell scripts | `Horizon.Terminal/Assets/terminal/**` (`dusk.ps1` 24h `DUSK_COMMANDS_FILE` cache; lazy zero-closure `TerminalCommandLookup.ScanPath`; non-blocking `TerminalProfiles.Discover`) |
-| LSP client | `Horizon.Tooling/LanguageServers/LanguageServers.cs`, `LanguageServer.cs` (cached `incrementalChanges`, span suffix glob fast-path) |
+| LSP client | `Horizon.Tooling/LanguageServers/LanguageServers.cs`, `JsonRpcConnection.cs` (`IRawPendingRequest`), `LanguageServer.cs` (streaming UTF-8 `SemanticTokens`, `(Method, Uri)` background coalescing, zero-join `string[]` `Open`/`Change` sync, cached `incrementalChanges`) |
 | Desktop input & clipboard | `Horizon.Platform.Desktop` (`SilkInputSource.AsciiStrings` 128-entry ASCII table, `WindowsClipboard` direct span copy) |
 | Debugger client | `Horizon.Tooling/Debugging/DebugSession.cs`, `DebugAdapterConnection.cs` |
 | Check harness | `Horizon.Testing/Host/TestHost.cs`, `TestCatalog.cs`, `CheckReport.cs`, `Checks/TestChecks.cs`, `Checks/UISelfTest.cs` |

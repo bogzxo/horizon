@@ -436,6 +436,29 @@ public class Button : UIComponent
             OnClick();
     }
 
+    protected override bool TrySetScriptProperty(string name, Horizon.HIDL.Runtime.IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "label": Label = Horizon.UI.Scripting.UIScript.ToText(value, name); return true;
+            case "icon": Icon = Horizon.UI.Scripting.UIScript.ToText(value, name); return true;
+            case "align": Align = Horizon.UI.Scripting.UIScript.ToEnum<Origin>(value, name); return true;
+            case "lbl_scale": LabelScale = Horizon.UI.Scripting.UIScript.ToNumber(value, name); return true;
+            case "style": Style = Horizon.UI.Scripting.UIScript.ToText(value, name); return true;
+            case "selected": Selected = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "primary": Primary = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "danger": Danger = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "indicator": Indicator = Horizon.UI.Scripting.UIScript.ToEnum<UIResize>(value, name); return true;
+            case "animated": Animated = Horizon.UI.Scripting.UIScript.ToBoolean(value, name); return true;
+            case "spr_scale": Scale = Horizon.UI.Scripting.UIScript.ToVector2(value, name); return true;
+            case "on_pressed":
+            case "on_press":
+                pressedHandler = value;
+                return true;
+            default: return base.TrySetScriptProperty(name, value);
+        }
+    }
+
     protected override void DefineScript()
     {
         base.DefineScript();
@@ -453,7 +476,7 @@ public class Button : UIComponent
 
         // Scale used to be called spr_scale, and the handler could only be given as on_press up front.
         Expose("spr_scale", () => Scale, value => Scale = value);
-        Expose("on_pressed", () => pressedHandler ?? new NullValue(), value => pressedHandler = value);
-        Expose("on_press", () => pressedHandler ?? new NullValue(), value => pressedHandler = value);
+        Expose("on_pressed", () => pressedHandler ?? Horizon.HIDL.Runtime.Values.Null, value => pressedHandler = value);
+        Expose("on_press", () => pressedHandler ?? Horizon.HIDL.Runtime.Values.Null, value => pressedHandler = value);
     }
 }

@@ -282,6 +282,19 @@ public abstract partial class UIComponent
         }
     }
 
+    private bool TrySetResizeScriptProperty(string name, Horizon.HIDL.Runtime.IRuntimeValue value)
+    {
+        switch (name)
+        {
+            case "resize": Resizable = ReadResize(UIScript.ToText(value, name)); return true;
+            case "min_size": MinSize = UIScript.ToVector2(value, name); return true;
+            case "max_size": MaxSize = UIScript.ToVector2(value, name); return true;
+            case "on_resize": resizedHandler = value; return true;
+            case "on_resize_end": resizeEndedHandler = value; return true;
+            default: return false;
+        }
+    }
+
     /// <summary>Helper method to declare what a layout file can say about dragging the edges.</summary>
     private void DefineResizeScript()
     {
@@ -291,8 +304,8 @@ public abstract partial class UIComponent
             value => Resizable = ReadResize(UIScript.ToText(value, "resize")));
         Expose("min_size", () => MinSize, value => MinSize = value);
         Expose("max_size", () => MaxSize, value => MaxSize = value);
-        Expose("on_resize", () => resizedHandler ?? new NullValue(), value => resizedHandler = value);
-        Expose("on_resize_end", () => resizeEndedHandler ?? new NullValue(), value => resizeEndedHandler = value);
+        Expose("on_resize", () => resizedHandler ?? Values.Null, value => resizedHandler = value);
+        Expose("on_resize_end", () => resizeEndedHandler ?? Values.Null, value => resizeEndedHandler = value);
     }
 
     private static string Describe(UIResize edges)

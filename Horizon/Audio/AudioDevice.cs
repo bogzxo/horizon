@@ -30,7 +30,7 @@ public sealed class AudioDevice : IDisposable
     // Keeps pause, resume and dispose in order on the output, without holding up a buffer being mixed
     private readonly object control = new();
     private AudioFormat format;
-    private bool paused;
+    private volatile bool paused;
     private bool disposed;
 
     /// <summary>What plays, see <see cref="AudioMixer"/>.</summary>
@@ -40,13 +40,7 @@ public sealed class AudioDevice : IDisposable
     public bool IsOpen => output is not null;
 
     /// <summary>Whether playing is held where it is, see <see cref="Pause"/>.</summary>
-    public bool IsPaused
-    {
-        get
-        {
-            lock (rendering) return paused;
-        }
-    }
+    public bool IsPaused => paused;
 
     /// <summary>The format everything is played in, the one the device gave back when there is one.</summary>
     public AudioFormat Format

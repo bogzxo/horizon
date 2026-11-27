@@ -108,11 +108,23 @@ internal sealed class TileMapGeometryOcclusion : IDisposable
         // and is a running sum a row, no matter how far it reaches
         float cellWorld = MathF.Max(map.TileSize.X, map.TileSize.Y) / cells;
         int radius = Math.Max(1, (int)MathF.Round(reach * 0.5f / cellWorld));
-        var scratch = new float[Math.Max(width, height)];
-        for (int pass = 0; pass < 2; pass++)
+        int window = 2 * radius + 1;
+        var scratch = new float[width];
+        var colSums = System.Buffers.ArrayPool<float>.Shared.Rent(width);
+        var next = System.Buffers.ArrayPool<float>.Shared.Rent(width * height);
+        try
         {
-            for (int y = 0; y < height; y++) Smear(smeared, y * width, 1, width, radius, scratch);
-            for (int x = 0; x < width; x++) Smear(smeared, x, width, height, radius, scratch);
+            for (int pass = 0; pass < 2; pass++)
+            {
+                for (int y = 0; y < height; y++) Smear(smeared, y * width, 1, width, radius, scratch);
+                SmearVertical(smeared, next, width, height, radius, window, colSums);
+                Buffer.BlockCopy(next, 0, smeared, 0, width * height * sizeof(float));
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<float>.Shared.Return(colSums);
+            System.Buffers.ArrayPool<float>.Shared.Return(next);
         }
 
         // Up against a flat floor half of what is round a spot is solid, and that is the whole of the strength,
@@ -128,8 +140,59 @@ internal sealed class TileMapGeometryOcclusion : IDisposable
         return new Picture(width, height, pixels);
     }
 
+    /// <summary>Helper method to replace each column by the row-major running mean over +/- radius rows, what is past the ends being open.</summary>
+    internal static void SmearVertical(float[] src, float[] dst, int width, int height, int radius, int window, float[] colSums)
+    {
+        Array.Clear(colSums, 0, width);
+        int warmRows = Math.Min(radius, height);
+        for (int y = 0; y < warmRows; y++)
+        {
+            int rowOffset = y * width;
+            for (int x = 0; x < width; x++)
+                colSums[x] += src[rowOffset + x];
+        }
+
+        for (int y = 0; y < height; y++)
+        {
+            int addY = y + radius;
+            int remY = y - radius - 1;
+            int dstOffset = y * width;
+
+            if (addY < height && remY >= 0)
+            {
+                int addOffset = addY * width;
+                int remOffset = remY * width;
+                for (int x = 0; x < width; x++)
+                {
+                    float sum = colSums[x] + src[addOffset + x] - src[remOffset + x];
+                    colSums[x] = sum;
+                    dst[dstOffset + x] = sum / window;
+                }
+            }
+            else
+            {
+                if (addY < height)
+                {
+                    int addOffset = addY * width;
+                    for (int x = 0; x < width; x++)
+                        colSums[x] += src[addOffset + x];
+                }
+
+                if (remY >= 0)
+                {
+                    int remOffset = remY * width;
+                    for (int x = 0; x < width; x++)
+                        colSums[x] -= src[remOffset + x];
+                }
+
+                for (int x = 0; x < width; x++)
+                    dst[dstOffset + x] = colSums[x] / window;
+            }
+        }
+    }
+
     /// <summary>Helper method to replace a line of values (a row or a column) by the mean of each one's neighbours, what is past the ends being open.</summary>
-    private static void Smear(float[] values, int first, int stride, int count, int radius, float[] scratch)
+    internal static void Smear(float[] values, int first, int stride, int count, int radius, float[] scratch)
     {
         float sum = 0.0f;
         for (int i = 0; i < Math.Min(radius, count); i++) sum += values[first + i * stride];
