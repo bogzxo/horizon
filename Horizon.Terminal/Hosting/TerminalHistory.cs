@@ -15,6 +15,8 @@ public sealed class TerminalHistory
 
     private readonly List<string> lines = [];
     private readonly string? path;
+    private readonly Lock loadGate = new();
+    private bool loaded;
 
     /// <summary>The file it is kept in, null for one that lives as long as the run.</summary>
     public string? Path => path;
@@ -22,31 +24,75 @@ public sealed class TerminalHistory
     /// <summary>How many lines are kept at most, the oldest let go of first.</summary>
     public int Limit { get; set; } = DEFAULT_LIMIT;
 
-    public IReadOnlyList<string> Lines => lines;
+    public IReadOnlyList<string> Lines
+    {
+        get
+        {
+            EnsureLoaded();
+            return lines;
+        }
+    }
 
-    public int Count => lines.Count;
+    public int Count
+    {
+        get
+        {
+            EnsureLoaded();
+            return lines.Count;
+        }
+    }
 
     /// <param name="path">The file it is kept in, null for a history that lives as long as the run (the self test).</param>
-    public TerminalHistory(string? path)
+    /// <param name="deferLoad">Whether reading <paramref name="path"/> from disk waits until the history is first read or appended.</param>
+    public TerminalHistory(string? path, bool deferLoad = false)
     {
         this.path = path;
-        if (path is null || !File.Exists(path))
+        if (!deferLoad)
+            EnsureLoaded();
+    }
+
+    /// <summary>Loads history lines from disk once if they were deferred.</summary>
+    internal void EnsureLoaded()
+    {
+        if (loaded)
             return;
 
-        try
+        lock (loadGate)
         {
-            foreach (string line in File.ReadAllLines(path))
-                Add(line, save: false);
+            if (loaded)
+                return;
+            loaded = true;
+
+            if (path is null || !File.Exists(path))
+                return;
+
+            try
+            {
+                foreach (string line in File.ReadAllLines(path))
+                    AddLoadedLine(line);
+            }
+            catch (Exception)
+            {
+                // A history that doesn't read is no history, nothing to say about it
+            }
         }
-        catch (Exception)
-        {
-            // A history that doesn't read is no history, nothing to say about it
-        }
+    }
+
+    private void AddLoadedLine(string line)
+    {
+        line = line.Trim();
+        if (line.Length == 0 || (lines.Count > 0 && lines[^1] == line))
+            return;
+
+        lines.Add(line);
+        while (lines.Count > Limit)
+            lines.RemoveAt(0);
     }
 
     /// <summary>Puts a line in, last, unless it is blank or the same as the last one. True if it went in.</summary>
     public bool Add(string line, bool save = true)
     {
+        EnsureLoaded();
         line = line.Trim();
         if (line.Length == 0 || (lines.Count > 0 && lines[^1] == line))
             return false;
@@ -62,6 +108,7 @@ public sealed class TerminalHistory
 
     public void Clear()
     {
+        loaded = true;
         lines.Clear();
         Save();
     }
@@ -107,6 +154,7 @@ public sealed class TerminalHistory
     /// </summary>
     public string? Step(Cursor cursor, int direction, string typing)
     {
+        EnsureLoaded();
         if (lines.Count == 0 || direction == 0)
             return null;
 

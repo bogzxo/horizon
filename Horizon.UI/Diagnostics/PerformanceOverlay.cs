@@ -125,7 +125,8 @@ public sealed class PerformanceOverlay : GameObject
         module.ShowInLayoutDebugger = false;
 
         face = new PerformanceFace(module, sample);
-        face.Pill.Visible = face.Card.Visible = false;
+        face.Pill.Visible = false;
+        face.HideCard();
         keyed = true;
         capped = ToggleKey;
         face.SetKey(KeyName(capped));
@@ -145,7 +146,10 @@ public sealed class PerformanceOverlay : GameObject
 
             // Whichever of the two it is, tucked into its corner, a bit off the edges
             Components.UIComponent up = detail == PerformanceDetail.Full ? face.Card : face.Pill;
-            face.Card.Visible = detail == PerformanceDetail.Full;
+            if (detail == PerformanceDetail.Full)
+                face.Card.Visible = true;
+            else
+                face.HideCard();
             face.Pill.Visible = detail != PerformanceDetail.Full;
             up.Anchor = Corner;
             up.Position = Corner.ToVector() * (-2.0f * MARGIN);

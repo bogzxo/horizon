@@ -68,6 +68,12 @@ public sealed class TerminalHostOptions
     public bool DiscoverProfiles { get; init; } = true;
 
     /// <summary>
+    /// When true, <see cref="TerminalHost.Start"/> defers profile probing, plugin HIDL runtimes, key files,
+    /// history reading, API export, and file watchers until <see cref="TerminalHost.EnsureStarted"/> runs.
+    /// </summary>
+    public bool DeferStartup { get; init; }
+
+    /// <summary>
     /// The program an embedded profile runs, null for one the host doesn't know either. Asked first, the host runs
     /// the HIDL REPL for the profile with the id hidl when the program has nothing of its own for it.
     /// </summary>
@@ -95,6 +101,9 @@ public sealed partial class TerminalHost : IDisposable
     private readonly TerminalHostOptions options;
     private readonly List<TerminalPlugin> plugins = [];
     private readonly Dictionary<TerminalPlugin, ObjectValue> objects = [];
+    private bool deferredStartPending;
+    private bool startupCompleted;
+    private bool watchDeferred;
 
     public TerminalPanel Panel { get; }
     public TerminalCommands Commands { get; } = new();
@@ -102,15 +111,26 @@ public sealed partial class TerminalHost : IDisposable
     public TerminalHistory History { get; }
     public TerminalHostOptions Options => options;
 
+    /// <summary>Whether deferred startup initialization (profiles, plugins, keys, API) has completed.</summary>
+    internal bool IsStartupCompleted => startupCompleted;
+
     /// <summary>The plugins there are, on and off, in the order they were found.</summary>
-    public IReadOnlyList<TerminalPlugin> Plugins => plugins;
+    public IReadOnlyList<TerminalPlugin> Plugins
+    {
+        get
+        {
+            if (deferredStartPending)
+                EnsureStarted();
+            return plugins;
+        }
+    }
 
     public TerminalHost(TerminalPanel panel, TerminalHostOptions options)
     {
         Panel = panel;
         this.options = options;
         Settings = new TerminalSettings(options.SettingsFile);
-        History = new TerminalHistory(options.HistoryFile) { Limit = Settings.HistorySize };
+        History = new TerminalHistory(options.HistoryFile, deferLoad: options.DeferStartup) { Limit = Settings.HistorySize };
         Commands.OnProblem = problem => Say(problem, true);
 
         panel.OnKey = KeyPressed;
@@ -136,6 +156,9 @@ public sealed partial class TerminalHost : IDisposable
     /// <summary>A terminal as it is made, what it types followed, what it writes read for problems, its links opened.</summary>
     private void Wire(TerminalView view)
     {
+        if (deferredStartPending)
+            EnsureStarted();
+
         view.OnInput = bytes => Typed(view, bytes);
         view.AllowClipboard = Settings.ClipboardWrite;
         view.OnTextLink = link => OpenLink(link);
@@ -290,13 +313,46 @@ public sealed partial class TerminalHost : IDisposable
     /// <summary>The profiles found, the plugins started, the keys read and the settings put on the panel. Once.</summary>
     public void Start()
     {
+        if (!Panel.Profiles.Exists(profile => profile.Id == HIDL_PROFILE))
+            Panel.Profiles.Add(new TerminalProfile("HIDL", string.Empty, "symbol-namespace", HIDL_PROFILE) { Kind = TerminalProfileKind.Embedded });
+
+        ApplySettings();
+        if (options.DeferStartup)
+        {
+            deferredStartPending = true;
+            return;
+        }
+
+        EnsureStarted();
+    }
+
+    /// <summary>
+    /// Completes profile discovery, plugin loading, key binding, API export, history reading, and deferred file watching
+    /// once when <see cref="TerminalHostOptions.DeferStartup"/> was enabled. Safe to call multiple times.
+    /// </summary>
+    public void EnsureStarted()
+    {
+        if (startupCompleted)
+            return;
+
+        startupCompleted = true;
+        deferredStartPending = false;
+        History.EnsureLoaded();
+
         if (options.DiscoverProfiles)
         {
             profilesVersion = TerminalProfiles.Version;
+            int insertAt = 0;
+            while (insertAt < Panel.Profiles.Count && Panel.Profiles[insertAt].Kind != TerminalProfileKind.Embedded)
+                insertAt++;
+
             foreach (TerminalProfile profile in TerminalProfiles.Discover())
             {
-                if (Settings.Wsl || !profile.Id.StartsWith("wsl:", StringComparison.Ordinal))
-                    Panel.Profiles.Add(profile);
+                if (!Settings.Wsl && profile.Id.StartsWith("wsl:", StringComparison.Ordinal))
+                    continue;
+
+                if (!Panel.Profiles.Exists(existing => string.Equals(existing.Id, profile.Id, StringComparison.OrdinalIgnoreCase)))
+                    Panel.Profiles.Insert(insertAt++, profile);
             }
             profilesVersion = TerminalProfiles.Version;
         }
@@ -308,6 +364,12 @@ public sealed partial class TerminalHost : IDisposable
         LoadPlugins();
         Commands.LoadKeys([.. options.KeysFiles]);
         WriteApi();
+
+        if (watchDeferred)
+        {
+            watchDeferred = false;
+            WatchNow();
+        }
     }
 
     /// <summary>
@@ -370,6 +432,9 @@ public sealed partial class TerminalHost : IDisposable
     /// <summary>The description of the program as it is now, what an editor in the program itself knows its files by.</summary>
     public TerminalApiDescription Describe()
     {
+        if (deferredStartPending)
+            EnsureStarted();
+
         TerminalApiDescription described = options.ApiFile is { } path && File.Exists(path) && TerminalApiDescription.Read(File.ReadAllText(path)) is { } read
             ? read
             : TerminalApiDescription.Engine();
@@ -393,6 +458,9 @@ public sealed partial class TerminalHost : IDisposable
     /// <summary>A shell picked from the profiles and a tab of it opened.</summary>
     public void NewTabWith()
     {
+        if (deferredStartPending)
+            EnsureStarted();
+
         var profiles = Panel.Profiles.ToArray();
         options.Ui?.Choose("New tab", "Which shell", [.. profiles.Select(profile => $"$({profile.Icon}) {profile.Name}   {profile.Command}")], index => Panel.NewTab(profiles[index]));
     }
@@ -400,6 +468,9 @@ public sealed partial class TerminalHost : IDisposable
     /// <summary>Every command with its key in a list, a pick runs it.</summary>
     public void ListKeys()
     {
+        if (deferredStartPending)
+            EnsureStarted();
+
         var commands = Commands.All.OrderBy(command => command.Title, StringComparer.OrdinalIgnoreCase).ToArray();
         options.Ui?.Choose("Keyboard shortcuts", "Every command with its key, a pick runs it, keys.hor changes them",
             [.. commands.Select(command => $"{command.Title}   ({(command.Key.Length > 0 ? command.Key : "no key")})   {command.Name}")], index => Run(commands[index].Name));
@@ -408,6 +479,9 @@ public sealed partial class TerminalHost : IDisposable
     /// <summary>Every plugin with whether it is on, a pick switches it.</summary>
     public void ListPlugins()
     {
+        if (deferredStartPending)
+            EnsureStarted();
+
         var listed = plugins.ToArray();
         options.Ui?.Choose("Plugins", "The plugins there are, pick one to switch it on or off",
             [.. listed.Select(plugin => $"$({(plugin.BuiltIn ? "lock" : plugin.Enabled ? "check" : "circle-large-outline")}) {plugin.Name} {plugin.Version}   {plugin.Description}   ({(plugin.Failed is not null ? $"stopped, {plugin.Failed}" : plugin.BuiltIn ? "comes with it, always on" : plugin.Enabled ? "on" : "off")})")],
@@ -420,6 +494,9 @@ public sealed partial class TerminalHost : IDisposable
     /// </summary>
     public void OpenSettings()
     {
+        if (deferredStartPending)
+            EnsureStarted();
+
         if (options.Ui?.ShowSettings() == true)
             return;
 
@@ -437,6 +514,9 @@ public sealed partial class TerminalHost : IDisposable
     /// <summary>The user's keys.hor opened to edit, made with a line of help first when it isn't there yet.</summary>
     public void OpenKeys()
     {
+        if (deferredStartPending)
+            EnsureStarted();
+
         if (options.KeysFiles.Count == 0)
             return;
 
@@ -499,6 +579,9 @@ public sealed partial class TerminalHost : IDisposable
     /// <summary>A profile by its id or its name, null for none or an empty text.</summary>
     public TerminalProfile? ProfileCalled(string id)
     {
+        if (deferredStartPending)
+            EnsureStarted();
+
         if (id.Length == 0)
             return null;
 
@@ -512,11 +595,22 @@ public sealed partial class TerminalHost : IDisposable
     }
 
     /// <summary>The profile a new tab gets, the settings' one or the first there is.</summary>
-    public TerminalProfile? UsualProfile => ProfileCalled(Settings.Profile) ?? Panel.Profiles.FirstOrDefault();
+    public TerminalProfile? UsualProfile
+    {
+        get
+        {
+            if (deferredStartPending)
+                EnsureStarted();
+            return ProfileCalled(Settings.Profile) ?? Panel.Profiles.FirstOrDefault();
+        }
+    }
 
     /// <summary>Runs a command by name, false when there is none by it. What it does going wrong is said and not thrown.</summary>
     public bool Run(string name)
     {
+        if (deferredStartPending)
+            EnsureStarted();
+
         if (Commands.Find(name) is not { } command)
         {
             Say($"nothing called {name}", true);
@@ -719,7 +813,7 @@ public sealed partial class TerminalHost : IDisposable
             }
         }
 
-        if (options.DiscoverProfiles && profilesVersion != TerminalProfiles.Version)
+        if (startupCompleted && options.DiscoverProfiles && profilesVersion != TerminalProfiles.Version)
             SyncDiscoveredProfiles();
 
         TakeChanges();

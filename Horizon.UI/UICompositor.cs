@@ -553,13 +553,21 @@ public partial class UICompositor : GameComponent, IDisposable
     /// Which theme of the skin to draw the UI in ("red", "gold"), null for the one the game is set to. A skin
     /// that has no theme of that name is drawn in the one the game is set to as well.
     /// </param>
+    private bool followsSkinsResolved;
+    private bool initialized;
+    private bool resourcesInitialized;
+
+    /// <summary>Whether the default skin source has been resolved yet (deferred while disabled).</summary>
+    internal bool IsSkinSourceResolved => followsSkinsResolved;
+
     public UICompositor(in Camera2D viewportCamera, string? theme = null)
     {
         this.viewportCamera = viewportCamera;
         followsSkins = true;
         wantedTheme = theme;
-        skinsVersion = UISkins.Version;
-        (skinDirectory, skinFile, skinTheme) = UISkins.Resolve(theme);
+        skinDirectory = string.Empty;
+        skinFile = string.Empty;
+        skinTheme = theme;
     }
 
     /// <param name="viewportCamera">The camera the UI is drawn with. What it sees is the screen the modules are laid out against.</param>
@@ -735,16 +743,47 @@ public partial class UICompositor : GameComponent, IDisposable
             Highlighted = null;
     }
 
-    public override void Initialize()
+    private void EnsureSkinSourceResolved()
     {
-        // The one every UI with this skin draws with, see UISkin.Shared
+        lock (skinLock)
+        {
+            if (followsSkins && (!followsSkinsResolved || skinsVersion != UISkins.Version))
+            {
+                skinsVersion = UISkins.Version;
+                (skinDirectory, skinFile, skinTheme) = UISkins.Resolve(wantedTheme);
+                followsSkinsResolved = true;
+            }
+        }
+    }
+
+    private void EnsureSkinLoaded()
+    {
+        if (Skin is not null)
+            return;
+        EnsureSkinSourceResolved();
         Skin = UISkin.Shared(skinDirectory, skinFile, skinTheme);
+    }
+
+    private void EnsureResourcesInitialized()
+    {
+        if (resourcesInitialized)
+            return;
+
+        resourcesInitialized = true;
+        EnsureSkinLoaded();
 
         renderer.Initialize();
 
         UIKeyboard.Hook();
         if (InputOf is { } input)
             HookComposition(input);
+    }
+
+    public override void Initialize()
+    {
+        initialized = true;
+        if (Enabled)
+            EnsureResourcesInitialized();
     }
 
     /// <summary>
@@ -886,10 +925,11 @@ public partial class UICompositor : GameComponent, IDisposable
         lock (skinLock)
         {
             // The game was set to another skin since this UI last looked
-            if (followsSkins && skinsVersion != UISkins.Version)
+            if (followsSkins && (!followsSkinsResolved || skinsVersion != UISkins.Version))
             {
                 skinsVersion = UISkins.Version;
                 requestedSkin = UISkins.Resolve(wantedTheme);
+                followsSkinsResolved = true;
             }
 
             request = requestedSkin;
@@ -916,6 +956,9 @@ public partial class UICompositor : GameComponent, IDisposable
 
     public override void UpdateState(float dt)
     {
+        if (initialized && Skin is null && Enabled)
+            EnsureSkinLoaded();
+
         // A camera of its own is kept the size of the window, here on the simulation thread where it is read
         if (ownsCamera && GameEngine.Instance.WindowManager.ViewportSize is { X: > 0.0f, Y: > 0.0f } window && viewportCamera.ViewSize != window)
             viewportCamera.ViewSize = window;
@@ -1334,6 +1377,9 @@ public partial class UICompositor : GameComponent, IDisposable
 
     public override void Render(float dt)
     {
+        if (!resourcesInitialized)
+            EnsureResourcesInitialized();
+
         LoadRequestedSkin();
         if (warmRequest is not null)
             LoadWarmSkin();
@@ -1994,6 +2040,8 @@ public partial class UICompositor : GameComponent, IDisposable
         pictureCurrent = false;
 
         renderer.Dispose();
+        initialized = false;
+        resourcesInitialized = false;
         Skin = null;
 
         GC.SuppressFinalize(this);

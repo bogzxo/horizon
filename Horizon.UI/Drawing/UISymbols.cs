@@ -43,10 +43,12 @@ public static class UISymbols
 
     // Both spellings of every name, the one with dashes the way VS Code writes them and the one with underscores
     private static readonly Dictionary<string, char> names = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, char> fileKindNames = new(StringComparer.Ordinal);
     private static readonly List<string> listed = [];
     private static readonly Dictionary<char, char> fileKindGlyphs = [];
     private static DistanceFieldFont? fileKindFont;
     private static float fileKindFieldSlope;
+    private static volatile bool fileKindsLoaded;
 
     /// <summary>Whether the icons have loaded. They load with the first skin.</summary>
     public static bool IsLoaded => font is { Texture.Handle: not 0 };
@@ -55,7 +57,17 @@ public static class UISymbols
     public static Texture Texture => font?.Texture ?? Texture.Invalid;
 
     /// <summary>Every name there is, with underscores, in order. For a picker of icons.</summary>
-    public static IReadOnlyList<string> Names => listed;
+    public static IReadOnlyList<string> Names
+    {
+        get
+        {
+            EnsureFileKindsLoaded();
+            return listed;
+        }
+    }
+
+    /// <summary>Whether the lazy Devicon file-kind atlas has been loaded.</summary>
+    internal static bool AreFileKindsLoaded => fileKindsLoaded;
 
     /// <summary>See <see cref="UIFont.FieldSlope"/>.</summary>
     internal static float FieldSlope => fieldSlope;
@@ -84,8 +96,23 @@ public static class UISymbols
             }
 
             ReadNames();
+            listed.Sort(StringComparer.Ordinal);
+        }
+    }
+
+    private static void EnsureFileKindsLoaded()
+    {
+        if (fileKindsLoaded)
+            return;
+
+        lock (loading)
+        {
+            if (fileKindsLoaded)
+                return;
+
             ReadFileKindNames();
             listed.Sort(StringComparer.Ordinal);
+            fileKindsLoaded = true;
         }
     }
 
@@ -163,22 +190,24 @@ public static class UISymbols
         }
 
         // The public icon APIs pass a char. Reserve unused Basic Multilingual Plane keys, outside both fonts' PUA
-        // glyphs, as private handles into the second atlas.
+        // glyphs, as private handles into the second atlas. O(1) collision checks avoid O(n^2) dictionary scans.
+        var usedKeys = new HashSet<char>(names.Values);
         char key = '\u0100';
         foreach (var (name, codepoint) in codepoints)
         {
             if (!fileKindFont.Glyphs.ContainsKey((char)codepoint))
                 continue;
-            while (key <= '\uD7FF' && (names.ContainsValue(key) || UIAnimatedIcons.IsDrawn(key))) key++;
+            while (key <= '\uD7FF' && (usedKeys.Contains(key) || UIAnimatedIcons.IsDrawn(key))) key++;
             if (key > '\uD7FF')
             {
                 Log.Error("[UISymbols] There are too many file-kind icons to assign symbol keys.");
                 return;
             }
 
+            usedKeys.Add(key);
             string named = "filetype_" + name;
-            names[named] = key;
-            names[named.Replace('_', '-')] = key;
+            fileKindNames[named] = key;
+            fileKindNames[named.Replace('_', '-')] = key;
             fileKindGlyphs[key] = (char)codepoint;
             listed.Add(named);
             key++;
@@ -199,7 +228,17 @@ public static class UISymbols
             return true;
 
         code = default;
-        return names.Count > 0 && names.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(named, out code);
+        if (names.Count > 0 && names.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(named, out code))
+            return true;
+
+        if (named.StartsWith("filetype_", StringComparison.Ordinal) || named.StartsWith("filetype-", StringComparison.Ordinal))
+        {
+            EnsureFileKindsLoaded();
+            if (fileKindNames.Count > 0 && fileKindNames.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(named, out code))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>The picture of an icon in the atlas.</summary>

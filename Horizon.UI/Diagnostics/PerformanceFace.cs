@@ -64,27 +64,31 @@ internal sealed class PerformanceFace
     private readonly Readout pillFps, pillCpu, pillGpuMs;
     private readonly Graph spark;
 
-    /* The card */
+    private readonly UIModule module;
+    private bool cardBuilt;
+    private string lastKeyText = string.Empty;
 
-    private readonly StackPanel card;
-    private readonly Divider middle;
-    private readonly Label starting, cardKey;
-    private readonly Panel cap, cpuTile, gpuTile;
-    private readonly Readout fps, frameMs, cpuLoad, cpuMs, gpuLoad, gpuMs;
-    private readonly Meter cpuMeter, gpuMeter;
-    private readonly Graph frameGraph, tickGraph;
-    private readonly Readout low, p99, worst, jitter, stutters;
-    private readonly Readout threadsNote, waits, late, dropped, tick;
-    private readonly ThreadRow render, simulation;
-    private readonly PartRow logic, physics;
-    private readonly StackPanel ticks;
-    private readonly Readout gpuNote;
-    private readonly SegmentBar gpuBar;
-    private readonly Label gpuSilent;
-    private readonly PassRow[] passes;
-    private readonly Readout draws, instances, dispatches, barriers, pipelineBinds, sets, targets, sent;
-    private readonly Readout memoryGpu, memoryGpuLabel, textures, buffers, pipelines, heap, garbage, byFrames, byTicks;
-    private readonly Readout small, mid, big;
+    /* The card (created lazily when PerformanceDetail.Full is first shown) */
+
+    private StackPanel card = null!;
+    private Divider middle = null!;
+    private Label starting = null!, cardKey = null!;
+    private Panel cap = null!, cpuTile = null!, gpuTile = null!;
+    private Readout fps = null!, frameMs = null!, cpuLoad = null!, cpuMs = null!, gpuLoad = null!, gpuMs = null!;
+    private Meter cpuMeter = null!, gpuMeter = null!;
+    private Graph frameGraph = null!, tickGraph = null!;
+    private Readout low = null!, p99 = null!, worst = null!, jitter = null!, stutters = null!;
+    private Readout threadsNote = null!, waits = null!, late = null!, dropped = null!, tick = null!;
+    private ThreadRow render, simulation;
+    private PartRow logic, physics;
+    private StackPanel ticks = null!;
+    private Readout gpuNote = null!;
+    private SegmentBar gpuBar = null!;
+    private Label gpuSilent = null!;
+    private PassRow[] passes = [];
+    private Readout draws = null!, instances = null!, dispatches = null!, barriers = null!, pipelineBinds = null!, sets = null!, targets = null!, sent = null!;
+    private Readout memoryGpu = null!, memoryGpuLabel = null!, textures = null!, buffers = null!, pipelines = null!, heap = null!, garbage = null!, byFrames = null!, byTicks = null!;
+    private Readout small = null!, mid = null!, big = null!;
 
     // The most lines the passes of the GPU have had while this has been up. A card that grows and shrinks by a
     // line whenever a pass comes or goes hops about in its corner
@@ -97,13 +101,24 @@ internal sealed class PerformanceFace
     public UIComponent Pill => pill;
 
     /// <inheritdoc cref="Pill"/>
-    public UIComponent Card => card;
+    public UIComponent Card => EnsureCard();
+
+    /// <summary>Whether the detailed card layout has been instantiated yet.</summary>
+    internal bool HasCard => cardBuilt;
+
+    /// <summary>Hides the card if it has been built, without forcing lazy instantiation when only the pill/off view is active.</summary>
+    internal void HideCard()
+    {
+        if (cardBuilt)
+            card.Visible = false;
+    }
 
     /// <summary>How tall the card may be, in its own units. One that would be taller has its two columns side by side.</summary>
     public float MaxHeight { get; set; } = float.MaxValue;
 
     public PerformanceFace(UIModule module, PerformanceSample sample)
     {
+        this.module = module;
         this.sample = sample;
 
         UILayout small_ = module.LoadLayout(DIRECTORY + PILL_FILE);
@@ -118,46 +133,56 @@ internal sealed class PerformanceFace
         pillCpu = small_.Get<Readout>("cpu_ms");
         pillGpuMs = small_.Get<Readout>("gpu_ms");
         spark = small_.Get<Graph>("spark");
+    }
 
+    private StackPanel EnsureCard()
+    {
+        if (cardBuilt)
+            return card;
+
+        cardBuilt = true;
         UILayout big_ = module.LoadLayout(DIRECTORY + CARD_FILE);
-        Readout Number(string name) => big_.Get<Readout>(name);
 
         card = big_.Get<StackPanel>("card");
+        card.Visible = false;
         middle = big_.Get<Divider>("middle");
         starting = big_.Get<Label>("starting");
         cap = big_.Get<Panel>("cap");
         cardKey = big_.Get<Label>("cap_key");
+        cap.Visible = lastKeyText.Length > 0;
+        cardKey.Text = lastKeyText;
+
         cpuTile = big_.Get<Panel>("cpu_tile");
         gpuTile = big_.Get<Panel>("gpu_tile");
-        fps = Number("fps");
-        frameMs = Number("frame_ms");
-        cpuLoad = Number("cpu_load");
-        cpuMs = Number("cpu_ms");
-        gpuLoad = Number("gpu_load");
-        gpuMs = Number("gpu_ms");
+        fps = CardNumber(big_, "fps");
+        frameMs = CardNumber(big_, "frame_ms");
+        cpuLoad = CardNumber(big_, "cpu_load");
+        cpuMs = CardNumber(big_, "cpu_ms");
+        gpuLoad = CardNumber(big_, "gpu_load");
+        gpuMs = CardNumber(big_, "gpu_ms");
         cpuMeter = big_.Get<Meter>("cpu_meter");
         gpuMeter = big_.Get<Meter>("gpu_meter");
 
         frameGraph = big_.Get<Graph>("frame_graph");
-        low = Number("low");
-        p99 = Number("p99");
-        worst = Number("worst");
-        jitter = Number("jitter");
-        stutters = Number("stutters");
+        low = CardNumber(big_, "low");
+        p99 = CardNumber(big_, "p99");
+        worst = CardNumber(big_, "worst");
+        jitter = CardNumber(big_, "jitter");
+        stutters = CardNumber(big_, "stutters");
 
-        threadsNote = Number("threads_note");
+        threadsNote = CardNumber(big_, "threads_note");
         render = Thread(big_, "render");
         simulation = Thread(big_, "simulation");
         logic = Part(big_, "logic");
         physics = Part(big_, "physics");
         ticks = big_.Get<StackPanel>("ticks");
         tickGraph = big_.Get<Graph>("tick_graph");
-        waits = Number("waits");
-        late = Number("late");
-        dropped = Number("dropped");
-        tick = Number("tick");
+        waits = CardNumber(big_, "waits");
+        late = CardNumber(big_, "late");
+        dropped = CardNumber(big_, "dropped");
+        tick = CardNumber(big_, "tick");
 
-        gpuNote = Number("gpu_note");
+        gpuNote = CardNumber(big_, "gpu_note");
         gpuBar = big_.Get<SegmentBar>("gpu_bar");
         gpuSilent = big_.Get<Label>("gpu_silent");
 
@@ -171,28 +196,32 @@ internal sealed class PerformanceFace
                 lines[i].Get<Readout>("ms"), lines[i].Get<Readout>("share"));
         }
 
-        draws = Number("device_draws");
-        instances = Number("device_instances");
-        dispatches = Number("device_dispatches");
-        barriers = Number("device_barriers");
-        pipelineBinds = Number("device_pipelines");
-        sets = Number("device_sets");
-        targets = Number("device_targets");
-        sent = Number("device_sent");
+        draws = CardNumber(big_, "device_draws");
+        instances = CardNumber(big_, "device_instances");
+        dispatches = CardNumber(big_, "device_dispatches");
+        barriers = CardNumber(big_, "device_barriers");
+        pipelineBinds = CardNumber(big_, "device_pipelines");
+        sets = CardNumber(big_, "device_sets");
+        targets = CardNumber(big_, "device_targets");
+        sent = CardNumber(big_, "device_sent");
 
-        memoryGpu = Number("memory_gpu");
-        memoryGpuLabel = Number("memory_gpu_label");
-        textures = Number("memory_textures");
-        buffers = Number("memory_buffers");
-        pipelines = Number("memory_pipelines");
-        heap = Number("memory_heap");
-        garbage = Number("memory_garbage");
-        byFrames = Number("memory_frames");
-        byTicks = Number("memory_ticks");
-        small = Number("small");
-        mid = Number("mid");
-        big = Number("big");
+        memoryGpu = CardNumber(big_, "memory_gpu");
+        memoryGpuLabel = CardNumber(big_, "memory_gpu_label");
+        textures = CardNumber(big_, "memory_textures");
+        buffers = CardNumber(big_, "memory_buffers");
+        pipelines = CardNumber(big_, "memory_pipelines");
+        heap = CardNumber(big_, "memory_heap");
+        garbage = CardNumber(big_, "memory_garbage");
+        byFrames = CardNumber(big_, "memory_frames");
+        byTicks = CardNumber(big_, "memory_ticks");
+        small = CardNumber(big_, "small");
+        mid = CardNumber(big_, "mid");
+        big = CardNumber(big_, "big");
+
+        return card;
     }
+
+    private static Readout CardNumber(UILayout layout, string name) => layout.Get<Readout>(name);
 
     private static ThreadRow Thread(UILayout layout, string name) => new(
         layout.Get<Panel>($"{name}_row"), layout.Get<Panel>($"{name}_dot"), layout.Get<Readout>($"{name}_state"),
@@ -209,8 +238,14 @@ internal sealed class PerformanceFace
     /// <summary>Writes the name of the key that gets more on its caps, nothing for no cap at all.</summary>
     public void SetKey(string key)
     {
-        pillCap.Visible = cap.Visible = key.Length > 0;
-        pillKey.Text = cardKey.Text = key;
+        lastKeyText = key;
+        pillCap.Visible = key.Length > 0;
+        pillKey.Text = key;
+        if (cardBuilt)
+        {
+            cap.Visible = key.Length > 0;
+            cardKey.Text = key;
+        }
     }
 
     /// <summary>
@@ -236,6 +271,8 @@ internal sealed class PerformanceFace
             Feed(spark, sample.Frames, sample.FrameSlices, gaps: true, frameTop, 0.0f, budget);
             return;
         }
+
+        EnsureCard();
 
         // The line is where the frames are meant to stay under, there is none for frames nobody set a limit on
         Feed(frameGraph, sample.Frames, sample.FrameSlices, gaps: true, frameTop, sample.FpsTarget > 0.0 ? budget : 0.0f, budget);
@@ -290,6 +327,7 @@ internal sealed class PerformanceFace
 
     private void ShowCard()
     {
+        EnsureCard();
         Arrange();
 
         starting.Visible = !sample.Ready;

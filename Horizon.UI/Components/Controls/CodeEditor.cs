@@ -185,7 +185,7 @@ public partial class CodeEditor : UIComponent
     private const float RECOLOUR_DELAY = 0.05f;
 
     // How many lines a new text has coloured on the spot, a screen or so, the rest is coloured on the pool
-    private const int COLOUR_AT_ONCE = 300;
+    private const int COLOUR_AT_ONCE = 96;
 
     private List<SyntaxSpan>[] spans = [[]];
     private string[] colouredLines = [];
@@ -229,6 +229,8 @@ public partial class CodeEditor : UIComponent
     // What the colours there are now were worked out by, null for none (plain text), the next colouring goes on from them
     // when it's the same
     private ICodeHighlighter? colouredWith;
+    private CodeColouring? seededColouring;
+    private ICodeHighlighter? seededHighlighter;
 
     // The art named in the code, found with the colours, where the last paint put each of it (nothing for what it couldn't
     // draw), which of it the pointer is on, and where the pictures named in it are on disk by the name, asked once a name
@@ -1459,10 +1461,26 @@ public partial class CodeEditor : UIComponent
             // in sight is read a paint at a time meanwhile (LongColours)
             int now = firstLong >= 0 ? firstLong : COLOUR_AT_ONCE;
             spans = PlainSpans(longLines: true);
+            seededColouring = null;
+            seededHighlighter = null;
             if (now > 0)
             {
-                List<SyntaxSpan>[] top = highlighter.Read(JoinFirstLines(now), now, lineStarts, swatches, art);
-                Array.Copy(top, spans, Math.Min(Math.Min(top.Length, now), spans.Length));
+                var topStarts = new CodeLineStart[now];
+                List<SyntaxSpan>[] top = highlighter.Read(JoinFirstLines(now), now, topStarts, swatches, art);
+                int copied = Math.Min(Math.Min(top.Length, now), spans.Length);
+                Array.Copy(top, spans, copied);
+                Array.Copy(topStarts, lineStarts, copied);
+
+                // Keep a length-matched prefix snapshot so the background StartColouring pass resumes at line `now - 1`
+                // instead of re-tokenizing lines 0..now-2 from scratch.
+                if (copied == now && top.Length == now)
+                {
+                    var topLines = new string[now];
+                    for (int i = 0; i < now; i++)
+                        topLines[i] = document.LineAt(i);
+                    seededColouring = new CodeColouring(topLines, top, topStarts);
+                    seededHighlighter = highlighter;
+                }
             }
 
             colouredWith = null;
@@ -1472,10 +1490,14 @@ public partial class CodeEditor : UIComponent
         {
             // Nothing to colour, and nothing asked of the grammar. An empty box made the grammar get going on the spot, the
             // agents' box was Markdown's (and every language it can hold) at 70 ms and 24 MB of an editor's start for one empty line
+            seededColouring = null;
+            seededHighlighter = null;
             spans = PlainSpans();
         }
         else if (Highlight)
         {
+            seededColouring = null;
+            seededHighlighter = null;
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
             spans = highlighter.Read(JoinFirstLines(count), count, lineStarts, swatches, art);
             if (Horizon.Core.Diagnostics.StartupTrace.On && !Horizon.Core.Diagnostics.StartupTrace.SceneReady)
@@ -1483,6 +1505,8 @@ public partial class CodeEditor : UIComponent
         }
         else
         {
+            seededColouring = null;
+            seededHighlighter = null;
             spans = PlainSpans();
             swatches.Clear();
             art.Clear();
@@ -1536,7 +1560,11 @@ public partial class CodeEditor : UIComponent
             && completeNative == foldableCompleteNative;
 
         // Gone on from the last colouring when it was this highlighter's, only the lines from the edit on read again
-        CodeColouring? last = ReferenceEquals(colouredWith, reader) ? new CodeColouring(colouredLines, spans, lineStarts) : null;
+        CodeColouring? last = ReferenceEquals(colouredWith, reader)
+            ? new CodeColouring(colouredLines, spans, lineStarts)
+            : ReferenceEquals(seededHighlighter, reader) ? seededColouring : null;
+        seededColouring = null;
+        seededHighlighter = null;
         colouring = Task.Run(() =>
         {
             var found = swatchesBuf ?? new List<HidlSwatch>();
@@ -1641,6 +1669,8 @@ public partial class CodeEditor : UIComponent
         colouredLines = done.Lines;
         lineStarts = done.Starts;
         colouredWith = done.Reader;
+        seededColouring = null;
+        seededHighlighter = null;
         swatches.Clear();
         swatches.AddRange(done.Swatches);
         art.Clear();

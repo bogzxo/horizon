@@ -321,7 +321,7 @@ public static class UISkins
 
             try
             {
-                var (title, themes, usual) = UISkin.Describe(directory, FILE);
+                var (title, themes, usual) = UISkin.DescribeMetadata(directory, FILE);
                 found.Add(new UISkinChoice(name, title ?? name, directory, FILE, themes, usual));
             }
             catch (Exception e)

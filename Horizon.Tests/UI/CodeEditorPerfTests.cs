@@ -356,7 +356,7 @@ public class CodeEditorPerfTests
     [Fact]
     public void Sticky_lines_match_nested_blocks_while_scrolling()
     {
-        // Keep under COLOUR_AT_ONCE (300) so synchronous Recolour() colours the closing brace on the last line
+        // Pump background colouring past COLOUR_AT_ONCE (96) so the closing brace on the last line is foldable
         var lines = new List<string> { "outer: {" };
         for (int i = 0; i < 30; i++)
         {
@@ -374,7 +374,14 @@ public class CodeEditorPerfTests
         };
 
         var list = new UIDrawList();
-        code.UpdateTree(1.0f / 60.0f);
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (!code.CanFold(0) && deadline.ElapsedMilliseconds < 5000)
+        {
+            code.UpdateTree(0.05f);
+            Thread.Sleep(5);
+        }
+
+        Assert.True(code.CanFold(0));
         Paint(list, null, code, 1);
 
         // Measure exact painted line height from PlaceOf so ScrollPixels lands cleanly inside the target blocks

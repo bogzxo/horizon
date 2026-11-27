@@ -62,6 +62,17 @@ public sealed partial class TerminalHost
     /// </summary>
     public void Watch()
     {
+        if (deferredStartPending)
+        {
+            watchDeferred = true;
+            return;
+        }
+
+        WatchNow();
+    }
+
+    private void WatchNow()
+    {
         var shallowFolders = new HashSet<string>(Horizon.Core.Platform.PlatformPaths.Comparer);
         if (options.SettingsFile is { } settings && Path.GetDirectoryName(Path.GetFullPath(settings)) is { } settingsFolder)
             shallowFolders.Add(settingsFolder);

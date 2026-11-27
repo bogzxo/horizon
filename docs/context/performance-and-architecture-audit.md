@@ -299,3 +299,17 @@
   - `Hex` UI frame GPU: `idle` 0.138 ms (-83%), `typing` 0.130 ms (-88%), `wheel` 0.128 ms (-87%), `drag` 0.221 ms (-88%), `notebook` 0.140 ms (-88%).
   - `Hex` startup & idle: Dawn 380 ms / 171.5 MiB WS / 187.6 MiB Private / 0.981% idle CPU; Dusk 288 ms / 131.9 MiB WS / 148.9 MiB Private / 0.491% idle CPU.
   - `dungeon` scene settled memory: 147.4 MiB WS (-27.5 MiB) / 316.6 MiB Private (-35.6 MiB).
+
+
+## Pass 9 — Startup Deferral & Working-Set Trim (`results-pass9.json`)
+
+- **Changes**:
+  - Lazy skin metadata discovery via `UISkin.DescribeMetadata` (`ReadAndApplyThemeLazy`) in `UISkins.Scan()`, evaluating only the usual theme instead of all theme files at startup; deferred disabled `UICompositor` skin loading and GPU/hook initialization until enabled (`EnsureSkinLoaded` / `EnsureResourcesInitialized`).
+  - Lazy `devicon.ttf` file-kind glyph atlas loading in `UISymbols` (`EnsureFileKindsLoaded` on `filetype_` / `filetype-` / `Names`), separated `fileKindNames` map, and O(1) `HashSet<char> usedKeys`.
+  - Deferred `PerformanceFace` card layout & `performance_card.hor` construction until `PerformanceDetail.Full`, hiding the card on lower detail modes while preserving `SetKey` state.
+  - Lowered `CodeEditor.COLOUR_AT_ONCE` to `96` lines with prefix colouring snapshot handoff (`seededColouring` / `seededHighlighter`) so synchronous UI ticks stay short and background passes resume from `[0..now-2]`; added `TerminalHostOptions.DeferStartup`, lazy `TerminalHistory` disk reads, and deferred Dawn `AgentsPanel`, `CommandPalette`, and `TerminalHost` initialization.
+- **Pass 9 NativeAOT Verification (`results-pass9.json`)**:
+  - `Horizon.Tests` Release: 2,655 / 2,655 passed (`0` failed, `0` skipped); `Hex.Tests` Debug: 3,419 / 3,419 passed (`0` failed, `2` skipped); `Horizon.Testing --checks`: 848 / 848 passed (`0` failures); `Hex --selftest`: 7 / 7 passed.
+  - `Hex` startup & idle: Dawn `369 ms` (`-11 ms` vs Pass 8) / `156.2 MiB` WS (`-15.3 MiB` vs Pass 8) / `174.6 MiB` Private (`-13.0 MiB` vs Pass 8) / `0.983%` idle CPU; Dusk `287 ms` / `130.1 MiB` WS (`-1.8 MiB`) / `149.7 MiB` Private / `5.910%` idle CPU.
+  - `Hex` UI Cost & Typing: `idle` `0.133 ms` GPU (`0.310 ms` Paint), `typing` `0.134 ms` GPU (`0.312 ms` Paint), `wheel` `0.132 ms` GPU (`0.304 ms` Paint), `drag` `0.221 ms` GPU (`0.427 ms` Paint, `-9.7%`), `notebook` `0.138 ms` GPU (`0.425 ms` Paint); C# typing p95 `5.2 ms` / worst `15.1 ms` (`-57.2%` vs Pass 8 `35.3 ms`).
+  - `Horizon.Testing` scenes: `dungeon` `493 ms` / `2.613 ms` GPU (`-14.5%` vs Pass 8) / `355.3 Hz`; `meshes` `305 ms` / `0.090 ms` GPU / `4804.3 Hz` (`128.4 MiB` WS / `196.0 MiB` Private).

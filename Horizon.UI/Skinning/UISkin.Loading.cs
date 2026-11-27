@@ -321,6 +321,18 @@ public sealed partial class UISkin
     }
 
     /// <summary>
+    /// Lightweight skin-catalog metadata (<c>title</c>, theme names, usual theme) for startup discovery: evaluates only
+    /// the skin file and its usual theme chain rather than running a runtime for every unused theme file.
+    /// </summary>
+    internal static (string? Title, string[] Themes, string? UsualTheme) DescribeMetadata(string directory, string file)
+    {
+        var properties = ReadProperties(directory, file, 0);
+        string? title = properties.TryGetValue("title", out var titled) ? UIScript.ToText(titled, "title") : null;
+        var (themes, usual) = ReadAndApplyThemeLazy(directory, properties, null);
+        return (title, themes, usual?.Name);
+    }
+
+    /// <summary>
     /// The themes of a skin file with what each says about itself, its title for an options screen, the layer of
     /// the art it draws with and the theme it is based on, without loading any of it. In the order they are stepped
     /// through, the usual one first.
