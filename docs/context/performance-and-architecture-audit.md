@@ -341,3 +341,34 @@
   - `fluid`: `297 ms` / `0.070 ms` GPU / `4354.0 Hz` (`0.247 ms`, Physics `0.590 ms`) / `146.0 MiB` WS (`217.0 MiB` Private)
   - `meshes`: `314 ms` / `0.090 ms` GPU / `4705.0 Hz` (`0.227 ms`) / `141.2 MiB` WS (`210.4 MiB` Private)
   - `ui-controls`: `322 ms` / `0.070 ms` GPU / `4834.3 Hz` (`0.203 ms`) / `128.8 MiB` WS (`194.3 MiB` Private)
+
+## Pass 11 — Zero-DOM LSP & Diff Marshalling, Whole-Pixel Translation Reuse, Terminal Pooling & Editor/Notebook Dirty Gating (`results-pass11.json`)
+
+- **Binaries**:
+  - `Horizon.Testing.exe`: `25.07 MiB` | `Hex.exe`: `60.52 MiB`
+- **Changes**:
+  - **LSP & Diffs (`Horizon.Tooling`, `Hex.Dawn`)**: Unified `IRawPendingRequest` tracking and raw `Utf8JsonReader` + `ArrayPool<int>` semantic tokens parsing (`LanguageServer.Semantic.cs`, `JsonRpcConnection.cs`), coalesced/cancelled background `(Method, Uri)` requests (`LanguageServer.Questions.cs`), `ConcurrentDictionary` in-flight tracking (`LanguageServer.cs`), and zero-join `string[]` `Open`/`Change` sync (`LanguageServer.Synchronization.cs`, `LanguageServer.Edits.cs`, `UITextDocument.CopyLines()`, `HexLanguages*.cs`, `DawnScene.Code.cs`, `HexGit.Changes.cs`).
+  - **UI Translation Reuse & Tab Strip (`Horizon.UI`, `Hex.Dawn`)**: Added whole-pixel translation fast-path reuse in `UIDrawList.Reuse.cs` (`TranslationFreeContext`, shifted sprite/clip/quad/glass rebasing, and translation-tolerant `CheckReuse`/`Differs`), cached `TabStrip` tab measurements, reused breadcrumb arrays in `DawnScene.Tabs.cs`, and dirty-gated `FitChrome()` in `DawnScene.Chrome.cs`.
+  - **Terminal Backpressure & Resize (`Horizon`, `Horizon.Terminal`)**: Added `PooledOutput` (`ArrayPool<byte>.Shared`) and lossless bounded chunk waiting (`MAX_PENDING_CHUNKS = 4096`) in `PseudoTerminal.cs` and `TerminalView.cs`, reused row/resize buffers in `TerminalScreen.cs`, and kept existing `alternate` screen rows on vertical resize (`columns == Columns`).
+  - **Notebook & Git Background Hygiene (`Hex.Core`, `Hex.Dawn`)**: Added `NotebookCell.OutputsRevision` (`Notebook*.cs`, `DawnScene.Notebook*.cs`, `DawnScene.McpNotebook.cs`) to replace full-output string hashing in `OutputsSignature`, dirty-gated `FitNotebook()`/`FitNotebookWrap()` + `TextEquals` change guards, and moved periodic `HexGit` `ForgetNone`/`LookAtNewFolders`/`LookForMoves` into `StartMoveProbe` on background work (`workLock` / `watchLock`).
+- **Verification**:
+  - `Horizon.Tests` Release: `2,666 / 2,666` passed (`0` failed, `0` skipped)
+  - `Hex.Tests` Debug: `3,419 / 3,421` passed (`0` failed, `2` skipped)
+  - `Horizon.Testing --checks`: `848 / 848` passed (`0` failed, `MedianWallMs: 37540.3`)
+  - `Hex --selftest`: passed (`WallMs: 52661.8`)
+- **`HexStartup`** (3 cold runs, median):
+  - `Dawn`: `380 ms` | WS `156.2 MiB` | Priv `171.5 MiB` | Idle CPU `0.989%`
+  - `Dusk`: `287 ms` | WS `128.4 MiB` | Priv `146.9 MiB` | Idle CPU `10.821%`
+- **`HexSelfTest`** (`uicost`, `typing`, `garbage`):
+  - `idle`: Paint `0.232 ms` (`Layout 0.030`, `Compare 0.011`, `Draw 0.077`), `3405` quads/tick, `10/30` frames uploaded, `FrameGpu 1.357 ms`
+  - `typing`: Paint `0.296 ms` (`Layout 0.019`, `Compare 0.009`, `Draw 0.049`), `3449` quads/tick, `138/331` frames uploaded, `FrameGpu 1.319 ms`
+  - `wheel`: Paint `0.430 ms` (`Layout 0.032`, `Compare 0.002`, `Draw 0.076`), `3445` quads/tick, `281/579` frames uploaded, `FrameGpu 1.238 ms`
+  - `drag`: Paint `0.588 ms` (`Layout 0.118`, `Compare 0.020`, `Draw 0.126`), `4523` quads/tick, `51/61` frames uploaded, `FrameGpu 2.198 ms`
+  - `notebook`: Paint `0.504 ms` (`Layout 0.041`, `Compare 0.001`, `Draw 0.053`), `2481` quads/tick, `222/435` frames uploaded, `FrameGpu 1.307 ms`
+  - `typing csharp`: `Avg 4.2 / Med 4.2 / P95 4.4 / Worst 11.9 ms` | `typing hor`: `Avg 4.2 / Med 4.2 / P95 4.3 / Worst 12.8 ms`
+  - `garbage`: `designer 70 B/tick` | `code 97 B/tick` | `layoutCode 32 B/tick`
+- **`Horizon.TestingScenes`** (medians):
+  - `dungeon`: `457 ms` / `1.620 ms` GPU / `646.7 Hz` (`1.557 ms`) / `183.5 MiB` WS (`349.0 MiB` Private)
+  - `fluid`: `295 ms` / `0.067 ms` GPU / `6163.3 Hz` (`0.163 ms`, Physics `0.633 ms`) / `133.2 MiB` WS (`202.2 MiB` Private)
+  - `meshes`: `302 ms` / `0.090 ms` GPU / `7130.0 Hz` (`0.143 ms`) / `132.0 MiB` WS (`199.6 MiB` Private)
+  - `ui-controls`: `361 ms` / `0.060 ms` GPU / `7360.3 Hz` (`0.137 ms`) / `145.5 MiB` WS (`215.5 MiB` Private)

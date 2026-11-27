@@ -283,8 +283,8 @@ public sealed partial class LanguageServer
         if (parameters?["edit"] is not JsonObject edit)
             return Task.FromResult<JsonNode?>(new JsonObject { ["applied"] = false });
         var answer = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        asking[answer] = 0;
-        _ = answer.Task.ContinueWith(_ => asking.TryRemove(answer, out byte _), TaskScheduler.Default);
+        asking[answer] = () => answer.TrySetResult(null);
+        _ = answer.Task.ContinueWith(_ => asking.TryRemove(answer, out Action? _), TaskScheduler.Default);
         Dictionary<string, int> known;
         lock (versions)
             known = new(versions, Horizon.Core.Platform.PlatformPaths.Comparer);

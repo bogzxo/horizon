@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Horizon.UI.Scripting;
@@ -71,11 +73,75 @@ public sealed partial class LanguageServer
             _ => false
         };
 
-        JsonNode? answered;
+        IReadOnlyList<SemanticSpan>? ParseTokens(ReadOnlyMemory<byte> rawResult)
+        {
+            if (rawResult.IsEmpty)
+                return null;
+
+            var reader = new Utf8JsonReader(rawResult.Span);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+                return null;
+
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+            {
+                if (reader.TokenType != JsonTokenType.PropertyName)
+                    continue;
+
+                bool isData = reader.ValueTextEquals("data"u8);
+                if (!reader.Read())
+                    return null;
+
+                if (!isData || reader.TokenType != JsonTokenType.StartArray)
+                {
+                    if (!reader.TrySkip())
+                        return null;
+                    continue;
+                }
+
+                int[] rented = ArrayPool<int>.Shared.Rent(4096);
+                int count = 0;
+                try
+                {
+                    while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                    {
+                        int value;
+                        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out int intValue))
+                            value = intValue;
+                        else if (reader.TokenType == JsonTokenType.Number && reader.TryGetDouble(out double doubleValue))
+                            value = (int)doubleValue;
+                        else
+                        {
+                            if (!reader.TrySkip())
+                                return null;
+                            value = 0;
+                        }
+
+                        if (count == rented.Length)
+                        {
+                            int[] bigger = ArrayPool<int>.Shared.Rent(rented.Length * 2);
+                            Array.Copy(rented, bigger, count);
+                            ArrayPool<int>.Shared.Return(rented);
+                            rented = bigger;
+                        }
+                        rented[count++] = value;
+                    }
+
+                    return LanguageServerSemantics.Decode(rented.AsSpan(0, count), types, modifiers);
+                }
+                finally
+                {
+                    ArrayPool<int>.Shared.Return(rented);
+                }
+            }
+
+            return null;
+        }
+
         if (whole)
-            answered = await Ask("textDocument/semanticTokens/full", new JsonObject { ["textDocument"] = document }).ConfigureAwait(false);
-        else if (provider["range"] is not null)
-            answered = await Ask("textDocument/semanticTokens/range", new JsonObject
+            return await AskParsed("textDocument/semanticTokens/full", new JsonObject { ["textDocument"] = document }, ParseTokens, null).ConfigureAwait(false);
+
+        if (provider["range"] is not null)
+            return await AskParsed("textDocument/semanticTokens/range", new JsonObject
             {
                 ["textDocument"] = document,
                 ["range"] = new JsonObject
@@ -83,17 +149,9 @@ public sealed partial class LanguageServer
                     ["start"] = new JsonObject { ["line"] = 0, ["character"] = 0 },
                     ["end"] = new JsonObject { ["line"] = Math.Max(0, lineCount), ["character"] = 0 }
                 }
-            }).ConfigureAwait(false);
-        else
-            return null;
+            }, ParseTokens, null).ConfigureAwait(false);
 
-        if (answered?["data"] is not JsonArray data)
-            return null;
-
-        var numbers = new int[data.Count];
-        for (int i = 0; i < numbers.Length; i++)
-            numbers[i] = JsonNumbers.Int(data[i], 0);
-        return LanguageServerSemantics.Decode(numbers, types, modifiers);
+        return null;
     }
 
     /// <summary>The token types and modifiers the server said it sends, its legend, nothing before it's said or for a server that doesn't.</summary>

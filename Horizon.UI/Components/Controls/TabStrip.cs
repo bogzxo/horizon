@@ -60,6 +60,15 @@ public sealed class StripTab
     internal UIFont? fittedFont;
     internal float fittedScale;
     internal string fitted = string.Empty;
+
+    // Unclamped natural width cached by tab properties and font/scale so WidthOf skips repeated Font.Measure calls per tick.
+    internal string? widthOfTitle;
+    internal string? widthOfIcon;
+    internal UIFont? widthOfFont;
+    internal float widthOfScale;
+    internal int widthOfPresenceCount;
+    internal string? widthOfPresenceOverflow;
+    internal float widthCached;
 }
 
 /// <summary>
@@ -158,12 +167,36 @@ public class TabStrip : UIComponent
 
     private float WidthOf(UISkin skin, StripTab tab)
     {
-        float line = Line(skin);
-        float icon = tab.Icon.Length > 0 ? line + GAP : 0.0f;
-        float width = MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, ScaleOf(skin), markup: false).X
-            + PresenceWidth(tab, skin, ScaleOf(skin)) + GAP + line);
-        width = MaxTabWidth > 0.0f ? MathF.Min(width, MaxTabWidth) : width;
+        float scale = ScaleOf(skin);
+        float raw = CachedRawWidth(skin, tab, scale);
+        float width = MaxTabWidth > 0.0f ? MathF.Min(raw, MaxTabWidth) : raw;
         return HideClippedTabs && Bounds.Width > 0 ? MathF.Min(width, Bounds.Width) : width;
+    }
+
+    private static float CachedRawWidth(UISkin skin, StripTab tab, float scale)
+    {
+        IReadOnlyList<Vector4> presence = tab.PresenceColors;
+        if (ReferenceEquals(tab.widthOfTitle, tab.Title)
+            && ReferenceEquals(tab.widthOfIcon, tab.Icon)
+            && ReferenceEquals(tab.widthOfFont, skin.Font)
+            && tab.widthOfScale == scale
+            && tab.widthOfPresenceCount == presence.Count
+            && ReferenceEquals(tab.widthOfPresenceOverflow, tab.PresenceOverflow))
+            return tab.widthCached;
+
+        float line = skin.Font.LineHeight * scale;
+        float icon = tab.Icon.Length > 0 ? line + GAP : 0.0f;
+        float raw = MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, scale, markup: false).X
+            + PresenceWidth(tab, skin, scale) + GAP + line);
+
+        tab.widthOfTitle = tab.Title;
+        tab.widthOfIcon = tab.Icon;
+        tab.widthOfFont = skin.Font;
+        tab.widthOfScale = scale;
+        tab.widthOfPresenceCount = presence.Count;
+        tab.widthOfPresenceOverflow = tab.PresenceOverflow;
+        tab.widthCached = raw;
+        return raw;
     }
 
     private static float PresenceWidth(StripTab tab, UISkin skin, float scale)

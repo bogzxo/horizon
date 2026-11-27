@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 
 namespace Horizon.Core.Processes;
@@ -18,7 +19,9 @@ public abstract class PseudoTerminal : IDisposable
     private readonly Lock listening = new();
     private readonly List<byte[]> unheard = [];
     private Action<byte[]>? output;
+    private Action<byte[], int>? pooledOutput;
     private Action<int>? exitedListeners;
+    private byte[]? pumpScratch;
 
     /// <summary>
     /// Bytes the process wrote, as they came, on the reading thread. Whoever takes them queues them for their own
@@ -31,15 +34,58 @@ public abstract class PseudoTerminal : IDisposable
             lock (listening)
             {
                 output += value;
-                foreach (byte[] early in unheard)
-                    value?.Invoke(early);
-                unheard.Clear();
+                if (unheard.Count > 0)
+                {
+                    foreach (byte[] early in unheard)
+                        value?.Invoke(early);
+                    unheard.Clear();
+                }
             }
         }
         remove
         {
             lock (listening)
                 output -= value;
+        }
+    }
+
+    /// <summary>
+    /// Zero-copy pooled read-chunk delivery for trusted internal consumers (such as <c>TerminalView</c>).
+    /// The handler takes ownership of the rented buffer and must return it to <see cref="ArrayPool{Byte}.Shared"/>.
+    /// </summary>
+    internal event Action<byte[], int>? PooledOutput
+    {
+        add
+        {
+            lock (listening)
+            {
+                pooledOutput += value;
+                if (value is not null && unheard.Count > 0)
+                {
+                    foreach (byte[] early in unheard)
+                    {
+                        byte[] copy = ArrayPool<byte>.Shared.Rent(Math.Max(1, early.Length));
+                        if (early.Length > 0)
+                            Buffer.BlockCopy(early, 0, copy, 0, early.Length);
+                        value(copy, early.Length);
+                    }
+                    unheard.Clear();
+                }
+            }
+        }
+        remove
+        {
+            lock (listening)
+                pooledOutput -= value;
+        }
+    }
+
+    private bool HasPooledOutput
+    {
+        get
+        {
+            lock (listening)
+                return pooledOutput is not null;
         }
     }
 
@@ -198,10 +244,33 @@ public abstract class PseudoTerminal : IDisposable
     {
         lock (listening)
         {
-            if (output is null)
+            if (output is null && pooledOutput is null)
+            {
                 unheard.Add(bytes);
-            else
-                output(bytes);
+                return;
+            }
+
+            output?.Invoke(bytes);
+            if (pooledOutput is { } handler)
+            {
+                byte[] rented = ArrayPool<byte>.Shared.Rent(Math.Max(1, bytes.Length));
+                if (bytes.Length > 0)
+                    Buffer.BlockCopy(bytes, 0, rented, 0, bytes.Length);
+                handler(rented, bytes.Length);
+            }
+        }
+    }
+
+    private bool TryEmitPooled(byte[] rented, int length)
+    {
+        lock (listening)
+        {
+            if (pooledOutput is not { } handler)
+                return false;
+
+            output?.Invoke(rented.AsSpan(0, length).ToArray());
+            handler(rented, length);
+            return true;
         }
     }
 
@@ -222,16 +291,32 @@ public abstract class PseudoTerminal : IDisposable
     /// <summary>Helper method to read a stream to its end, handing every piece on, on the thread it is called on.</summary>
     protected void Pump(Stream stream)
     {
-        var buffer = new byte[16384];
         try
         {
             while (true)
             {
-                int read = stream.Read(buffer, 0, buffer.Length);
-                if (read <= 0)
-                    break;
+                bool usePool = HasPooledOutput;
+                byte[] buffer = usePool ? ArrayPool<byte>.Shared.Rent(16384) : pumpScratch ??= new byte[16384];
+                bool handedOff = false;
+                try
+                {
+                    int read = stream.Read(buffer, 0, Math.Min(buffer.Length, 16384));
+                    if (read <= 0)
+                        break;
 
-                Emit(buffer.AsSpan(0, read).ToArray());
+                    if (usePool && TryEmitPooled(buffer, read))
+                    {
+                        handedOff = true;
+                        continue;
+                    }
+
+                    Emit(buffer.AsSpan(0, read).ToArray());
+                }
+                finally
+                {
+                    if (usePool && !handedOff)
+                        ArrayPool<byte>.Shared.Return(buffer);
+                }
             }
         }
         catch (Exception e)

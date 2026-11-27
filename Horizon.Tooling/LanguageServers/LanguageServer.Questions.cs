@@ -171,8 +171,8 @@ public sealed partial class LanguageServer
             return null;
 
         var answer = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        asking[answer] = 0;
-        answer.Task.ContinueWith(_ => asking.TryRemove(answer, out byte _), TaskScheduler.Default);
+        asking[answer] = () => answer.TrySetResult(null);
+        answer.Task.ContinueWith(_ => asking.TryRemove(answer, out Action? _), TaskScheduler.Default);
 
         string message = asked["message"]?.GetValue<string>() ?? string.Empty;
         bool warning = JsonNumbers.Int(asked["type"], 3) <= 2;

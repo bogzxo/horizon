@@ -34,13 +34,25 @@ public static class LanguageServerSemantics
     /// </summary>
     public static List<SemanticSpan> Decode(IReadOnlyList<int> data, IReadOnlyList<string> types, IReadOnlyList<string> modifiers)
     {
-        var found = new List<SemanticSpan>(data.Count / 5);
+        if (data is int[] array)
+            return Decode(array.AsSpan(), types, modifiers);
+
+        var buffer = new int[data.Count];
+        for (int i = 0; i < data.Count; i++)
+            buffer[i] = data[i];
+        return Decode(buffer.AsSpan(), types, modifiers);
+    }
+
+    /// <inheritdoc cref="Decode(IReadOnlyList{int}, IReadOnlyList{string}, IReadOnlyList{string})"/>
+    public static List<SemanticSpan> Decode(ReadOnlySpan<int> data, IReadOnlyList<string> types, IReadOnlyList<string> modifiers)
+    {
+        var found = new List<SemanticSpan>(data.Length / 5);
         int line = 0, start = 0;
 
         // A modifier with no kind of its own waiting for the name at the same place
         (int Line, int Start, int Length, SyntaxModifiers Modifiers)? pending = null;
 
-        for (int i = 0; i + 4 < data.Count; i += 5)
+        for (int i = 0; i + 4 < data.Length; i += 5)
         {
             int deltaLine = data[i], deltaStart = data[i + 1], length = data[i + 2], type = data[i + 3], bits = data[i + 4];
             line += deltaLine;

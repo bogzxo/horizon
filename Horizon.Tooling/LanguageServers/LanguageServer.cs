@@ -121,8 +121,8 @@ public sealed partial class LanguageServer : IDisposable
     private readonly Lock sending = new();
     private List<Action>? waiting = [];
 
-    // What has been asked of the server and not answered, answered with nothing when it stops
-    private readonly ConcurrentDictionary<TaskCompletionSource<JsonNode?>, byte> asking = new();
+    // What has been asked of the server and not answered, cancelled with its fallback when the server stops or a held request is superseded
+    private readonly ConcurrentDictionary<object, Action> asking = new();
 
     private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc, JsonObject? settings = null, LanguageServerOutput? errorOutput = null,
         JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false, bool allowWorkspaceEdits = true)
@@ -374,10 +374,10 @@ public sealed partial class LanguageServer : IDisposable
         Interlocked.CompareExchange(ref failure, why, null);
         DisposePullTimers();
         Woken?.Invoke();
-        foreach (var answer in asking.Keys)
+        foreach (var key in asking.Keys)
         {
-            asking.TryRemove(answer, out _);
-            answer.TrySetResult(null);
+            if (asking.TryRemove(key, out Action? cancel))
+                cancel();
         }
     }
 
@@ -386,7 +386,7 @@ public sealed partial class LanguageServer : IDisposable
     private Task<JsonNode?> Ask(string method, JsonNode parameters, bool propagateErrors = false, bool urgent = false)
     {
         var answer = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        asking[answer] = 0;
+        asking[answer] = () => answer.TrySetResult(null);
 
         // It stopped before this was put down, so nothing would answer it
         if (Failure is not null)
@@ -405,7 +405,36 @@ public sealed partial class LanguageServer : IDisposable
                 answer.TrySetResult(asked.IsCompletedSuccessfully ? asked.Result : null);
         }, TaskScheduler.Default);
 
-        if (!urgent && BACKGROUND_METHODS.Contains(method) && HoldBackground(Send))
+        if (!urgent && BACKGROUND_METHODS.Contains(method) && HoldBackground(Send, method, BackgroundUri(parameters), answer))
+            return answer.Task;
+
+        Later(Send);
+        return answer.Task;
+    }
+
+    // Asks a request whose large response payload is decoded directly from the UTF-8 wire slice without allocating a JsonNode DOM
+    private Task<T> AskParsed<T>(string method, JsonNode parameters, Func<ReadOnlyMemory<byte>, T> parseResult, T fallback, bool propagateErrors = false, bool urgent = false)
+    {
+        var answer = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        asking[answer] = () => answer.TrySetResult(fallback);
+
+        if (Failure is not null)
+        {
+            asking.TryRemove(answer, out _);
+            answer.TrySetResult(fallback);
+            return answer.Task;
+        }
+
+        void Send() => rpc.RequestParsed(method, parameters, parseResult).ContinueWith(asked =>
+        {
+            asking.TryRemove(answer, out _);
+            if (propagateErrors && !asked.IsCompletedSuccessfully)
+                answer.TrySetException(asked.Exception?.GetBaseException() ?? new IOException("The language-server request was cancelled."));
+            else
+                answer.TrySetResult(asked.IsCompletedSuccessfully ? asked.Result : fallback);
+        }, TaskScheduler.Default);
+
+        if (!urgent && BACKGROUND_METHODS.Contains(method) && HoldBackground(Send, method, BackgroundUri(parameters), answer))
             return answer.Task;
 
         Later(Send);
@@ -428,8 +457,10 @@ public sealed partial class LanguageServer : IDisposable
     // How long after the last change or completion the held requests go out, and the longest they're held for
     private const long QUIET_MS = 600, LONGEST_HOLD_MS = 4000;
 
+    private readonly record struct HeldRequest(string? Method, string? Uri, Action Send, object? Key);
+
     private readonly Lock holding = new();
-    private readonly List<Action> held = [];
+    private readonly List<HeldRequest> held = [];
     private Timer? releaseTimer;
     private long busyAt, heldSince;
     private int completing;
@@ -440,9 +471,14 @@ public sealed partial class LanguageServer : IDisposable
     // Helper method to say the user did something that wants answering quickly
     private void Typing() => Interlocked.Exchange(ref busyAt, Environment.TickCount64);
 
-    // Helper method to keep a background request back while typing goes on, false to send it now
-    private bool HoldBackground(Action send)
+    private static string? BackgroundUri(JsonNode parameters) =>
+        (parameters as JsonObject)?["textDocument"]?["uri"] is JsonValue value && value.TryGetValue(out string? uri) ? uri : null;
+
+    // Helper method to keep a background request back while typing goes on, false to send it now.
+    // Coalesces duplicate (method, uri) requests queued during typing bursts by cancelling superseded entries.
+    private bool HoldBackground(Action send, string? method = null, string? uri = null, object? key = null)
     {
+        object? superseded = null;
         lock (holding)
         {
             if (IsDisposed || Failure is not null)
@@ -450,19 +486,36 @@ public sealed partial class LanguageServer : IDisposable
             if (held.Count == 0 && !Busy)
                 return false;
 
+            if (method is not null && uri is not null)
+            {
+                for (int i = held.Count - 1; i >= 0; i--)
+                {
+                    if (string.Equals(held[i].Method, method, StringComparison.Ordinal)
+                        && string.Equals(held[i].Uri, uri, StringComparison.Ordinal))
+                    {
+                        superseded = held[i].Key;
+                        held.RemoveAt(i);
+                        break;
+                    }
+                }
+            }
+
             if (held.Count == 0)
                 heldSince = Environment.TickCount64;
-            held.Add(send);
+            held.Add(new HeldRequest(method, uri, send, key));
             releaseTimer ??= new Timer(_ => ReleaseHeld());
             releaseTimer.Change(100, 100);
-            return true;
         }
+
+        if (superseded is not null && asking.TryRemove(superseded, out Action? cancel))
+            cancel();
+        return true;
     }
 
     // On the timer, what was held goes out in the order it was asked once typing has stopped (or it waited long enough)
     private void ReleaseHeld()
     {
-        Action[] going;
+        HeldRequest[] going;
         lock (holding)
         {
             if (held.Count == 0 || (Busy && Environment.TickCount64 - heldSince < LONGEST_HOLD_MS && Failure is null))
@@ -473,8 +526,8 @@ public sealed partial class LanguageServer : IDisposable
             releaseTimer?.Change(Timeout.Infinite, Timeout.Infinite);
         }
 
-        foreach (Action send in going)
-            Later(send);
+        foreach (var request in going)
+            Later(request.Send);
     }
 
     /// <summary>Tells the server a file is open, with its text as it is in the editor.</summary>
@@ -489,11 +542,37 @@ public sealed partial class LanguageServer : IDisposable
                 lock (versions)
                 {
                     versions[full] = version = ++nextDocumentVersion;
+                    synchronizedLines.Remove(full);
                     if (IncrementalChanges) synchronizedText[full] = text;
                 }
                 rpc.Notify("textDocument/didOpen", new JsonObject
                 {
                     ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["languageId"] = LanguageIdOf(full), ["version"] = version, ["text"] = text }
+                });
+            }
+            PullSoon(full);
+        });
+    }
+
+    /// <summary>Tells the server a file is open, joining the snapshot lines off the caller's thread.</summary>
+    public void Open(string path, string[] lines)
+    {
+        string full = Path.GetFullPath(path);
+        Later(() =>
+        {
+            lock (sending)
+            {
+                int version;
+                string joined = string.Join('\n', lines);
+                lock (versions)
+                {
+                    versions[full] = version = ++nextDocumentVersion;
+                    synchronizedText.Remove(full);
+                    if (IncrementalChanges) synchronizedLines[full] = lines;
+                }
+                rpc.Notify("textDocument/didOpen", new JsonObject
+                {
+                    ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["languageId"] = LanguageIdOf(full), ["version"] = version, ["text"] = joined }
                 });
             }
             PullSoon(full);
@@ -517,6 +596,35 @@ public sealed partial class LanguageServer : IDisposable
                         return;
                     versions[full] = version = ++nextDocumentVersion;
                     change = ContentChange(full, text);
+                }
+
+                rpc.Notify("textDocument/didChange", new JsonObject
+                {
+                    ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["version"] = version },
+                    ["contentChanges"] = new JsonArray(change)
+                });
+            }
+            PullSoon(full);
+        });
+    }
+
+    /// <summary>Synchronizes a changed file from a snapshot of line references without materializing a joined document string on the caller's thread.</summary>
+    public void Change(string path, string[] lines)
+    {
+        string full = Path.GetFullPath(path);
+        Typing();
+        Later(() =>
+        {
+            lock (sending)
+            {
+                int version;
+                JsonObject change;
+                lock (versions)
+                {
+                    if (!versions.ContainsKey(full))
+                        return;
+                    versions[full] = version = ++nextDocumentVersion;
+                    change = ContentChange(full, lines);
                 }
 
                 rpc.Notify("textDocument/didChange", new JsonObject
@@ -577,6 +685,7 @@ public sealed partial class LanguageServer : IDisposable
                     if (!versions.Remove(full))
                         return;
                     synchronizedText.Remove(full);
+                    synchronizedLines.Remove(full);
                 }
 
                 rpc.Notify("textDocument/didClose", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = UriOf(full) } });

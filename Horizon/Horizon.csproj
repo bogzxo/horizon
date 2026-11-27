@@ -81,6 +81,7 @@
   <ItemGroup>
     <!-- The UI is built on the engine's insides, the input it holds back from a game, the renderer's output and pictures -->
     <InternalsVisibleTo Include="Horizon.UI" />
+    <InternalsVisibleTo Include="Horizon.Terminal" />
     <InternalsVisibleTo Include="Horizon.Tests" />
     <InternalsVisibleTo Include="Horizon.Testing" />
   </ItemGroup>

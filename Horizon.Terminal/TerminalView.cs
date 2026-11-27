@@ -1,4 +1,5 @@
-using System.Collections.Concurrent;
+using System.Buffers;
+using System.Diagnostics;
 using System.Numerics;
 using System.Text;
 
@@ -37,7 +38,10 @@ public partial class TerminalView : UIComponent, IDisposable
 
     private TerminalScreen screen = new(80, 24);
     private PseudoTerminal? process;
-    private readonly ConcurrentQueue<byte[]> arrived = new();
+    private readonly object arrivedGate = new();
+    private readonly Queue<(byte[] Buffer, int Length)> arrived = new();
+    private int waitingProducers;
+    private bool closedForOutput;
     private int drawnVersion = -1;
     private int requestedVersion = -1;
 
@@ -77,7 +81,7 @@ public partial class TerminalView : UIComponent, IDisposable
     // The selection by cell, in rows of the whole (scrollback and grid), anchor to end, inclusive
     private (int X, int Y) selectionAnchor, selectionEnd;
     private bool selecting, hasSelection;
-    private float lastClick;
+    private long lastClickTicks;
     private int clicks;
 
     // What the font came out as this paint, to turn points into cells (cached per font + scale)
@@ -232,9 +236,13 @@ public partial class TerminalView : UIComponent, IDisposable
     // What both have, whatever ran before ended, the screen cleared, and the process listened to
     private PseudoTerminal Attach(Func<PseudoTerminal> make, string folder)
     {
+        if (process is not null)
+            process.PooledOutput -= ArrivedPooled;
         process?.Dispose();
+        process = null;
         program?.Dispose();
         program = null;
+        DrainQueuedOutput(close: false);
         screen.Reset();
         drawnVersion = -1;
         requestedVersion = -1;
@@ -246,7 +254,7 @@ public partial class TerminalView : UIComponent, IDisposable
         PseudoTerminal started = make();
         // Windows' ConPTY lets the shell's marks through ahead of the text it paints, the screen settles them after
         screen.LateMarks = OperatingSystem.IsWindows();
-        started.Output += Arrived;
+        started.PooledOutput += ArrivedPooled;
         started.Exited += Ended;
         process = started;
         return started;
@@ -255,9 +263,12 @@ public partial class TerminalView : UIComponent, IDisposable
     /// <summary>Runs a program with no process behind it in the terminal, the REPL or a TUI in HIDL, ending whatever ran before.</summary>
     public ITerminalProgram Start(ITerminalProgram started, string? workingDirectory = null)
     {
+        if (process is not null)
+            process.PooledOutput -= ArrivedPooled;
         process?.Dispose();
         process = null;
         program?.Dispose();
+        DrainQueuedOutput(close: false);
         screen.Reset();
         drawnVersion = -1;
         requestedVersion = -1;
@@ -304,17 +315,86 @@ public partial class TerminalView : UIComponent, IDisposable
     /// <summary>Sends text to the program as if typed.</summary>
     public void Send(string text) => Write(text);
 
-    // On the pty's thread, queued for the next tick and the window woken for it
+    // On the pty's thread, queued for the next tick with lossless bounded backpressure and pooled buffers
     internal void Arrived(byte[] bytes)
     {
-        if (arrived.Count < MAX_PENDING_CHUNKS)
-            arrived.Enqueue(bytes);
+        byte[] rented = ArrayPool<byte>.Shared.Rent(Math.Max(1, bytes.Length));
+        if (bytes.Length > 0)
+            Buffer.BlockCopy(bytes, 0, rented, 0, bytes.Length);
+        ArrivedPooled(rented, bytes.Length);
+    }
+
+    internal void ArrivedPooled(byte[] buffer, int length)
+    {
+        bool enqueued = false;
+        lock (arrivedGate)
+        {
+            while (arrived.Count >= MAX_PENDING_CHUNKS && !closedForOutput && Volatile.Read(ref exitedState) == 0)
+            {
+                waitingProducers++;
+                try
+                {
+                    Monitor.Exit(arrivedGate);
+                    try { GameEngine.Instance?.WindowManager.Wake(); }
+                    finally { Monitor.Enter(arrivedGate); }
+                    if (arrived.Count >= MAX_PENDING_CHUNKS && !closedForOutput && Volatile.Read(ref exitedState) == 0)
+                        Monitor.Wait(arrivedGate, 50);
+                }
+                finally
+                {
+                    waitingProducers--;
+                }
+            }
+
+            if (!closedForOutput)
+            {
+                arrived.Enqueue((buffer, length));
+                enqueued = true;
+            }
+        }
+
+        if (!enqueued)
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+            return;
+        }
+
         GameEngine.Instance?.WindowManager.Wake();
+    }
+
+    private bool TryDequeueArrived(out (byte[] Buffer, int Length) chunk)
+    {
+        lock (arrivedGate)
+        {
+            if (!arrived.TryDequeue(out chunk))
+                return false;
+            if (waitingProducers > 0 && arrived.Count < MAX_PENDING_CHUNKS)
+                Monitor.PulseAll(arrivedGate);
+            return true;
+        }
+    }
+
+    private void DrainQueuedOutput(bool close)
+    {
+        lock (arrivedGate)
+        {
+            closedForOutput = close;
+            while (arrived.TryDequeue(out var chunk))
+                ArrayPool<byte>.Shared.Return(chunk.Buffer);
+            Monitor.PulseAll(arrivedGate);
+        }
+
+        for (int i = 0; i < held.Count; i++)
+            ArrayPool<byte>.Shared.Return(held[i].Buffer);
+        held.Clear();
+        heldFor = 0.0f;
     }
 
     internal void Ended(int code)
     {
         Volatile.Write(ref exitedState, (1L << 32) | (uint)code);
+        lock (arrivedGate)
+            Monitor.PulseAll(arrivedGate);
         GameEngine.Instance?.WindowManager.Wake();
     }
 
@@ -328,19 +408,22 @@ public partial class TerminalView : UIComponent, IDisposable
         UpdateBadge();
 
         bool changed = false;
-        while (arrived.TryDequeue(out byte[]? bytes))
+        while (TryDequeueArrived(out var chunk))
         {
+            ReadOnlySpan<byte> span = chunk.Buffer.AsSpan(0, chunk.Length);
             // A frame the program asked to have shown whole (mode 2026) is held until its end or a tenth of a second,
             // then fed all at once, so a paint never shows half of it
-            if (screen.SynchronizedOutput && heldFor < SYNC_MOST && bytes.AsSpan().IndexOf(SyncEnd) < 0)
+            if (screen.SynchronizedOutput && heldFor < SYNC_MOST && span.IndexOf(SyncEnd) < 0)
             {
-                held.Add(bytes);
+                held.Add(chunk);
                 continue;
             }
 
             FeedHeld();
-            screen.Feed(bytes);
-            OnOutput?.Invoke(bytes);
+            screen.Feed(span);
+            if (OnOutput is { } onOutput)
+                onOutput(span.ToArray());
+            ArrayPool<byte>.Shared.Return(chunk.Buffer);
             changed = true;
         }
 
@@ -394,11 +477,14 @@ public partial class TerminalView : UIComponent, IDisposable
         {
             // Drain any trailing output enqueued before Ended() so nothing written right before exit is dropped
             bool drainedBeforeExit = false;
-            while (arrived.TryDequeue(out byte[]? trailing))
+            while (TryDequeueArrived(out var trailing))
             {
+                ReadOnlySpan<byte> span = trailing.Buffer.AsSpan(0, trailing.Length);
                 FeedHeld();
-                screen.Feed(trailing);
-                OnOutput?.Invoke(trailing);
+                screen.Feed(span);
+                if (OnOutput is { } onOutput)
+                    onOutput(span.ToArray());
+                ArrayPool<byte>.Shared.Return(trailing.Buffer);
                 changed = true;
                 drainedBeforeExit = true;
             }
@@ -470,15 +556,19 @@ public partial class TerminalView : UIComponent, IDisposable
 
     private const float SYNC_MOST = 0.1f;
     private static readonly byte[] SyncEnd = "\u001b[?2026l"u8.ToArray();
-    private readonly List<byte[]> held = [];
+    private readonly List<(byte[] Buffer, int Length)> held = [];
     private float heldFor;
 
     private void FeedHeld()
     {
         for (int i = 0; i < held.Count; i++)
         {
-            screen.Feed(held[i]);
-            OnOutput?.Invoke(held[i]);
+            var (buffer, length) = held[i];
+            ReadOnlySpan<byte> span = buffer.AsSpan(0, length);
+            screen.Feed(span);
+            if (OnOutput is { } onOutput)
+                onOutput(span.ToArray());
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         held.Clear();
@@ -686,9 +776,9 @@ public partial class TerminalView : UIComponent, IDisposable
             return;
         }
 
-        float now = (float)GameEngine.Instance.WindowManager.Tick / 1000.0f;
-        clicks = now - lastClick < 0.35f && (x, y + RowOffset()) == selectionAnchor ? clicks + 1 : 1;
-        lastClick = now;
+        long nowTicks = Stopwatch.GetTimestamp();
+        clicks = lastClickTicks != 0 && Stopwatch.GetElapsedTime(lastClickTicks, nowTicks).TotalSeconds < 0.35 && (x, y + RowOffset()) == selectionAnchor ? clicks + 1 : 1;
+        lastClickTicks = nowTicks;
 
         selectionAnchor = selectionEnd = (x, y + RowOffset());
         selecting = true;
@@ -1518,10 +1608,13 @@ public partial class TerminalView : UIComponent, IDisposable
 
     public void Dispose()
     {
+        if (process is not null)
+            process.PooledOutput -= ArrivedPooled;
         process?.Dispose();
         process = null;
         program?.Dispose();
         program = null;
+        DrainQueuedOutput(close: true);
         GC.SuppressFinalize(this);
     }
 

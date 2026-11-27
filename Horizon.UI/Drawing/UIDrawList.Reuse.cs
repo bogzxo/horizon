@@ -34,7 +34,8 @@ public sealed partial class UIDrawList
     // What a component painted, where it is among the list's quads, frame quads, frames, clips, homes, glass panes,
     // extras, and recorded run segments, by the component's name
     private readonly record struct PaintRecord(
-        long Version, int Context, int Items, int ItemsEnd, int Quads, int QuadsEnd, int Frames, int FramesEnd,
+        long Version, int Context, int TranslationFreeContext, UIRect Bounds, Vector2 ScreenOrigin, bool InsideUnfaded,
+        int Items, int ItemsEnd, int Quads, int QuadsEnd, int Frames, int FramesEnd,
         int Clips, int ClipsEnd, int Homes, int HomesEnd, int Glass, int GlassEnd, int FrameGlass, int FrameGlassEnd,
         int Runs, int RunsEnd, int Extras, int ExtrasEnd, int OuterFrame, int OuterClip);
 
@@ -45,7 +46,7 @@ public sealed partial class UIDrawList
     internal int Reused { get; private set; }
 
     // Where a recording started, and how many things that can't be painted again had happened by then
-    private readonly Stack<(int Items, int Quads, int Frames, int Clips, int Homes, int Glass, int FrameGlass, int FrameRuns, int Extras, int OuterFrame, int OuterClip, int Uncacheable)> recording = new();
+    private readonly Stack<(int Items, int Quads, int Frames, int Clips, int Homes, int Glass, int FrameGlass, int FrameRuns, int Extras, int OuterFrame, int OuterClip, int Uncacheable, UIRect Bounds, Vector2 ScreenOrigin, int TranslationFreeContext, bool InsideUnfaded)> recording = new();
     private int uncacheable;
 
     // The components that started painting in frames, in order, for a record to carry its own
@@ -109,42 +110,114 @@ public sealed partial class UIDrawList
         return hash.ToHashCode();
     }
 
+    private Vector2 ScreenOrigin(UIRect bounds) => (bounds.Min * visualScale + visualOffset) * scale + origin;
+
+    private int TranslationFreeContext(UIRect bounds)
+    {
+        var hash = new HashCode();
+        hash.Add(bounds.Size);
+        Vector2 relClipMin = new(
+            float.IsFinite(clip.Min.X) ? clip.Min.X - bounds.Min.X : clip.Min.X,
+            float.IsFinite(clip.Min.Y) ? clip.Min.Y - bounds.Min.Y : clip.Min.Y);
+        Vector2 relClipMax = new(
+            float.IsFinite(clip.Max.X) ? clip.Max.X - bounds.Min.X : clip.Max.X,
+            float.IsFinite(clip.Max.Y) ? clip.Max.Y - bounds.Min.Y : clip.Max.Y);
+        hash.Add(relClipMin);
+        hash.Add(relClipMax);
+        hash.Add(visualScale);
+        hash.Add(scale);
+        hash.Add(opacity);
+        hash.Add(Skin);
+        hash.Add(UISkins.Version);
+        hash.Add(paletteFingerprint);
+        hash.Add(font);
+        hash.Add(Horizon.Rendering.Text.GlyphAtlas.Shared.Generation);
+        hash.Add(Horizon.Rendering.Text.GlyphAtlas.Subpixel.Generation);
+        hash.Add(subpixelText && Horizon.Rendering.Text.GlyphAtlas.Subpixel.Ready);
+        hash.Add(subpixelBgr);
+        hash.Add(hintedText);
+        hash.Add(dualSourceSubpixel);
+        return hash.ToHashCode();
+    }
+
+    private bool TryTranslationDelta(in PaintRecord was, UIRect bounds, out Vector2 deltaLayout, out Vector2 deltaScreen)
+    {
+        deltaLayout = Vector2.Zero;
+        deltaScreen = Vector2.Zero;
+        if (!was.InsideUnfaded || fades.Count > 0 || was.FramesEnd != was.Frames)
+            return false;
+        if (was.Bounds.Size != bounds.Size || was.TranslationFreeContext != TranslationFreeContext(bounds))
+            return false;
+
+        deltaLayout = bounds.Min - was.Bounds.Min;
+        Vector2 rawScreenDelta = ScreenOrigin(bounds) - was.ScreenOrigin;
+        deltaScreen = Vector2.Round(rawScreenDelta);
+        if (MathF.Abs(rawScreenDelta.X - deltaScreen.X) > 0.001f || MathF.Abs(rawScreenDelta.Y - deltaScreen.Y) > 0.001f)
+            return false;
+
+        return deltaLayout != Vector2.Zero || deltaScreen != Vector2.Zero;
+    }
+
     /// <summary>
     /// Paints a component the way it was painted the tick before, out of the list painted then, if it was painted at
     /// the same version in the same place. False if it has to be painted.
     /// </summary>
-    internal bool TryReuse(float paintId, long version, int context)
+    internal bool TryReuse(float paintId, long version, int context) =>
+        TryReuse(paintId, version, context, default, allowTranslation: false);
+
+    /// <summary>
+    /// Paints a component the way it was painted the tick before, reusing exact matches or whole-pixel pure translations.
+    /// </summary>
+    internal bool TryReuse(float paintId, long version, int context, UIRect bounds, bool allowTranslation = true)
     {
-        if (Previous is not { } before || !before.records.TryGetValue(paintId, out PaintRecord was) || was.Version != version || was.Context != context)
+        if (Previous is not { } before || !before.records.TryGetValue(paintId, out PaintRecord was) || was.Version != version)
             return false;
+
+        Vector2 deltaLayout = Vector2.Zero;
+        Vector2 deltaScreen = Vector2.Zero;
+        if (was.Context != context)
+        {
+            if (!allowTranslation || !TryTranslationDelta(was, bounds, out deltaLayout, out deltaScreen))
+                return false;
+        }
 
         if (CheckReuse)
             return false;
 
-        Reuse(before, paintId, was);
+        Reuse(before, paintId, was, bounds, context, deltaLayout, deltaScreen);
         Reused++;
         return true;
     }
 
     /// <summary>Starts recording what a component paints, for the next tick to take it out of this list again.</summary>
     internal void BeginRecord() =>
-        recording.Push((itemCount, frameList.QuadCount, frameList.Frames.Count, frameList.Clips.Count, homeOrder.Count, glass.Count, frameList.Glass.Count, frameList.Runs.Count, frameList.Extras.Count, frameAt, clipAt, uncacheable));
+        recording.Push((itemCount, frameList.QuadCount, frameList.Frames.Count, frameList.Clips.Count, homeOrder.Count, glass.Count, frameList.Glass.Count, frameList.Runs.Count, frameList.Extras.Count, frameAt, clipAt, uncacheable, default, Vector2.Zero, 0, false));
+
+    /// <summary>Starts recording what a component paints, retaining translation metadata for whole-pixel translation reuse.</summary>
+    internal void BeginRecord(UIRect bounds) =>
+        recording.Push((itemCount, frameList.QuadCount, frameList.Frames.Count, frameList.Clips.Count, homeOrder.Count, glass.Count, frameList.Glass.Count, frameList.Runs.Count, frameList.Extras.Count, frameAt, clipAt, uncacheable, bounds, ScreenOrigin(bounds), TranslationFreeContext(bounds), fades.Count == 0));
 
     /// <summary>Ends what <see cref="BeginRecord"/> started, kept unless something that can't be painted again was painted.</summary>
     /// <param name="painter">Who it is, said when CheckReuse finds a difference.</param>
     internal void EndRecord(float paintId, long version, int context, object painter)
     {
-        var (items0, quads0, frames0, clips0, homes0, glass0, frameGlass0, frameRuns0, extras0, outerFrame, outerClip, uncacheable0) = recording.Pop();
+        var (items0, quads0, frames0, clips0, homes0, glass0, frameGlass0, frameRuns0, extras0, outerFrame, outerClip, uncacheable0, recBounds, recScreenOrigin, recTFContext, recUnfaded) = recording.Pop();
         bool kept = uncacheable == uncacheable0;
-        if (CheckReuse && Previous is { } before && before.records.TryGetValue(paintId, out PaintRecord was) && was.Version == version && was.Context == context
-            && Differs(before, was, items0, quads0, glass0) is { } differs)
-            Log.Warning($"[UI reuse] a {painter.GetType().Name} painted something else at the same PaintVersion, {differs}");
+        if (CheckReuse && Previous is { } before && before.records.TryGetValue(paintId, out PaintRecord was) && was.Version == version)
+        {
+            if (was.Context == context && Differs(before, was, items0, quads0, glass0, Vector2.Zero) is { } differs)
+                Log.Warning($"[UI reuse] a {painter.GetType().Name} painted something else at the same PaintVersion, {differs}");
+            else if (was.Context != context && recUnfaded && TryTranslationDelta(was, recBounds, out _, out Vector2 deltaScreen)
+                && Differs(before, was, items0, quads0, glass0, deltaScreen) is { } shiftedDiffers)
+                Log.Warning($"[UI reuse] a {painter.GetType().Name} painted something else after translation at the same PaintVersion, {shiftedDiffers}");
+        }
 
         if (kept)
         {
             int segStart = recordedRuns.Count;
             RecordRunSegments(items0, itemCount, quads0, frameList.QuadCount, frameRuns0, frameList.Runs.Count);
-            records[paintId] = new PaintRecord(version, context, items0, itemCount, quads0, frameList.QuadCount, frames0, frameList.Frames.Count,
+            records[paintId] = new PaintRecord(version, context, recTFContext, recBounds, recScreenOrigin, recUnfaded,
+                items0, itemCount, quads0, frameList.QuadCount, frames0, frameList.Frames.Count,
                 clips0, frameList.Clips.Count, homes0, homeOrder.Count, glass0, glass.Count, frameGlass0, frameList.Glass.Count,
                 segStart, recordedRuns.Count, extras0, frameList.Extras.Count, outerFrame, outerClip);
         }
@@ -182,8 +255,10 @@ public sealed partial class UIDrawList
     }
 
     // Helper method to copy what a component painted the tick before into this list, where it's painted now
-    private void Reuse(UIDrawList before, float paintId, PaintRecord was)
+    private void Reuse(UIDrawList before, float paintId, PaintRecord was, UIRect newBounds, int newContext, Vector2 deltaLayout, Vector2 deltaScreen)
     {
+        bool shiftLayout = deltaLayout != Vector2.Zero;
+        bool shiftScreen = deltaScreen != Vector2.Zero;
         int items0 = itemCount, quads0 = frameList.QuadCount, frames0 = frameList.Frames.Count, clips0 = frameList.Clips.Count;
         int glass0 = glass.Count, frameGlass0 = frameList.Glass.Count, runsStart = recordedRuns.Count;
 
@@ -215,7 +290,8 @@ public sealed partial class UIDrawList
                 int? cutStationary = cut.StationaryParentFrame is { } outside
                     ? (outside >= was.Frames && outside < was.FramesEnd ? outside + frameDelta : frameAt)
                     : null;
-                frameList.Clips.Add(cut with { Frame = cutFrame, Parent = cutParent, StationaryParentFrame = cutStationary });
+                UIRect cutRect = shiftLayout ? new UIRect(cut.Rect.Min + deltaLayout, cut.Rect.Max + deltaLayout) : cut.Rect;
+                frameList.Clips.Add(cut with { Rect = cutRect, Frame = cutFrame, Parent = cutParent, StationaryParentFrame = cutStationary });
             }
         }
 
@@ -240,6 +316,18 @@ public sealed partial class UIDrawList
             frameList.Extras.EnsureCapacity(extras0 + extraCount);
             ReadOnlySpan<UIQuadExtra> srcExtras = CollectionsMarshal.AsSpan(before.frameList.Extras).Slice(was.Extras, extraCount);
             frameList.Extras.AddRange(srcExtras);
+            if (shiftLayout)
+            {
+                Span<UIQuadExtra> dstExtras = CollectionsMarshal.AsSpan(frameList.Extras).Slice(extras0, extraCount);
+                for (int i = 0; i < dstExtras.Length; i++)
+                {
+                    ref UIQuadExtra extra = ref dstExtras[i];
+                    if (extra.Slant != 0.0f)
+                        extra.Upright += deltaLayout.Y;
+                    if (extra.Turn != 0.0f)
+                        extra.Pivot += deltaLayout;
+                }
+            }
         }
 
         int itemDelta = items0 - was.Items;
@@ -277,10 +365,15 @@ public sealed partial class UIDrawList
             {
                 before.items.AsSpan(seg.Items, segItemCount).CopyTo(items.AsSpan(segDstItems));
                 // Most idle ticks bind the same images into the same slots, so the copied quads need no per-item flag rewrite.
-                if (remapSlots)
+                if (remapSlots || shiftScreen)
                 {
                     for (int i = segDstItems; i < segDstItems + segItemCount; i++)
-                        items[i].Flags = RemapImageSlot(items[i].Flags, slot0, slot1);
+                    {
+                        if (remapSlots)
+                            items[i].Flags = RemapImageSlot(items[i].Flags, slot0, slot1);
+                        if (shiftScreen)
+                            ShiftSpriteItem(ref items[i], deltaScreen);
+                    }
                 }
                 itemCount += segItemCount;
             }
@@ -312,6 +405,16 @@ public sealed partial class UIDrawList
                             quad.Flags = RemapImageSlot(quad.Flags, slot0, slot1);
                     }
                 }
+
+                if (shiftLayout)
+                {
+                    Span<UIQuadGeometry> geoms = frameList.QuadGeoms.AsSpan(segDstQuads, segQuadCount);
+                    for (int i = 0; i < geoms.Length; i++)
+                    {
+                        UIRect rect = geoms[i].Rect;
+                        geoms[i].Rect = new UIRect(rect.Min + deltaLayout, rect.Max + deltaLayout);
+                    }
+                }
             }
 
             Texture? newImg0 = slot0 == IMAGE_SLOT ? img0 : slot1 == IMAGE_SLOT ? img1 : null;
@@ -334,6 +437,16 @@ public sealed partial class UIDrawList
             for (int i = was.Glass; i < was.GlassEnd; i++)
             {
                 UIGlassPane pane = before.glass[i];
+                if (shiftScreen)
+                {
+                    pane = pane with
+                    {
+                        Min = pane.Min + deltaScreen,
+                        Max = pane.Max + deltaScreen,
+                        ClipMin = float.IsFinite(pane.ClipMin.X) && float.IsFinite(pane.ClipMin.Y) ? pane.ClipMin + deltaScreen : pane.ClipMin,
+                        ClipMax = float.IsFinite(pane.ClipMax.X) && float.IsFinite(pane.ClipMax.Y) ? pane.ClipMax + deltaScreen : pane.ClipMax
+                    };
+                }
                 glass.Add(pane with { Under = pane.Under + itemDelta, Start = pane.Start + itemDelta });
             }
         }
@@ -348,8 +461,10 @@ public sealed partial class UIDrawList
                 UIFrameGlass fg = before.frameList.Glass[i];
                 int fgFrame = fg.Frame >= was.Frames && fg.Frame < was.FramesEnd ? fg.Frame + frameDelta : frameAt;
                 int fgClip = fg.Clip >= was.Clips && fg.Clip < was.ClipsEnd ? fg.Clip + clipDelta : clipAt;
+                UIRect fgRect = shiftLayout ? new UIRect(fg.Rect.Min + deltaLayout, fg.Rect.Max + deltaLayout) : fg.Rect;
                 frameList.Glass.Add(fg with
                 {
+                    Rect = fgRect,
                     Under = fg.Under + quadDelta,
                     Start = fg.Start + quadDelta,
                     Frame = fgFrame,
@@ -373,8 +488,12 @@ public sealed partial class UIDrawList
             }
         }
 
+        bool updateContext = shiftLayout || shiftScreen;
         records[paintId] = was with
         {
+            Context = newContext,
+            Bounds = updateContext ? newBounds : was.Bounds,
+            ScreenOrigin = updateContext ? ScreenOrigin(newBounds) : was.ScreenOrigin,
             Items = items0, ItemsEnd = itemCount, Quads = quads0, QuadsEnd = frameList.QuadCount,
             Frames = frames0, FramesEnd = frameList.Frames.Count, Clips = clips0, ClipsEnd = frameList.Clips.Count,
             Homes = homeOrder.Count - homeCount, HomesEnd = homeOrder.Count,
@@ -383,6 +502,18 @@ public sealed partial class UIDrawList
             Extras = extras0, ExtrasEnd = frameList.Extras.Count,
             OuterFrame = frameAt, OuterClip = clipAt
         };
+    }
+
+    private static void ShiftSpriteItem(ref SpriteItem item, Vector2 deltaScreen)
+    {
+        item.Origin += deltaScreen;
+        if ((item.Flags & SpriteItem.ShapeFlag) != 0)
+        {
+            if (MathF.Abs(item.Key.X) < NO_CLIP * 0.5f && MathF.Abs(item.Key.Y) < NO_CLIP * 0.5f)
+                item.Key += deltaScreen;
+            if (MathF.Abs(item.TexMax.X) < NO_CLIP * 0.5f && MathF.Abs(item.TexMax.Y) < NO_CLIP * 0.5f)
+                item.TexMax += deltaScreen;
+        }
     }
 
     private static uint RemapImageSlot(uint flags, uint slot0, uint slot1)
@@ -394,8 +525,9 @@ public sealed partial class UIDrawList
     }
 
     // Helper method for where what a component painted now differs from what it painted at the same version before, for CheckReuse
-    private string? Differs(UIDrawList before, in PaintRecord was, int items0, int quads0, int glass0)
+    private string? Differs(UIDrawList before, in PaintRecord was, int items0, int quads0, int glass0, Vector2 deltaScreen)
     {
+        bool shifted = deltaScreen != Vector2.Zero;
         int count = itemCount - items0;
         if (count != was.ItemsEnd - was.Items)
             return $"{count} quads painted, {was.ItemsEnd - was.Items} before";
@@ -404,10 +536,17 @@ public sealed partial class UIDrawList
         for (int i = 0; i < count; i++)
         {
             SpriteItem a = now[i], b = then[i];
+            if (shifted)
+                ShiftSpriteItem(ref b, deltaScreen);
             // An image's slot can be another in another run, the rest of the flags are what they are
             uint texture = SpriteItem.TextureOf(a.Flags);
             bool image = texture == IMAGE_SLOT || texture == IMAGE_SLOT + 1;
-            if (a.Origin != b.Origin || a.AxisX != b.AxisX || a.AxisY != b.AxisY || a.TexMin != b.TexMin || a.TexMax != b.TexMax || a.Color != b.Color || a.Ring != b.Ring
+            bool originMatch = shifted ? Vector2.DistanceSquared(a.Origin, b.Origin) <= 0.001f : a.Origin == b.Origin;
+            bool shapeClipMatch = !shifted || (a.Flags & SpriteItem.ShapeFlag) == 0
+                || (Vector2.DistanceSquared(a.Key, b.Key) <= 0.001f && Vector2.DistanceSquared(a.TexMax, b.TexMax) <= 0.001f);
+            bool texMaxMatch = (a.Flags & SpriteItem.ShapeFlag) != 0 ? (shifted ? shapeClipMatch : a.TexMax == b.TexMax) : a.TexMax == b.TexMax;
+            if (!originMatch || !shapeClipMatch || a.AxisX != b.AxisX || a.AxisY != b.AxisY || a.TexMin != b.TexMin || !texMaxMatch || a.Color != b.Color || a.Ring != b.Ring
+                || (!shifted && a.Key != b.Key) || (shifted && (a.Flags & SpriteItem.ShapeFlag) == 0 && a.Key != b.Key)
                 || !image && a.Flags != b.Flags)
                 return $"quad {i} of {count} is at {a.Origin} {a.Color:X8} now and was at {b.Origin} {b.Color:X8}";
         }
@@ -419,8 +558,23 @@ public sealed partial class UIDrawList
         for (int i = 0; i < glassCount; i++)
         {
             UIGlassPane a = glass[glass0 + i], b = before.glass[was.Glass + i];
+            if (shifted)
+            {
+                b = b with
+                {
+                    Min = b.Min + deltaScreen,
+                    Max = b.Max + deltaScreen,
+                    ClipMin = float.IsFinite(b.ClipMin.X) && float.IsFinite(b.ClipMin.Y) ? b.ClipMin + deltaScreen : b.ClipMin,
+                    ClipMax = float.IsFinite(b.ClipMax.X) && float.IsFinite(b.ClipMax.Y) ? b.ClipMax + deltaScreen : b.ClipMax
+                };
+            }
+            bool posMatch = shifted
+                ? Vector2.DistanceSquared(a.Min, b.Min) <= 0.001f && Vector2.DistanceSquared(a.Max, b.Max) <= 0.001f
+                  && (a.ClipMin == b.ClipMin || (float.IsFinite(a.ClipMin.X) && float.IsFinite(b.ClipMin.X) && Vector2.DistanceSquared(a.ClipMin, b.ClipMin) <= 0.001f))
+                  && (a.ClipMax == b.ClipMax || (float.IsFinite(a.ClipMax.X) && float.IsFinite(b.ClipMax.X) && Vector2.DistanceSquared(a.ClipMax, b.ClipMax) <= 0.001f))
+                : a.Min == b.Min && a.Max == b.Max && a.ClipMin == b.ClipMin && a.ClipMax == b.ClipMax;
             if (a.Under - items0 != b.Under - was.Items || a.Start - items0 != b.Start - was.Items ||
-                a.Min != b.Min || a.Max != b.Max || a.ClipMin != b.ClipMin || a.ClipMax != b.ClipMax ||
+                !posMatch ||
                 a.Radius != b.Radius || a.Blur != b.Blur || a.Opacity != b.Opacity || a.Bend != b.Bend ||
                 a.Lens != b.Lens || a.Tint != b.Tint)
                 return $"glass pane {i} of {glassCount} is {a} now and was {b}";

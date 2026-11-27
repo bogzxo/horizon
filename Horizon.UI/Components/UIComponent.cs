@@ -647,9 +647,9 @@ public abstract partial class UIComponent
                 HashCode.Combine(version, isFocused, IsHovered, EnabledInHierarchy, focusVisible, ResizePaintStamp, Lift, CompositionPaintStamp),
                 Glass);
             context = list.PaintContext(Bounds);
-            if (list.TryReuse(PaintId, version, context))
+            if (list.TryReuse(PaintId, version, context, Bounds))
                 return;
-            list.BeginRecord();
+            list.BeginRecord(Bounds);
         }
 
         // Timed while somebody's finding out what's slow, see UIPaintProfile
@@ -746,11 +746,14 @@ public abstract partial class UIComponent
     protected bool TryReuseSlice(UIDrawList list, UIRect bounds, long version, out int context)
     {
         context = list.PaintContext(bounds);
-        return PaintId != 0.0f && list.TryReuse(-PaintId, version, context);
+        return PaintId != 0.0f && list.TryReuse(-PaintId, version, context, bounds);
     }
 
     /// <summary>Starts recording a component sub-slice after <see cref="TryReuseSlice"/> returns false.</summary>
     protected static void BeginSliceRecord(UIDrawList list) => list.BeginRecord();
+
+    /// <summary>Starts recording a component sub-slice with translation metadata after <see cref="TryReuseSlice"/> returns false.</summary>
+    protected static void BeginSliceRecord(UIDrawList list, UIRect bounds) => list.BeginRecord(bounds);
 
     /// <summary>Ends a sub-slice recording started by <see cref="BeginSliceRecord"/>.</summary>
     protected void EndSliceRecord(UIDrawList list, long version, int context)

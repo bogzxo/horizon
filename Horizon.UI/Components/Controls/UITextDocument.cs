@@ -142,6 +142,9 @@ public sealed partial class UITextDocument
 
     public string LineAt(int line) => lines[line];
 
+    /// <summary>Snapshot of the document's line references without materializing a joined document string.</summary>
+    public string[] CopyLines() => [.. lines];
+
     public bool HasSelection => Caret != Anchor;
     public UITextPosition SelectionStart => Caret < Anchor ? Caret : Anchor;
     public UITextPosition SelectionEnd => Caret < Anchor ? Anchor : Caret;

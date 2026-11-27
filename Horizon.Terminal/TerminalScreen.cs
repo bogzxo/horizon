@@ -87,6 +87,10 @@ public sealed partial class TerminalScreen : IVtHandler
     private List<TerminalRow> main = [], alternate = [];
     private readonly List<string> links = [string.Empty];
     private readonly Stack<int> keyboardFlags = new();
+    private readonly List<TerminalCell> resizeCells = [];
+    private readonly List<TerminalRow> resizeAll = [];
+    private readonly List<TerminalRow> resizeReflowed = [];
+    private readonly Stack<TerminalCell[]> resizeCellArrays = new();
 
     // The scrolling region, inclusive rows, the modes that aren't properties, and the cursor saved by DECSC a screen each
     private int top, bottom;
@@ -159,6 +163,20 @@ public sealed partial class TerminalScreen : IVtHandler
     /// width, the ones that didn't keep their breaks, and the cursor stays on its line. The alternate screen is cut
     /// or padded, a full screen program draws itself again when it hears.
     /// </summary>
+    private static TerminalRow MakeResizeRow(Stack<TerminalCell[]> pool, int columns)
+    {
+        while (pool.Count > 0)
+        {
+            TerminalCell[] cells = pool.Pop();
+            if (cells.Length == columns)
+            {
+                Array.Fill(cells, TerminalCell.Blank);
+                return new TerminalRow(cells, false, false);
+            }
+        }
+        return new TerminalRow(columns);
+    }
+
     public void Resize(int columns, int rows)
     {
         columns = Math.Max(2, columns);
@@ -166,27 +184,39 @@ public sealed partial class TerminalScreen : IVtHandler
         if (columns == Columns && rows == Rows)
             return;
 
+        bool sameWidth = columns == Columns;
         // The main screen and its scrollback as one list of rows, reflowed, the cursor carried along
-        var all = new List<TerminalRow>(scrollback.Count + Rows);
-        all.AddRange(scrollback);
-        all.AddRange(main);
+        resizeAll.Clear();
+        resizeAll.EnsureCapacity(scrollback.Count + Rows);
+        for (int i = 0; i < scrollback.Count; i++)
+            resizeAll.Add(scrollback[i]);
+        for (int i = 0; i < main.Count; i++)
+            resizeAll.Add(main[i]);
         int mainCursorX = AlternateScreen ? Math.Clamp(savedMain.X, 0, Columns - 1) : Math.Clamp(CursorX, 0, Columns - 1);
         int mainCursorY = AlternateScreen ? Math.Clamp(savedMain.Y, 0, Math.Max(0, main.Count - 1)) : Math.Clamp(CursorY, 0, Math.Max(0, main.Count - 1));
         int cursorRow = scrollback.Count + mainCursorY;
 
         // Blank rows under the cursor on the grid are dropped, or every shrink leaves a trail of them in the scrollback
-        int lastUsed = all.Count - 1;
-        while (lastUsed > cursorRow && all[lastUsed].Used == 0 && !all[lastUsed - 1].Wrapped)
+        int lastUsed = resizeAll.Count - 1;
+        while (lastUsed > cursorRow && resizeAll[lastUsed].Used == 0 && !resizeAll[lastUsed - 1].Wrapped)
             lastUsed--;
-        all.RemoveRange(lastUsed + 1, all.Count - lastUsed - 1);
+        if (sameWidth)
+        {
+            for (int r = lastUsed + 1; r < resizeAll.Count; r++)
+            {
+                if (resizeAll[r].Length == columns)
+                    resizeCellArrays.Push(resizeAll[r].Cells);
+            }
+        }
+        resizeAll.RemoveRange(lastUsed + 1, resizeAll.Count - lastUsed - 1);
 
-        var reflowed = new List<TerminalRow>();
+        resizeReflowed.Clear();
         int newCursorRow = 0, newCursorX = mainCursorX;
-        for (int i = 0; i < all.Count;)
+        for (int i = 0; i < resizeAll.Count;)
         {
             // One logical line, every row that wrapped into the next, its marks gathered for the first row it becomes
             int start = i;
-            var cells = new List<TerminalCell>();
+            resizeCells.Clear();
             Dictionary<int, string>? lineCombining = null;
             TerminalRowMark marks = default;
             bool holdsLastPrompt = false;
@@ -197,46 +227,48 @@ public sealed partial class TerminalScreen : IVtHandler
             int markedInput = -1, liveInput = -1;
             while (true)
             {
-                TerminalRow row = all[i];
+                TerminalRow row = resizeAll[i];
                 if (row.Mark.InputAt != 0 && markedInput < 0)
-                    markedInput = cells.Count + row.Mark.InputAt - 1;
+                    markedInput = resizeCells.Count + row.Mark.InputAt - 1;
                 if (ReferenceEquals(row, inputRow))
-                    liveInput = cells.Count + inputColumn;
+                    liveInput = resizeCells.Count + inputColumn;
                 marks = marks.With(row.Mark);
                 holdsLastPrompt |= ReferenceEquals(row, lastPrompt);
                 int used = row.Wrapped ? row.Length : row.Used;
                 if (i == cursorRow)
                 {
                     used = Math.Max(used, Math.Min(mainCursorX, row.Length));
-                    cursorOffset = cells.Count + Math.Min(mainCursorX, used);
+                    cursorOffset = resizeCells.Count + Math.Min(mainCursorX, used);
                 }
-                int baseOffset = cells.Count;
+                int baseOffset = resizeCells.Count;
                 for (int c = 0; c < used; c++)
                 {
                     TerminalCell cell = row.Cells[c];
                     if (cell.HasCombining && row.CombiningAt(c) is { } comb)
                         (lineCombining ??= [])[baseOffset + c] = comb;
-                    cells.Add(cell);
+                    resizeCells.Add(cell);
                 }
+                if (sameWidth && row.Length == columns)
+                    resizeCellArrays.Push(row.Cells);
                 i++;
-                if (!row.Wrapped || i >= all.Count)
+                if (!row.Wrapped || i >= resizeAll.Count)
                     break;
             }
 
             // Wrapped again at the new width, a wide character never cut in two
             int at = 0;
-            int firstOfLine = reflowed.Count;
+            int firstOfLine = resizeReflowed.Count;
             bool inputPlaced = markedInput < 0, livePlaced = liveInput < 0;
             do
             {
-                int take = Math.Min(columns, cells.Count - at);
-                if (take == columns && at + take < cells.Count && cells[at + take].IsContinuation)
+                int take = Math.Min(columns, resizeCells.Count - at);
+                if (take == columns && at + take < resizeCells.Count && resizeCells[at + take].IsContinuation)
                     take--;
-                var row = new TerminalRow(columns);
+                var row = MakeResizeRow(resizeCellArrays, columns);
                 bool rowStyled = false;
                 for (int c = 0; c < take; c++)
                 {
-                    TerminalCell cell = cells[at + c];
+                    TerminalCell cell = resizeCells[at + c];
                     row.Cells[c] = cell;
                     if (!rowStyled && TerminalRow.StyleHasBackground(cell.Style))
                         rowStyled = true;
@@ -244,15 +276,15 @@ public sealed partial class TerminalScreen : IVtHandler
                         row.SetCombining(c, comb);
                 }
                 row.HasStyledBackground = rowStyled;
-                row.Wrapped = at + take < cells.Count;
+                row.Wrapped = at + take < resizeCells.Count;
                 if (cursorOffset >= 0 && cursorOffset >= at && (cursorOffset < at + take || (!row.Wrapped && cursorOffset <= at + take)))
                 {
-                    newCursorRow = reflowed.Count;
+                    newCursorRow = resizeReflowed.Count;
                     newCursorX = Math.Min(columns - 1, cursorOffset - at);
                     cursorOffset = -1;
                 }
                 // The input goes on the row its place along the line is on now, the last row for one past the end
-                bool last = at + take >= cells.Count;
+                bool last = at + take >= resizeCells.Count;
                 if (!inputPlaced && (markedInput < at + take || last))
                 {
                     row.Mark.InputAt = Math.Clamp(markedInput - at, 0, columns - 1) + 1;
@@ -266,13 +298,13 @@ public sealed partial class TerminalScreen : IVtHandler
                     livePlaced = true;
                 }
 
-                reflowed.Add(row);
+                resizeReflowed.Add(row);
                 at += take;
-            } while (at < cells.Count);
+            } while (at < resizeCells.Count);
             _ = start;
 
             // The rest of the marks are the first row's, the prompt starts there whatever it wrapped into
-            TerminalRow first = reflowed[firstOfLine];
+            TerminalRow first = resizeReflowed[firstOfLine];
             int inputAt = first.Mark.InputAt;
             first.Mark = marks;
             first.Mark.InputAt = inputAt;
@@ -285,16 +317,16 @@ public sealed partial class TerminalScreen : IVtHandler
         Rows = rows;
         scrollback.Clear();
         main = new List<TerminalRow>(rows);
-        int firstOnGrid = Math.Max(0, reflowed.Count - rows);
+        int firstOnGrid = Math.Max(0, resizeReflowed.Count - rows);
         for (int r = 0; r < firstOnGrid; r++)
         {
-            reflowed[r].CompactForScrollback();
-            scrollback.Add(reflowed[r]);
+            resizeReflowed[r].CompactForScrollback();
+            scrollback.Add(resizeReflowed[r]);
         }
-        for (int r = firstOnGrid; r < reflowed.Count; r++)
-            main.Add(reflowed[r]);
+        for (int r = firstOnGrid; r < resizeReflowed.Count; r++)
+            main.Add(resizeReflowed[r]);
         while (main.Count < rows)
-            main.Add(new TerminalRow(columns));
+            main.Add(MakeResizeRow(resizeCellArrays, columns));
         while (main.Count > rows)
         {
             TerminalRow moved = main[0];
@@ -319,25 +351,64 @@ public sealed partial class TerminalScreen : IVtHandler
         }
 
         // The alternate screen is cut or padded, and the cursor kept on it
-        var resized = NewGrid(columns, rows);
-        for (int y = 0; y < Math.Min(rows, alternate.Count); y++)
+        var resized = new List<TerminalRow>(rows);
+        if (sameWidth)
         {
-            TerminalRow src = alternate[y];
-            TerminalRow dst = resized[y];
-            int copy = Math.Min(columns, src.Length);
-            Array.Copy(src.Cells, dst.Cells, copy);
-            dst.HasStyledBackground = src.HasStyledBackground;
-            for (int c = 0; c < copy; c++)
+            int kept = Math.Min(rows, alternate.Count);
+            for (int y = 0; y < kept; y++)
             {
-                if (dst.Cells[c].HasCombining && src.CombiningAt(c) is { } comb)
-                    dst.SetCombining(c, comb);
+                if (alternate[y].Length == columns)
+                    resized.Add(alternate[y]);
+                else
+                {
+                    TerminalRow src = alternate[y];
+                    TerminalRow dst = MakeResizeRow(resizeCellArrays, columns);
+                    int copy = Math.Min(columns, src.Length);
+                    Array.Copy(src.Cells, dst.Cells, copy);
+                    dst.HasStyledBackground = src.HasStyledBackground;
+                    for (int c = 0; c < copy; c++)
+                    {
+                        if (dst.Cells[c].HasCombining && src.CombiningAt(c) is { } comb)
+                            dst.SetCombining(c, comb);
+                    }
+                    resized.Add(dst);
+                }
             }
-            if (copy > 0 && dst.Cells[copy - 1].Style.Has(TerminalAttributes.Wide))
+            for (int y = kept; y < alternate.Count; y++)
             {
-                dst.Cells[copy - 1] = TerminalCell.Erased(dst.Cells[copy - 1].Style);
-                dst.ClearCombining(copy - 1, copy);
+                if (alternate[y].Length == columns)
+                    resizeCellArrays.Push(alternate[y].Cells);
+            }
+            while (resized.Count < rows)
+                resized.Add(MakeResizeRow(resizeCellArrays, columns));
+        }
+        else
+        {
+            for (int y = 0; y < rows; y++)
+                resized.Add(MakeResizeRow(resizeCellArrays, columns));
+            for (int y = 0; y < Math.Min(rows, alternate.Count); y++)
+            {
+                TerminalRow src = alternate[y];
+                TerminalRow dst = resized[y];
+                int copy = Math.Min(columns, src.Length);
+                Array.Copy(src.Cells, dst.Cells, copy);
+                dst.HasStyledBackground = src.HasStyledBackground;
+                for (int c = 0; c < copy; c++)
+                {
+                    if (dst.Cells[c].HasCombining && src.CombiningAt(c) is { } comb)
+                        dst.SetCombining(c, comb);
+                }
+                if (copy > 0 && dst.Cells[copy - 1].Style.Has(TerminalAttributes.Wide))
+                {
+                    dst.Cells[copy - 1] = TerminalCell.Erased(dst.Cells[copy - 1].Style);
+                    dst.ClearCombining(copy - 1, copy);
+                }
             }
         }
+        resizeCellArrays.Clear();
+        resizeAll.Clear();
+        resizeReflowed.Clear();
+        resizeCells.Clear();
         alternate = resized;
         savedAlternate = savedAlternate with { X = Math.Clamp(savedAlternate.X, 0, columns - 1), Y = Math.Clamp(savedAlternate.Y, 0, rows - 1) };
         if (AlternateScreen)

@@ -22,15 +22,60 @@ public sealed class JsonRpcConnection : IDisposable
         public int Code { get; } = code;
     }
 
+    private interface IPendingRequest
+    {
+        void SetError(Exception error);
+        void SetJsonResult(JsonNode? result);
+    }
+
+    private interface IRawPendingRequest : IPendingRequest
+    {
+        void SetRawResult(ReadOnlyMemory<byte> rawResult);
+    }
+
+    private sealed class JsonPendingRequest(TaskCompletionSource<JsonNode?> tcs) : IPendingRequest
+    {
+        public void SetError(Exception error) => tcs.TrySetException(error);
+        public void SetJsonResult(JsonNode? result) => tcs.TrySetResult(result);
+    }
+
+    private sealed class RawPendingRequest<T>(TaskCompletionSource<T> tcs, Func<ReadOnlyMemory<byte>, T> parseResult) : IRawPendingRequest
+    {
+        public void SetError(Exception error) => tcs.TrySetException(error);
+
+        public void SetJsonResult(JsonNode? result)
+        {
+            if (result is null)
+            {
+                SetRawResult(ReadOnlyMemory<byte>.Empty);
+                return;
+            }
+            SetRawResult(System.Text.Encoding.UTF8.GetBytes(result.ToJsonString()));
+        }
+
+        public void SetRawResult(ReadOnlyMemory<byte> rawResult)
+        {
+            try
+            {
+                tcs.TrySetResult(parseResult(rawResult));
+            }
+            catch (Exception e)
+            {
+                tcs.TrySetException(e);
+            }
+        }
+    }
+
     private readonly Stream input, output;
     private readonly ContentLengthReader framing;
     private readonly ContentLengthWriter writer;
     private readonly Thread reader;
     private readonly Lock writing = new();
-    private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonNode?>> pending = new();
+    private readonly ConcurrentDictionary<int, IPendingRequest> pending = new();
     private readonly Dictionary<string, Action<JsonNode?>> notifications = new(StringComparer.Ordinal);
     private int nextId;
     private int closedState;
+    private int rawPendingCount;
 
     /// <summary>Answers the other side's requests, given the method and its params. Null answers null, which is what most want.</summary>
     public Func<string, JsonNode?, JsonNode?>? OnRequest { get; set; }
@@ -122,7 +167,7 @@ public sealed class JsonRpcConnection : IDisposable
     {
         int id = Interlocked.Increment(ref nextId);
         var waiting = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        pending[id] = waiting;
+        pending[id] = new JsonPendingRequest(waiting);
 
         var message = new JsonObject { ["jsonrpc"] = "2.0", ["id"] = id, ["method"] = method };
         if (parameters is not null)
@@ -135,6 +180,32 @@ public sealed class JsonRpcConnection : IDisposable
         catch (Exception e)
         {
             pending.TryRemove(id, out _);
+            waiting.TrySetException(e);
+        }
+
+        return waiting.Task;
+    }
+
+    /// <summary>Sends a request and streams its raw UTF-8 result slice directly without allocating a <see cref="JsonNode"/> DOM.</summary>
+    internal Task<T> RequestParsed<T>(string method, JsonNode? parameters, Func<ReadOnlyMemory<byte>, T> parseResult)
+    {
+        int id = Interlocked.Increment(ref nextId);
+        var waiting = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        pending[id] = new RawPendingRequest<T>(waiting, parseResult);
+        Interlocked.Increment(ref rawPendingCount);
+
+        var message = new JsonObject { ["jsonrpc"] = "2.0", ["id"] = id, ["method"] = method };
+        if (parameters is not null)
+            message["params"] = parameters;
+
+        try
+        {
+            Send(message);
+        }
+        catch (Exception e)
+        {
+            if (pending.TryRemove(id, out _))
+                Interlocked.Decrement(ref rawPendingCount);
             waiting.TrySetException(e);
         }
 
@@ -176,6 +247,9 @@ public sealed class JsonRpcConnection : IDisposable
                 if (ReadMessage() is not { } body)
                     break;
                 Trace("<<", body.Span);
+
+                if (Volatile.Read(ref rawPendingCount) > 0 && TryDispatchRawResponse(body))
+                    continue;
 
                 JsonNode? message;
                 try
@@ -296,10 +370,87 @@ public sealed class JsonRpcConnection : IDisposable
         // An answer to one of ours
         if (id is not null && id.GetValueKind() == JsonValueKind.Number && pending.TryRemove(JsonNumbers.Int(id, -1), out var waiting))
         {
+            if (waiting is IRawPendingRequest)
+                Interlocked.Decrement(ref rawPendingCount);
+
             if (message["error"] is JsonObject error)
-                waiting.TrySetException(new RemoteException(JsonNumbers.Int(error["code"], 0), error["message"]?.GetValue<string>() ?? "no reason given"));
+                waiting.SetError(new RemoteException(JsonNumbers.Int(error["code"], 0), error["message"]?.GetValue<string>() ?? "no reason given"));
             else
-                waiting.TrySetResult(message["result"]);
+                waiting.SetJsonResult(message["result"]);
+        }
+    }
+
+    private bool TryDispatchRawResponse(ReadOnlyMemory<byte> body)
+    {
+        try
+        {
+            var reader = new Utf8JsonReader(body.Span);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+                return false;
+
+            int? idValue = null;
+            int resultStart = -1, resultEnd = -1;
+            int errorStart = -1, errorEnd = -1;
+
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+            {
+                if (reader.TokenType != JsonTokenType.PropertyName)
+                    continue;
+
+                if (reader.ValueTextEquals("method"u8))
+                    return false;
+
+                if (reader.ValueTextEquals("id"u8))
+                {
+                    if (!reader.Read()) return false;
+                    if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out int parsedId))
+                        idValue = parsedId;
+                    else if (!reader.TrySkip())
+                        return false;
+                    continue;
+                }
+
+                bool isResult = reader.ValueTextEquals("result"u8);
+                bool isError = !isResult && reader.ValueTextEquals("error"u8);
+                if (!reader.Read())
+                    return false;
+
+                int start = (int)reader.TokenStartIndex;
+                if (!reader.TrySkip())
+                    return false;
+                int end = (int)reader.BytesConsumed;
+
+                if (isResult)
+                {
+                    resultStart = start;
+                    resultEnd = end;
+                }
+                else if (isError)
+                {
+                    errorStart = start;
+                    errorEnd = end;
+                }
+            }
+
+            if (idValue is not int responseId || !pending.TryGetValue(responseId, out IPendingRequest? waiting) || waiting is not IRawPendingRequest rawWaiting)
+                return false;
+
+            if (!pending.TryRemove(responseId, out _))
+                return false;
+
+            Interlocked.Decrement(ref rawPendingCount);
+            if (errorStart >= 0 && JsonNode.Parse(body.Span[errorStart..errorEnd]) is JsonObject error)
+            {
+                rawWaiting.SetError(new RemoteException(JsonNumbers.Int(error["code"], 0), error["message"]?.GetValue<string>() ?? "no reason given"));
+                return true;
+            }
+
+            rawWaiting.SetRawResult(resultStart >= 0 ? body.Slice(resultStart, resultEnd - resultStart) : ReadOnlyMemory<byte>.Empty);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 
@@ -308,7 +459,11 @@ public sealed class JsonRpcConnection : IDisposable
         foreach (var (id, waiting) in pending)
         {
             if (pending.TryRemove(id, out _))
-                waiting.TrySetException(error);
+            {
+                if (waiting is IRawPendingRequest)
+                    Interlocked.Decrement(ref rawPendingCount);
+                waiting.SetError(error);
+            }
         }
     }
 
