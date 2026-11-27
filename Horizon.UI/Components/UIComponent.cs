@@ -465,12 +465,18 @@ public abstract partial class UIComponent
         if (Diagnostics.UIPaintProfile.On)
         {
             for (int i = 0; i < snapshot.Length; i++)
-                snapshot[i].MeasureTree(skin);
+            {
+                if (MeasuresChild(snapshot[i]))
+                    snapshot[i].MeasureTree(skin);
+            }
         }
         else
         {
             for (int i = 0; i < snapshot.Length; i++)
-                snapshot[i].MeasureTreeUntimed(skin);
+            {
+                if (MeasuresChild(snapshot[i]))
+                    snapshot[i].MeasureTreeUntimed(skin);
+            }
         }
 
         Vector2 automatic = Measure(skin) * Scale;
@@ -488,6 +494,9 @@ public abstract partial class UIComponent
         DesiredSize = desired;
         return desired;
     }
+
+    /// <summary>Whether <see cref="MeasureTree"/> recurses into <paramref name="child"/>.</summary>
+    protected internal virtual bool MeasuresChild(UIComponent child) => true;
 
     /// <summary>The component and everything in it put in a place, the second half of a layout pass after measuring.</summary>
     public void ArrangeTree(UIRect bounds)

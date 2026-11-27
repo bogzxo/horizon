@@ -1,4 +1,6 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 using Horizon.Engine;
 using Horizon.Graphics;
@@ -33,6 +35,8 @@ internal sealed class UIRenderer : IDisposable
     private bool spriteRunsDirty;
     private readonly List<UIGlassPane> glass = [];
     private UISkin? skin;
+    private ulong glassBaselineRevision;
+    private int glassFirstChangedItem;
 
     /// <summary>The quads that were uploaded last, which is what is drawn. For tests that look at what is on screen.</summary>
     internal ReadOnlySpan<SpriteItem> Uploaded => items.AsSpan(0, itemCount);
@@ -121,6 +125,18 @@ internal sealed class UIRenderer : IDisposable
     /// </summary>
     public void Upload(ReadOnlySpan<SpriteItem> source, ReadOnlySpan<UIDrawList.Run> sourceRuns, UISkin listSkin, ReadOnlySpan<TextureAtlas> listAtlases = default, ReadOnlySpan<UIGlassPane> listGlass = default)
     {
+        if (glassBaselineRevision != 0 && !listGlass.IsEmpty && glass.Count > 0 && ReferenceEquals(skin, listSkin) && itemCount > 0)
+        {
+            int common = CommonPrefix(items.AsSpan(0, itemCount), source, runs, sourceRuns);
+            if (common < glassFirstChangedItem)
+                glassFirstChangedItem = common;
+        }
+        else
+        {
+            glassBaselineRevision = 0;
+            glassFirstChangedItem = 0;
+        }
+
         if (items.Length < source.Length)
             items = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)source.Length)];
 
@@ -162,8 +178,11 @@ internal sealed class UIRenderer : IDisposable
 
         if (useDual)
         {
+            // ui_dual.slang outputs premultiplied dual-source (color = rgb*a, alpha) and (blend = a) for non-subpixel quads,
+            // so BlendMode.DualSource matches BlendMode.Alpha without splitting draws across BlendMode changes.
             usingDualShader = true;
-            FindDualSourceBlends();
+            if (blendChanges.Count > 0)
+                blendChanges.Clear();
         }
         else
         {
@@ -174,6 +193,53 @@ internal sealed class UIRenderer : IDisposable
                 blendChanges.Clear();
         }
         Revision++;
+    }
+
+    internal int FirstChangedItemSince(ulong revision) =>
+        glassBaselineRevision == revision ? glassFirstChangedItem : 0;
+
+    internal void AcknowledgeGlassBaseline(ulong revision)
+    {
+        glassBaselineRevision = revision;
+        glassFirstChangedItem = itemCount;
+    }
+
+    private static int CommonPrefix(ReadOnlySpan<SpriteItem> prev, ReadOnlySpan<SpriteItem> next, List<UIDrawList.Run> prevRuns, ReadOnlySpan<UIDrawList.Run> nextRuns)
+    {
+        int limit = Math.Min(prev.Length, next.Length);
+        if (limit == 0)
+            return 0;
+
+        int stride = Unsafe.SizeOf<SpriteItem>();
+        int byteLimit = limit * stride;
+        int same = MemoryMarshal.AsBytes(prev).Slice(0, byteLimit)
+            .CommonPrefixLength(MemoryMarshal.AsBytes(next).Slice(0, byteLimit)) / stride;
+        if (same == 0)
+            return 0;
+
+        // Clamp the invariant prefix before the first run whose First/Count/Image binding changed.
+        ReadOnlySpan<UIDrawList.Run> oldRuns = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(prevRuns);
+        int runCount = Math.Min(oldRuns.Length, nextRuns.Length);
+        int r = 0;
+        while (r < runCount
+            && oldRuns[r].First == nextRuns[r].First
+            && oldRuns[r].Count == nextRuns[r].Count
+            && ReferenceEquals(oldRuns[r].Image0, nextRuns[r].Image0)
+            && ReferenceEquals(oldRuns[r].Image1, nextRuns[r].Image1))
+        {
+            r++;
+        }
+
+        if (r < oldRuns.Length || r < nextRuns.Length)
+        {
+            int mismatchStart = r < runCount ? nextRuns[r].First : Math.Min(
+                r < oldRuns.Length ? oldRuns[r].First : int.MaxValue,
+                r < nextRuns.Length ? nextRuns[r].First : int.MaxValue);
+            if (mismatchStart < same)
+                same = Math.Max(0, mismatchStart);
+        }
+
+        return same;
     }
 
     /// <summary>
@@ -189,6 +255,8 @@ internal sealed class UIRenderer : IDisposable
         glass.Clear();
         blendChanges.Clear();
         usingDualShader = false;
+        glassBaselineRevision = 0;
+        glassFirstChangedItem = 0;
         uploadedRevision = 0;
         skin = null;
         Revision++;
@@ -268,8 +336,9 @@ internal sealed class UIRenderer : IDisposable
             spriteRunsDirty = false;
         }
 
-        if (uiShader is not null)
-            batch.Shader = uiShader;
+        Technique? activeShader = usingDualShader && dualShader is not null ? dualShader : uiShader;
+        if (activeShader is not null)
+            batch.Shader = activeShader;
 
         uploadedRevision = Revision;
         begun = true;
@@ -288,16 +357,23 @@ internal sealed class UIRenderer : IDisposable
 
         RenderState.Blend = true;
         RenderState.DepthTest = false;
-        RenderState.BlendMode = BlendMode.Alpha;
 
-        if (blendChanges.Count == 0)
+        if (usingDualShader && dualShader is not null)
         {
+            batch.Shader = dualShader;
+            RenderState.BlendMode = BlendMode.DualSource;
+            batch.DrawItems(from, to - from, camera);
+        }
+        else if (blendChanges.Count == 0)
+        {
+            RenderState.BlendMode = BlendMode.Alpha;
             if (uiShader is not null)
                 batch.Shader = uiShader;
             batch.DrawItems(from, to - from, camera);
         }
         else
         {
+            RenderState.BlendMode = BlendMode.Alpha;
             DrawBlended(from, to, camera);
         }
 
@@ -395,21 +471,6 @@ internal sealed class UIRenderer : IDisposable
                 grouping[written++] = items[i];
         }
         grouping.AsSpan(0, count).CopyTo(items.AsSpan(from, count));
-    }
-
-    // Transitions for single-pass dual-source subpixel runs (non-subpixel quads stay on single-source BlendMode.Alpha)
-    private void FindDualSourceBlends()
-    {
-        blendChanges.Clear();
-        uint current = 0;
-        for (int i = 0; i < itemCount; i++)
-        {
-            uint wanted = items[i].Flags & SpriteItem.SubpixelInkFlag;
-            if (wanted == current)
-                continue;
-            blendChanges.Add((i, wanted != 0 ? BlendMode.DualSource : BlendMode.Alpha));
-            current = wanted;
-        }
     }
 
     // The places the blend changes in what was handed over

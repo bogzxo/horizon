@@ -100,6 +100,11 @@ public sealed unsafe partial class GraphicsDevice
     private int scissorX, scissorY;
     private uint scissorWidth, scissorHeight;
     private bool scissorDirty = true;
+    private uint lastScissorTargetW, lastScissorTargetH;
+
+    private Buffer boundIndexBuffer;
+    private ulong boundIndexOffset;
+    private IndexType boundIndexType;
 
     private Pipeline currentPipeline;
     private PipelineCache.GraphicsKey lastGraphicsKey;
@@ -120,6 +125,10 @@ public sealed unsafe partial class GraphicsDevice
     private void ResetRecordingState()
     {
         currentPipeline = default;
+        boundIndexBuffer = default;
+        boundIndexOffset = 0;
+        boundIndexType = default;
+        lastScissorTargetW = lastScissorTargetH = 0;
         renderingActive = false;
         renderingTarget = null;
         LastParamsTechnique = null;
@@ -395,10 +404,15 @@ public sealed unsafe partial class GraphicsDevice
     /// <summary>Sets what of the bound target is drawn to, in pixels from its top left.</summary>
     public void SetViewport(int x, int y, uint width, uint height)
     {
+        uint clampedWidth = Math.Max(1, width);
+        uint clampedHeight = Math.Max(1, height);
+        if (viewportX == x && viewportY == y && viewportWidth == clampedWidth && viewportHeight == clampedHeight)
+            return;
+
         viewportX = x;
         viewportY = y;
-        viewportWidth = Math.Max(1, width);
-        viewportHeight = Math.Max(1, height);
+        viewportWidth = clampedWidth;
+        viewportHeight = clampedHeight;
         viewportDirty = true;
     }
 
@@ -438,6 +452,7 @@ public sealed unsafe partial class GraphicsDevice
 
     public void SetDepthTest(bool enabled)
     {
+        if (depthTest == enabled) return;
         depthTest = enabled;
         dynamicDirty = true;
     }
@@ -447,24 +462,28 @@ public sealed unsafe partial class GraphicsDevice
 
     public void SetDepthWrite(bool enabled)
     {
+        if (depthWrite == enabled) return;
         depthWrite = enabled;
         dynamicDirty = true;
     }
 
     public void SetStencilTest(bool enabled)
     {
+        if (stencilTest == enabled) return;
         stencilTest = enabled;
         dynamicDirty = true;
     }
 
     public void SetStencilWrite(uint mask)
     {
+        if (stencilWriteMask == mask) return;
         stencilWriteMask = mask;
         dynamicDirty = true;
     }
 
     public void SetStencilFunction(CompareFunction function, int reference, uint mask)
     {
+        if (stencilFunction == function && stencilReference == reference && stencilCompareMask == mask) return;
         stencilFunction = function;
         stencilReference = reference;
         stencilCompareMask = mask;
@@ -473,6 +492,7 @@ public sealed unsafe partial class GraphicsDevice
 
     public void SetStencilOperation(StencilAction onFail, StencilAction onDepthFail, StencilAction onPass)
     {
+        if (stencilFail == onFail && stencilDepthFail == onDepthFail && stencilPass == onPass) return;
         stencilFail = onFail;
         stencilDepthFail = onDepthFail;
         stencilPass = onPass;
@@ -484,6 +504,18 @@ public sealed unsafe partial class GraphicsDevice
     {
         get => clearColor;
         set => clearColor = value;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void BindIndexBufferCached(Buffer buffer, ulong offset, IndexType type)
+    {
+        if (boundIndexBuffer.Handle == buffer.Handle && boundIndexOffset == offset && boundIndexType == type)
+            return;
+
+        Vk.CmdBindIndexBuffer(cmd, buffer, offset, type);
+        boundIndexBuffer = buffer;
+        boundIndexOffset = offset;
+        boundIndexType = type;
     }
 
     /* Getting a draw ready */
@@ -542,6 +574,8 @@ public sealed unsafe partial class GraphicsDevice
             var (sx, sy, sw, sh) = ClampScissor(customScissor, scissorX, scissorY, scissorWidth, scissorHeight, viewportX, viewportY, viewportWidth, viewportHeight, targetW, targetH);
             var scissor = new Rect2D(new Offset2D(sx, sy), new Extent2D(sw, sh));
             Vk.CmdSetScissor(cmd, 0, 1, in scissor);
+            lastScissorTargetW = targetW;
+            lastScissorTargetH = targetH;
             scissorDirty = false;
         }
 
@@ -574,7 +608,7 @@ public sealed unsafe partial class GraphicsDevice
 
             if (array.IndexBuffer is { IsValid: true } indices && indices.Buffer.Handle != 0)
             {
-                Vk.CmdBindIndexBuffer(cmd, indices.Buffer, 0, IndexType.Uint32);
+                BindIndexBufferCached(indices.Buffer, 0, IndexType.Uint32);
                 indices.LastUse = NextSubmission;
             }
         }

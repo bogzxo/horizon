@@ -102,7 +102,7 @@ public sealed class Pass7UiDualSourceAndEditorTests
 
         renderer.Upload(dualItems, dualRuns, TestSkin);
         Assert.True(renderer.UsingDualShader);
-        Assert.Equal(1, renderer.BlendChangeCount);
+        Assert.Equal(0, renderer.BlendChangeCount);
 
         // Manual 2-pass SubpixelEraseFlag + SubpixelInkFlag quads must fall back to legacy 2-pass blending
         SpriteItem[] legacyItems =

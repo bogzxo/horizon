@@ -47,16 +47,39 @@ static const float GLYPH_GAMMA_DARK = 1.15;
 static const float GLYPH_GAMMA_LIGHT = 0.8;
 static const float BOLD_GROWTH = 0.2;
 
+// Approximate saturate(lifted)^gamma for gamma in [0.80, 1.15] via q = sqrt(sqrt(x)) without transcendental pow() calls (max error < 0.1/255).
+float glyphGammaCurve(float x, float gamma)
+{
+    float q = sqrt(sqrt(x));
+    float om = 1.0 - q;
+    float d = gamma - 1.0;
+    float f1 = om * (((-1.517853 * q - 3.101536) * q + 0.685517) * q - 0.070777) * q;
+    float f2 = om * (((-8.480083 * q + 8.826777) * q - 0.337532) * q - 0.016811) * q;
+    float f3 = om * (((-7.657008 * q + 17.694711) * q - 11.206025) * q + 1.248355) * q;
+    return saturate(x + d * (f1 + d * (f2 + d * f3)));
+}
+
+float3 glyphGammaCurve3(float3 x, float gamma)
+{
+    float3 q = sqrt(sqrt(x));
+    float3 om = 1.0 - q;
+    float d = gamma - 1.0;
+    float3 f1 = om * (((-1.517853 * q - 3.101536) * q + 0.685517) * q - 0.070777) * q;
+    float3 f2 = om * (((-8.480083 * q + 8.826777) * q - 0.337532) * q - 0.016811) * q;
+    float3 f3 = om * (((-7.657008 * q + 17.694711) * q - 11.206025) * q + 1.248355) * q;
+    return saturate(x + d * (f1 + d * (f2 + d * f3)));
+}
+
 float glyphInk(float coverage, float gamma)
 {
-    float lifted = coverage * (GLYPH_CONTRAST + 1.0) / (coverage * GLYPH_CONTRAST + 1.0);
-    return pow(saturate(lifted), gamma);
+    float lifted = saturate(coverage * (GLYPH_CONTRAST + 1.0) / (coverage * GLYPH_CONTRAST + 1.0));
+    return glyphGammaCurve(lifted, gamma);
 }
 
 float3 glyphInk3(float3 coverage, float gamma)
 {
-    float3 lifted = coverage * (GLYPH_CONTRAST + 1.0) / (coverage * GLYPH_CONTRAST + 1.0);
-    return pow(saturate(lifted), float3(gamma, gamma, gamma));
+    float3 lifted = saturate(coverage * (GLYPH_CONTRAST + 1.0) / (coverage * GLYPH_CONTRAST + 1.0));
+    return glyphGammaCurve3(lifted, gamma);
 }
 
 struct Varyings

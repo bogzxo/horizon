@@ -27,6 +27,8 @@ public class GridPanel : Panel
     /// <summary>The gap between two cells, both ways. A negative number uses the skin's.</summary>
     public float Spacing { get; set; } = -1.0f;
 
+    protected internal override bool MeasuresChild(UIComponent child) => child.Visible;
+
     protected override Vector2 Measure(UISkin skin)
     {
         gap = Spacing >= 0.0f ? Spacing : skin.Spacing;

@@ -1640,23 +1640,34 @@ public partial class UICompositor : GameComponent, IDisposable
     private ulong glassCameraRevision = 1;
     private Matrix4x4 glassHashView, glassHashProjection;
 
-    private bool TryGetCachedGlassHash(ulong revision, ulong seed, ulong cameraRev, int paneIndex, int under, (int X, int Y, int W, int H) region, uint blurBits, out ulong hash)
+    private bool TryGetCachedGlassHash(ulong revision, UIRenderer renderer, ulong seed, ulong cameraRev, int paneIndex, int under, (int X, int Y, int W, int H) region, uint blurBits, out ulong hash)
     {
         for (int c = 0; c < glassHashCache.Length; c++)
         {
-            ref readonly GlassHashEntry entry = ref glassHashCache[c];
-            if (entry.Hash != 0
-                && entry.Revision == revision
-                && entry.Seed == seed
-                && entry.CameraRevision == cameraRev
-                && entry.PaneIndex == paneIndex
-                && entry.Under == under
-                && entry.RegionX == region.X
-                && entry.RegionY == region.Y
-                && entry.RegionW == region.W
-                && entry.RegionH == region.H
-                && entry.BlurBits == blurBits)
+            ref GlassHashEntry entry = ref glassHashCache[c];
+            if (entry.Hash == 0
+                || entry.Seed != seed
+                || entry.CameraRevision != cameraRev
+                || entry.PaneIndex != paneIndex
+                || entry.Under != under
+                || entry.RegionX != region.X
+                || entry.RegionY != region.Y
+                || entry.RegionW != region.W
+                || entry.RegionH != region.H
+                || entry.BlurBits != blurBits)
             {
+                continue;
+            }
+
+            if (entry.Revision == revision)
+            {
+                hash = entry.Hash;
+                return true;
+            }
+
+            if (under <= renderer.FirstChangedItemSince(entry.Revision))
+            {
+                entry.Revision = revision;
                 hash = entry.Hash;
                 return true;
             }
@@ -1749,7 +1760,8 @@ public partial class UICompositor : GameComponent, IDisposable
             float share = GaussianBlur.Share(radius);
             int margin = share > 0.001f ? GaussianBlur.Margin(radius, size) : 2;
             int maxW = (int)size.X, maxH = (int)size.Y;
-            var region = GlassCaptureRegion(pVis, margin, maxW, maxH, followingPointer && GlassKeepsPicture);
+            bool draggingGlass = (followingPointer || pressed is not null || gripped is not null) && GlassKeepsPicture;
+            var region = GlassCaptureRegion(pVis, margin, maxW, maxH, draggingGlass);
 
             var (rWorldMin, rWorldMax) = hasInverse
                 ? RegionWorldBounds(region, fromClip, size)
@@ -1765,7 +1777,7 @@ public partial class UICompositor : GameComponent, IDisposable
             if (seed != 0)
             {
                 uint blurBits = BitConverter.SingleToUInt32Bits(pane.Blur);
-                if (!TryGetCachedGlassHash(uploadRev, seed, camRev, i, under, region, blurBits, out madeOf))
+                if (!TryGetCachedGlassHash(uploadRev, renderer, seed, camRev, i, under, region, blurBits, out madeOf))
                 {
                     madeOf = Mix(seed, ((ulong)(uint)region.X << 32) | (uint)region.Y);
                     madeOf = Mix(madeOf, ((ulong)(uint)region.W << 32) | (uint)region.H);
@@ -1840,6 +1852,9 @@ public partial class UICompositor : GameComponent, IDisposable
             renderer.DrawRange(from, items.Length, viewportCamera);
 
         renderer.End();
+        if (seed != 0)
+            renderer.AcknowledgeGlassBaseline(uploadRev);
+
         GlassDrawn = (panes.Length, blurs);
     }
 

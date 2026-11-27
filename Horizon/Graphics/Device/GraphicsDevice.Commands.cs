@@ -65,7 +65,7 @@ public sealed unsafe partial class GraphicsDevice
     {
         if (instanceCount == 0 || !PrepareDraw(Topology.Triangles)) return;
 
-        Vk.CmdBindIndexBuffer(cmd, quadIndexBuffer, 0, IndexType.Uint16);
+        BindIndexBufferCached(quadIndexBuffer, 0, IndexType.Uint16);
         Vk.CmdDrawIndexed(cmd, 6, instanceCount, 0, 0, firstInstance);
         Statistics.Counting.DrawCalls++;
         Statistics.Counting.Instances += (int)instanceCount;
@@ -77,7 +77,7 @@ public sealed unsafe partial class GraphicsDevice
         if (!command.IsValid || command.Buffer.Handle == 0) return;
         if (!PrepareDraw(Topology.Triangles)) return;
 
-        Vk.CmdBindIndexBuffer(cmd, quadIndexBuffer, 0, IndexType.Uint16);
+        BindIndexBufferCached(quadIndexBuffer, 0, IndexType.Uint16);
         Vk.CmdDrawIndexedIndirect(cmd, command.Buffer, (ulong)offset, 1, 20);
         command.LastUse = NextSubmission;
         Statistics.Counting.DrawCalls++;
@@ -89,7 +89,7 @@ public sealed unsafe partial class GraphicsDevice
         if (maxDraws == 0 || !commands.IsValid || !count.IsValid || commands.Buffer.Handle == 0 || count.Buffer.Handle == 0) return;
         if (!PrepareDraw(Topology.Triangles)) return;
 
-        Vk.CmdBindIndexBuffer(cmd, quadIndexBuffer, 0, IndexType.Uint16);
+        BindIndexBufferCached(quadIndexBuffer, 0, IndexType.Uint16);
         if (Context.HasDrawIndirectCount)
         {
             Vk.CmdDrawIndexedIndirectCount(cmd, commands.Buffer, (ulong)commandsOffset, count.Buffer, (ulong)countOffset, maxDraws, 20);
@@ -557,7 +557,9 @@ public sealed unsafe partial class GraphicsDevice
         renderingActive = true;
         renderingTarget = boundTarget;
         renderingWindow = targetIsWindow;
-        viewportDirty = dynamicDirty = true;
+        // Vulkan 1.3 dynamic state persists across dynamic rendering instances; only re-clamp scissor if target extent changed.
+        if (!customScissor && (extent.Width != lastScissorTargetW || extent.Height != lastScissorTargetH))
+            scissorDirty = true;
     }
 
     private static RenderingAttachmentInfo Attachment(ImageView view, Vector4? clear, bool discard = false) => new()
@@ -877,6 +879,56 @@ public sealed unsafe partial class GraphicsDevice
 
         fixed (byte* pointer = texels)
             UploadTexels(texture, x, y, width, height, format, pointer);
+    }
+
+    /// <summary>Uploads multiple sub-rectangles of texels from one contiguous byte buffer in a single staging copy, transition, and transfer command.</summary>
+    public void UploadTexelRegions(Texture texture, TexelFormat format, ReadOnlySpan<byte> data, ReadOnlySpan<TexelRegion> regions)
+    {
+        if (!texture.IsValid || regions.IsEmpty || data.IsEmpty)
+            return;
+
+        int bytesPerTexel = BytesPerTexel(format);
+        EndRendering();
+
+        LinearArena staging = Frame.Staging;
+        ulong baseOffset = staging.Take((ulong)data.Length, 16);
+        fixed (byte* src = data)
+            System.Buffer.MemoryCopy(src, staging.Mapped + baseOffset, (ulong)data.Length, (ulong)data.Length);
+        Statistics.Counting.BytesUploaded += data.Length;
+
+        Transition(texture, ImageLayout.TransferDstOptimal, PipelineStageFlags2.TransferBit, AccessFlags2.TransferWriteBit);
+
+        int count = regions.Length;
+        BufferImageCopy[]? pooled = null;
+        Span<BufferImageCopy> copies = count <= 64
+            ? stackalloc BufferImageCopy[64]
+            : (pooled = System.Buffers.ArrayPool<BufferImageCopy>.Shared.Rent(count));
+        try
+        {
+            for (int i = 0; i < count; i++)
+            {
+                ref readonly TexelRegion region = ref regions[i];
+                ulong expected = (ulong)region.Width * region.Height * (ulong)bytesPerTexel;
+                if (region.DataOffset < 0 || (ulong)region.DataOffset + expected > (ulong)data.Length)
+                    throw new ArgumentOutOfRangeException(nameof(regions), $"TexelRegion[{i}] exceeds uploaded data bounds.");
+
+                copies[i] = new BufferImageCopy
+                {
+                    BufferOffset = baseOffset + (ulong)region.DataOffset,
+                    ImageSubresource = new ImageSubresourceLayers(ImageAspectFlags.ColorBit, 0, 0, 1),
+                    ImageOffset = new Offset3D(region.X, region.Y, 0),
+                    ImageExtent = new Extent3D(region.Width, region.Height, 1)
+                };
+            }
+
+            fixed (BufferImageCopy* copyPtr = copies)
+                Vk.CmdCopyBufferToImage(cmd, staging.Buffer, texture.Image, ImageLayout.TransferDstOptimal, (uint)count, copyPtr);
+        }
+        finally
+        {
+            if (pooled is not null)
+                System.Buffers.ArrayPool<BufferImageCopy>.Shared.Return(pooled);
+        }
     }
 
     internal static int BytesPerTexel(TexelFormat format) => format switch

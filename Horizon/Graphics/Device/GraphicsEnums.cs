@@ -252,3 +252,11 @@ public enum GraphicsFeature
     /// <summary>Timestamps on the GPU, for how long a frame took there.</summary>
     GpuTimer
 }
+
+/// <summary>One sub-rectangle inside a batched <see cref="GraphicsDevice.UploadTexelRegions"/> transfer.</summary>
+/// <param name="X">Destination texel X coordinate.</param>
+/// <param name="Y">Destination texel Y coordinate.</param>
+/// <param name="Width">Width in texels.</param>
+/// <param name="Height">Height in texels.</param>
+/// <param name="DataOffset">Byte offset into the shared upload buffer where this region's tight row data starts.</param>
+public readonly record struct TexelRegion(int X, int Y, uint Width, uint Height, int DataOffset);

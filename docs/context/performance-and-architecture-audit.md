@@ -313,3 +313,31 @@
   - `Hex` startup & idle: Dawn `369 ms` (`-11 ms` vs Pass 8) / `156.2 MiB` WS (`-15.3 MiB` vs Pass 8) / `174.6 MiB` Private (`-13.0 MiB` vs Pass 8) / `0.983%` idle CPU; Dusk `287 ms` / `130.1 MiB` WS (`-1.8 MiB`) / `149.7 MiB` Private / `5.910%` idle CPU.
   - `Hex` UI Cost & Typing: `idle` `0.133 ms` GPU (`0.310 ms` Paint), `typing` `0.134 ms` GPU (`0.312 ms` Paint), `wheel` `0.132 ms` GPU (`0.304 ms` Paint), `drag` `0.221 ms` GPU (`0.427 ms` Paint, `-9.7%`), `notebook` `0.138 ms` GPU (`0.425 ms` Paint); C# typing p95 `5.2 ms` / worst `15.1 ms` (`-57.2%` vs Pass 8 `35.3 ms`).
   - `Horizon.Testing` scenes: `dungeon` `493 ms` / `2.613 ms` GPU (`-14.5%` vs Pass 8) / `355.3 Hz`; `meshes` `305 ms` / `0.090 ms` GPU / `4804.3 Hz` (`128.4 MiB` WS / `196.0 MiB` Private).
+
+
+## Pass 10 — Shader Gamma Curve, Vulkan State Caching, Prefix Glass Capture & Minimap Scroll Reuse (`results-pass10.json`)
+
+- **ShaderPack & Binaries**:
+  - `horizon.hzshaders`: `509,343 bytes` (`44` programs, `44` modules), SHA-256 `1F788D3EE2849B8D0CA680A272441F23ACF6F28B911B2EE3FB1E0415AB11908E`
+  - `Horizon.Testing.exe`: `25.05 MiB` | `Hex.exe`: `60.45 MiB`
+- **Verification**:
+  - `Horizon.Tests` Release: `2,660 / 2,660` passed (`0` failed, `0` skipped)
+  - `Hex.Tests` Debug: `3,419 / 3,421` passed (`0` failed, `2` skipped)
+  - `Horizon.Testing --checks`: `848 / 848` passed (`0` failed, `MedianWallMs: 37189.0`)
+  - `Hex --selftest`: `7 / 7` passed (`WallMs: 53286.5`)
+- **`HexStartup`** (3 cold runs, median):
+  - `Dawn`: `375 ms` | WS `156.1 MiB` | Priv `172.4 MiB` | Idle CPU `0.981%`
+  - `Dusk`: `293 ms` | WS `129.7 MiB` | Priv `148.2 MiB` | Idle CPU `2.455%`
+- **`HexSelfTest`** (`uicost`, `typing`, `garbage`):
+  - `idle`: Paint `0.226 ms` (`Layout 0.030`, `Draw 0.074`), `3389` quads/tick, `FrameGpu 0.168 ms`
+  - `typing`: Paint `0.279 ms` (`Layout 0.018`, `Draw 0.044`), `3430` quads/tick, `FrameGpu 0.237 ms`
+  - `wheel`: Paint `0.285 ms` (`Layout 0.016`, `Draw 0.041`), `3426` quads/tick, `FrameGpu 0.224 ms`
+  - `drag`: Paint `0.400 ms` (`Layout 0.077`, `Draw 0.069`), `4504` quads/tick, `FrameGpu 0.603 ms`
+  - `notebook`: Paint `0.408 ms` (`Layout 0.033`, `Draw 0.038`), `2234` quads/tick, `FrameGpu 0.210 ms`
+  - `typing csharp`: `Avg 4.2 / Med 4.2 / P95 5.3 / Worst 13.0 ms` | `typing hor`: `Avg 4.2 / Med 4.2 / P95 4.4 / Worst 11.1 ms`
+  - `garbage`: `designer 57 B/tick` | `code 73 B/tick` | `layoutCode 32 B/tick`
+- **`Horizon.TestingScenes`** (medians):
+  - `dungeon`: `451 ms` / `3.213 ms` GPU / `334.0 Hz` (`3.003 ms`) / `144.7 MiB` WS (`315.7 MiB` Private)
+  - `fluid`: `297 ms` / `0.070 ms` GPU / `4354.0 Hz` (`0.247 ms`, Physics `0.590 ms`) / `146.0 MiB` WS (`217.0 MiB` Private)
+  - `meshes`: `314 ms` / `0.090 ms` GPU / `4705.0 Hz` (`0.227 ms`) / `141.2 MiB` WS (`210.4 MiB` Private)
+  - `ui-controls`: `322 ms` / `0.070 ms` GPU / `4834.3 Hz` (`0.203 ms`) / `128.8 MiB` WS (`194.3 MiB` Private)

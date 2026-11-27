@@ -115,6 +115,8 @@ public sealed class GlyphAtlas
     private int pendingByteCount;
     private List<PendingGlyph> uploadGlyphs = new(INITIAL_PENDING_GLYPHS);
     private byte[] uploadBytes = new byte[INITIAL_PENDING_BYTES];
+    private int uploadByteCount;
+    private TexelRegion[] uploadRegions = new TexelRegion[INITIAL_PENDING_GLYPHS];
 
     internal int PendingBytesCapacity => pendingBytes.Length;
     internal int UploadBytesCapacity => uploadBytes.Length;
@@ -423,6 +425,7 @@ public sealed class GlyphAtlas
             {
                 (pendingGlyphs, uploadGlyphs) = (uploadGlyphs, pendingGlyphs);
                 (pendingBytes, uploadBytes) = (uploadBytes, pendingBytes);
+                uploadByteCount = pendingByteCount;
                 pendingGlyphs.Clear();
                 pendingByteCount = 0;
             }
@@ -438,6 +441,7 @@ public sealed class GlyphAtlas
             {
                 failed = true;
                 uploadGlyphs.Clear();
+                uploadByteCount = 0;
                 return;
             }
             Texture.Name = subpixel ? "glyphs subpixel" : "glyphs";
@@ -452,6 +456,7 @@ public sealed class GlyphAtlas
             if (!grown.IsValid)
             {
                 uploadGlyphs.Clear();
+                uploadByteCount = 0;
                 return;
             }
             grown.Name = subpixel ? "glyphs subpixel" : "glyphs";
@@ -474,13 +479,25 @@ public sealed class GlyphAtlas
 
         if (uploadGlyphs.Count > 0)
         {
-            TexelFormat format = subpixel ? TexelFormat.Rgba8 : TexelFormat.R8;
-            fixed (byte* basePtr = uploadBytes)
+            int count = uploadGlyphs.Count;
+            if (uploadRegions.Length < count)
+                uploadRegions = new TexelRegion[count];
+
+            for (int i = 0; i < count; i++)
             {
-                foreach (PendingGlyph g in uploadGlyphs)
-                    GraphicsDevice.Current.UploadTexels(Texture, g.X, g.Y, (uint)g.Width, (uint)g.Height, format, basePtr + g.Offset);
+                PendingGlyph g = uploadGlyphs[i];
+                uploadRegions[i] = new TexelRegion(g.X, g.Y, (uint)g.Width, (uint)g.Height, g.Offset);
             }
+
+            TexelFormat format = subpixel ? TexelFormat.Rgba8 : TexelFormat.R8;
+            GraphicsDevice.Current.UploadTexelRegions(
+                Texture,
+                format,
+                uploadBytes.AsSpan(0, uploadByteCount),
+                uploadRegions.AsSpan(0, count));
+
             uploadGlyphs.Clear();
+            uploadByteCount = 0;
             if (uploadBytes.Length > MAX_RETAINED_PENDING_BYTES)
                 uploadBytes = new byte[INITIAL_PENDING_BYTES];
         }
@@ -494,31 +511,7 @@ public sealed class GlyphAtlas
         }
     }
 
-    // Helper method to zero a newly created or reset atlas texture in small pooled strips so no full-atlas CPU mirror is kept
-    private unsafe void ClearTexture(Texture texture)
-    {
-        int width = (int)texture.Width;
-        int height = (int)texture.Height;
-        int stripRows = Math.Min(CLEAR_STRIP_ROWS, height);
-        int stripBytes = width * stripRows * texel;
-        TexelFormat format = subpixel ? TexelFormat.Rgba8 : TexelFormat.R8;
-
-        byte[] zeros = ArrayPool<byte>.Shared.Rent(stripBytes);
-        try
-        {
-            Array.Clear(zeros, 0, stripBytes);
-            fixed (byte* ptr = zeros)
-            {
-                for (int y = 0; y < height; y += stripRows)
-                {
-                    int rows = Math.Min(stripRows, height - y);
-                    GraphicsDevice.Current.UploadTexels(texture, 0, y, (uint)width, (uint)rows, format, ptr);
-                }
-            }
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(zeros);
-        }
-    }
+    // Clear the GPU atlas image directly in a single vkCmdClearColorImage command without CPU strip buffers.
+    private static void ClearTexture(Texture texture) =>
+        GraphicsDevice.Current.ClearImageNow(texture, System.Numerics.Vector4.Zero);
 }

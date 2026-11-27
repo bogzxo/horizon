@@ -30,6 +30,8 @@ public class StackPanel : Panel
     // The spacing the last measure settled on, for arrange to use.
     private float gap;
 
+    protected internal override bool MeasuresChild(UIComponent child) => child.Visible;
+
     protected override Vector2 Measure(UISkin skin)
     {
         gap = Spacing >= 0.0f ? Spacing : skin.Spacing;

@@ -182,6 +182,9 @@ public partial class ScrollPanel : Panel
         float width = MathF.Max(0.0f, content.Width - BarWidth - BarGap);
         foreach (var child in ChildSpan)
         {
+            if (!child.Visible && !child.Sliding)
+                continue;
+
             // Every child gets the whole width and its own height, starting at the top less the offset.
             Vector2 size = new(width, MathF.Max(child.DesiredSize.Y, 0.0f));
             Vector2 topLeft = new(content.Min.X, content.Max.Y + offset);
@@ -248,6 +251,8 @@ public partial class ScrollPanel : Panel
         ease.Wheel(offset, -delta * WheelStep, MaxOffset, MotionSpeed);
         return true;
     }
+
+    protected internal override bool MeasuresChild(UIComponent child) => child.Visible || child.Sliding;
 
     protected internal override bool UsesScrollSpeed => true;
 

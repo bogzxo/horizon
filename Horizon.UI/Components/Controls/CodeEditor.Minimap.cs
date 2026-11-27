@@ -50,6 +50,8 @@ public partial class CodeEditor
     /// <summary>A precomputed TODO or FIXME mark on a visible minimap row.</summary>
     private readonly record struct MinimapTodoMark(int RowIndex, bool Urgent);
 
+    private readonly record struct MinimapRowSlice(int StartRun, int Count);
+
     private readonly record struct MinimapCacheKey(
         int DocumentVersion,
         int ColouredVersion,
@@ -79,16 +81,50 @@ public partial class CodeEditor
         float Gap,
         float Character,
         float Pixels,
-        float ScreenTop);
+        float ScreenTop)
+    {
+        public bool MatchesBase(in MinimapCacheKey other) =>
+            DocumentVersion == other.DocumentVersion
+            && ColouredVersion == other.ColouredVersion
+            && ReferenceEquals(Spans, other.Spans)
+            && ReferenceEquals(Colors, other.Colors)
+            && LanguagesVersion == other.LanguagesVersion
+            && ColorsFingerprint == other.ColorsFingerprint
+            && Highlight == other.Highlight
+            && HighlightTodos == other.HighlightTodos
+            && RowsCount == other.RowsCount
+            && FoldsChanged == other.FoldsChanged
+            && WordWrap == other.WordWrap
+            && RowsWidth == other.RowsWidth
+            && RowsScale == other.RowsScale
+            && RowsShapes == other.RowsShapes
+            && RowsScrolled == other.RowsScrolled
+            && RowsInlays == other.RowsInlays
+            && RowsLenses == other.RowsLenses
+            && RowsPredicted == other.RowsPredicted
+            && RowsBlocks == other.RowsBlocks
+            && Left == other.Left
+            && Top == other.Top
+            && Row == other.Row
+            && Gap == other.Gap
+            && Character == other.Character
+            && Pixels == other.Pixels
+            && ScreenTop == other.ScreenTop;
+    }
 
-    private readonly List<MinimapRun> minimapRuns = [];
-    private readonly List<MinimapTodoMark> minimapTodoMarks = [];
+    private List<MinimapRun> minimapRuns = [];
+    private List<MinimapRun> minimapRunsScratch = [];
+    private List<MinimapRowSlice> minimapRowSlices = [];
+    private List<MinimapRowSlice> minimapSlicesScratch = [];
+    private List<MinimapTodoMark> minimapTodoMarks = [];
+    private List<MinimapTodoMark> minimapTodoScratch = [];
     private readonly List<MinimapWord> minimapWordScratch = [];
     private MinimapCacheKey minimapCacheKey;
     private bool minimapCacheValid;
     private bool minimapLastWordsUncoloured;
 
     internal int MinimapCacheHits { get; private set; }
+    internal int MinimapIncrementalHits { get; private set; }
     internal int MinimapCacheMisses { get; private set; }
     internal void ClearMinimapCache()
     {
@@ -252,61 +288,28 @@ public partial class CodeEditor
         {
             MinimapCacheHits++;
         }
+        else if (TryShiftMinimapScroll(in key, colors, first, last, scrolledRows, left, top, row, gap, character))
+        {
+            MinimapIncrementalHits++;
+        }
         else
         {
             MinimapCacheMisses++;
             minimapRowTops.Clear();
+            minimapRowSlices.Clear();
             minimapRuns.Clear();
             minimapTodoMarks.Clear();
 
             bool cacheable = !longReading;
-
-            // Where the row before ended, in its line and in columns, a wrapped line's rows each counted on from there. Every
-            // row of a line of a fifth of a megabyte counted its columns from the start of the line, and again for every word
             int countedLine = -1, countedAt = 0, countedColumn = 0;
             for (int index = first; index <= last; index++)
             {
-                CodeRow shown = rows[index];
                 float rowTop = top - (index - scrolledRows) * row;
                 minimapRowTops.Add(ScreenY(rowTop));
 
-                // A lens row is a gap in the minimap, its line is drawn on the row after it, and so is a prediction's row
-                if (shown.Virtual)
-                    continue;
-
-                string text = document.LineAt(shown.Line);
-                MinimapWord[] words = WordsOf(shown.Line, text, colors);
-                if (minimapLastWordsUncoloured)
-                    cacheable = false;
-
-                // A wrapped row starts its columns again where it starts in the line
-                if (countedLine != shown.Line || countedAt > shown.Start)
-                    (countedLine, countedAt, countedColumn) = (shown.Line, 0, 0);
-                int rowColumn = countedColumn + Column(text, countedAt, shown.Start);
-                int endColumn = shown.End >= text.Length ? int.MaxValue : rowColumn + Column(text, shown.Start, shown.End);
-                (countedAt, countedColumn) = (Math.Min(shown.End, text.Length), endColumn == int.MaxValue ? 0 : endColumn);
-                if (endColumn == int.MaxValue)
-                    countedLine = -1;
-
-                // From the first word that reaches into the row, they're in the order of the line
-                for (int w = FirstWordTo(words, shown.Start); w < words.Length && words[w].Start < shown.End; w++)
-                {
-                    MinimapWord word = words[w];
-                    int from = Math.Max(word.StartColumn, rowColumn) - rowColumn;
-                    if (from >= MINIMAP_COLUMNS)
-                        break;
-                    int to = Math.Min(Math.Min(word.EndColumn, endColumn) - rowColumn, MINIMAP_COLUMNS);
-                    if (to > from)
-                    {
-                        var rect = new UIRect(
-                            new Vector2(left + from * character, rowTop - row + gap),
-                            new Vector2(left + to * character, rowTop));
-                        minimapRuns.Add(new MinimapRun(rect, word.Colour with { W = word.Colour.W * 0.42f }));
-                    }
-                }
-
-                if (HighlightTodos && shown.Start == 0 && TodoKindOf(shown.Line) is var todo and >= 0)
-                    minimapTodoMarks.Add(new MinimapTodoMark(index, todo > 0));
+                int runStart = minimapRuns.Count;
+                cacheable &= EmitMinimapRow(index, rowTop, left, row, gap, character, colors, minimapRuns, minimapTodoMarks, ref countedLine, ref countedAt, ref countedColumn);
+                minimapRowSlices.Add(new MinimapRowSlice(runStart, minimapRuns.Count - runStart));
             }
 
             minimapCacheKey = key;
@@ -330,6 +333,158 @@ public partial class CodeEditor
         }
 
         list.PopClip();
+    }
+
+    private bool EmitMinimapRow(
+        int index,
+        float rowTop,
+        float left,
+        float row,
+        float gap,
+        float character,
+        UISyntaxColors colors,
+        List<MinimapRun> runsOut,
+        List<MinimapTodoMark> todosOut,
+        ref int countedLine,
+        ref int countedAt,
+        ref int countedColumn)
+    {
+        CodeRow shown = rows[index];
+        if (shown.Virtual)
+            return true;
+
+        string text = document.LineAt(shown.Line);
+        MinimapWord[] words = WordsOf(shown.Line, text, colors);
+        bool cacheable = !minimapLastWordsUncoloured;
+
+        // A wrapped row starts its columns again where it starts in the line.
+        if (countedLine != shown.Line || countedAt > shown.Start)
+            (countedLine, countedAt, countedColumn) = (shown.Line, 0, 0);
+        int rowColumn = countedColumn + Column(text, countedAt, shown.Start);
+        int endColumn = shown.End >= text.Length ? int.MaxValue : rowColumn + Column(text, shown.Start, shown.End);
+        (countedAt, countedColumn) = (Math.Min(shown.End, text.Length), endColumn == int.MaxValue ? 0 : endColumn);
+        if (endColumn == int.MaxValue)
+            countedLine = -1;
+
+        for (int w = FirstWordTo(words, shown.Start); w < words.Length && words[w].Start < shown.End; w++)
+        {
+            MinimapWord word = words[w];
+            int from = Math.Max(word.StartColumn, rowColumn) - rowColumn;
+            if (from >= MINIMAP_COLUMNS)
+                break;
+            int to = Math.Min(Math.Min(word.EndColumn, endColumn) - rowColumn, MINIMAP_COLUMNS);
+            if (to > from)
+            {
+                var rect = new UIRect(
+                    new Vector2(left + from * character, rowTop - row + gap),
+                    new Vector2(left + to * character, rowTop));
+                runsOut.Add(new MinimapRun(rect, word.Colour with { W = word.Colour.W * 0.42f }));
+            }
+        }
+
+        if (HighlightTodos && shown.Start == 0 && TodoKindOf(shown.Line) is var todo and >= 0)
+            todosOut.Add(new MinimapTodoMark(index, todo > 0));
+
+        return cacheable;
+    }
+
+    private bool TryShiftMinimapScroll(
+        in MinimapCacheKey key,
+        UISyntaxColors colors,
+        int first,
+        int last,
+        int scrolledRows,
+        float left,
+        float top,
+        float row,
+        float gap,
+        float character)
+    {
+        if (!minimapCacheValid || longReading || !minimapCacheKey.MatchesBase(in key))
+            return false;
+
+        int prevFirst = minimapCacheKey.First;
+        int prevLast = minimapCacheKey.Last;
+        if (minimapRowSlices.Count != prevLast - prevFirst + 1)
+            return false;
+
+        int overlapFirst = Math.Max(first, prevFirst);
+        int overlapLast = Math.Min(last, prevLast);
+        if (overlapFirst > overlapLast)
+            return false;
+
+        float dy = (scrolledRows - minimapCacheKey.ScrolledRows) * row;
+        minimapRowTops.Clear();
+        minimapRunsScratch.Clear();
+        minimapSlicesScratch.Clear();
+        minimapTodoScratch.Clear();
+
+        for (int index = first; index <= last; index++)
+            minimapRowTops.Add(ScreenY(top - (index - scrolledRows) * row));
+
+        bool cacheable = true;
+        int countedLine = -1, countedAt = 0, countedColumn = 0;
+
+        // Newly revealed rows above the previous window (ascending order for PaintMinimapMarks).
+        for (int index = first; index < overlapFirst; index++)
+        {
+            float rowTop = top - (index - scrolledRows) * row;
+            int runStart = minimapRunsScratch.Count;
+            cacheable &= EmitMinimapRow(index, rowTop, left, row, gap, character, colors, minimapRunsScratch, minimapTodoScratch, ref countedLine, ref countedAt, ref countedColumn);
+            minimapSlicesScratch.Add(new MinimapRowSlice(runStart, minimapRunsScratch.Count - runStart));
+        }
+
+        // Overlapping rows retain their cached colour runs translated by dy.
+        ReadOnlySpan<MinimapRun> oldRuns = CollectionsMarshal.AsSpan(minimapRuns);
+        ReadOnlySpan<MinimapRowSlice> oldSlices = CollectionsMarshal.AsSpan(minimapRowSlices);
+        for (int index = overlapFirst; index <= overlapLast; index++)
+        {
+            MinimapRowSlice prevSlice = oldSlices[index - prevFirst];
+            int newStart = minimapRunsScratch.Count;
+            for (int r = 0; r < prevSlice.Count; r++)
+            {
+                MinimapRun run = oldRuns[prevSlice.StartRun + r];
+                if (dy != 0.0f)
+                {
+                    run = run with
+                    {
+                        Rect = new UIRect(
+                            new Vector2(run.Rect.Min.X, run.Rect.Min.Y + dy),
+                            new Vector2(run.Rect.Max.X, run.Rect.Max.Y + dy))
+                    };
+                }
+                minimapRunsScratch.Add(run);
+            }
+            minimapSlicesScratch.Add(new MinimapRowSlice(newStart, prevSlice.Count));
+        }
+
+        ReadOnlySpan<MinimapTodoMark> oldTodos = CollectionsMarshal.AsSpan(minimapTodoMarks);
+        for (int t = 0; t < oldTodos.Length; t++)
+        {
+            MinimapTodoMark mark = oldTodos[t];
+            if (mark.RowIndex >= overlapFirst && mark.RowIndex <= overlapLast)
+                minimapTodoScratch.Add(mark);
+        }
+
+        // Newly revealed rows below the previous window.
+        countedLine = -1;
+        countedAt = 0;
+        countedColumn = 0;
+        for (int index = overlapLast + 1; index <= last; index++)
+        {
+            float rowTop = top - (index - scrolledRows) * row;
+            int runStart = minimapRunsScratch.Count;
+            cacheable &= EmitMinimapRow(index, rowTop, left, row, gap, character, colors, minimapRunsScratch, minimapTodoScratch, ref countedLine, ref countedAt, ref countedColumn);
+            minimapSlicesScratch.Add(new MinimapRowSlice(runStart, minimapRunsScratch.Count - runStart));
+        }
+
+        (minimapRuns, minimapRunsScratch) = (minimapRunsScratch, minimapRuns);
+        (minimapRowSlices, minimapSlicesScratch) = (minimapSlicesScratch, minimapRowSlices);
+        (minimapTodoMarks, minimapTodoScratch) = (minimapTodoScratch, minimapTodoMarks);
+
+        minimapCacheKey = key;
+        minimapCacheValid = cacheable && !longReading;
+        return true;
     }
 
 
