@@ -277,15 +277,18 @@ public sealed unsafe partial class GraphicsDevice
     /// <summary>Makes a sampler, for drawing a texture with other settings than its own. The number stands for it in <see cref="BindSamplers"/>.</summary>
     public uint CreateSampler(SamplerSettings settings)
     {
-        Sampler sampler = SamplerFor(settings);
-        foreach (var (id, existing) in samplersById)
+        lock (samplerLock)
         {
-            if (existing.Handle == sampler.Handle) return id;
-        }
+            Sampler sampler = SamplerFor(settings);
+            foreach (var (id, existing) in samplersById)
+            {
+                if (existing.Handle == sampler.Handle) return id;
+            }
 
-        uint made = nextSamplerId++;
-        samplersById[made] = sampler;
-        return made;
+            uint made = nextSamplerId++;
+            samplersById[made] = sampler;
+            return made;
+        }
     }
 
     public void DeleteSampler(uint sampler)
@@ -295,33 +298,42 @@ public sealed unsafe partial class GraphicsDevice
 
     internal Sampler SamplerFor(SamplerSettings settings)
     {
-        if (samplersBySettings.TryGetValue(settings, out Sampler existing)) return existing;
-
-        Filter filter = settings.Smooth ? Filter.Linear : Filter.Nearest;
-        SamplerAddressMode address = settings.Repeat ? SamplerAddressMode.Repeat : settings.Border ? SamplerAddressMode.ClampToBorder : SamplerAddressMode.ClampToEdge;
-
-        var info = new SamplerCreateInfo
+        lock (samplerLock)
         {
-            SType = StructureType.SamplerCreateInfo,
-            MagFilter = filter,
-            MinFilter = filter,
-            MipmapMode = settings.Smooth ? SamplerMipmapMode.Linear : SamplerMipmapMode.Nearest,
-            AddressModeU = address,
-            AddressModeV = address,
-            AddressModeW = address,
-            MaxLod = settings.Mipmaps ? Vk.LodClampNone : 0.25f,
-            BorderColor = BorderColor.FloatTransparentBlack
-        };
+            if (samplersBySettings.TryGetValue(settings, out Sampler existing)) return existing;
 
-        VulkanContext.Check(Vk.CreateSampler(Device, in info, null, out Sampler sampler), "making a sampler");
-        Context.Name(ObjectType.Sampler, sampler.Handle, $"{(settings.Smooth ? "smooth" : "nearest")}{(settings.Mipmaps ? " mipmapped" : "")}{(settings.Repeat ? " repeating" : settings.Border ? " bordered" : " clamped")} sampler");
-        samplersBySettings[settings] = sampler;
-        uint id = nextSamplerId++;
-        samplersById[id] = sampler;
-        return sampler;
+            Filter filter = settings.Smooth ? Filter.Linear : Filter.Nearest;
+            SamplerAddressMode address = settings.Repeat ? SamplerAddressMode.Repeat : settings.Border ? SamplerAddressMode.ClampToBorder : SamplerAddressMode.ClampToEdge;
+
+            var info = new SamplerCreateInfo
+            {
+                SType = StructureType.SamplerCreateInfo,
+                MagFilter = filter,
+                MinFilter = filter,
+                MipmapMode = settings.Smooth ? SamplerMipmapMode.Linear : SamplerMipmapMode.Nearest,
+                AddressModeU = address,
+                AddressModeV = address,
+                AddressModeW = address,
+                MaxLod = settings.Mipmaps ? Vk.LodClampNone : 0.25f,
+                BorderColor = BorderColor.FloatTransparentBlack
+            };
+
+            VulkanContext.Check(Vk.CreateSampler(Device, in info, null, out Sampler sampler), "making a sampler");
+            if (Context.LabelsEnabled)
+                Context.Name(ObjectType.Sampler, sampler.Handle, $"{(settings.Smooth ? "smooth" : "nearest")}{(settings.Mipmaps ? " mipmapped" : "")}{(settings.Repeat ? " repeating" : settings.Border ? " bordered" : " clamped")} sampler");
+            samplersBySettings[settings] = sampler;
+            uint id = nextSamplerId++;
+            samplersById[id] = sampler;
+            return sampler;
+        }
     }
 
-    private Sampler SamplerOf(uint id, Texture texture) => id != 0 && samplersById.TryGetValue(id, out Sampler sampler) ? sampler : texture.DefaultSampler;
+    private Sampler SamplerOf(uint id, Texture texture)
+    {
+        if (id == 0) return texture.DefaultSampler;
+        lock (samplerLock)
+            return samplersById.TryGetValue(id, out Sampler sampler) ? sampler : texture.DefaultSampler;
+    }
 
     /// <summary>
     /// The slot of a texture in the bindless table when read through a sampler of its own rather than its default
@@ -330,14 +342,19 @@ public sealed unsafe partial class GraphicsDevice
     public uint BindlessSlot(Texture texture, uint sampler)
     {
         if (!texture.IsValid) return BindlessTextures.NONE;
-        if (sampler == 0 || !samplersById.TryGetValue(sampler, out Sampler found)) return texture.BindlessIndex;
+        if (sampler == 0) return texture.BindlessIndex;
 
-        texture.BindlessVariants ??= [];
-        if (texture.BindlessVariants.TryGetValue(sampler, out uint slot)) return slot;
+        lock (samplerLock)
+        {
+            if (!samplersById.TryGetValue(sampler, out Sampler found)) return texture.BindlessIndex;
 
-        slot = Bindless.Add(texture.View, found);
-        texture.BindlessVariants[sampler] = slot;
-        return slot;
+            texture.BindlessVariants ??= [];
+            if (texture.BindlessVariants.TryGetValue(sampler, out uint slot)) return slot;
+
+            slot = Bindless.Add(texture.View, found);
+            texture.BindlessVariants[sampler] = slot;
+            return slot;
+        }
     }
 
     /* What is drawn into */
@@ -478,6 +495,7 @@ public sealed unsafe partial class GraphicsDevice
         if (targetIsWindow && !Frame.HasImage) return false;
 
         BoundTechnique?.Flush(this);
+        FlushPendingTextureOps();
         PrepareTextures(drawing: true);
         EnsureRendering();
 
@@ -570,6 +588,7 @@ public sealed unsafe partial class GraphicsDevice
         if (boundShader is not { IsCompute: true }) return false;
 
         BoundTechnique?.Flush(this);
+        FlushPendingTextureOps();
         EndRendering();
         PrepareTextures(drawing: false);
         PrepareImages();
@@ -931,6 +950,11 @@ public sealed unsafe partial class GraphicsDevice
         }
 
         if (ReferenceEquals(boundShader, resource)) boundShader = null;
+        if (resource is Shader shader && hasLastGraphicsPipeline && lastGraphicsKey.Shader == shader.Handle)
+        {
+            hasLastGraphicsPipeline = false;
+            lastGraphicsPipeline = default;
+        }
         if (ReferenceEquals(boundVertexArray, resource)) boundVertexArray = null;
         if (ReferenceEquals(boundTarget, resource))
         {

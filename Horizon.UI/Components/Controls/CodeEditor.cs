@@ -793,6 +793,8 @@ public partial class CodeEditor : UIComponent
     // The font the code is measured and written in
     private UIFont FontOf(UISkin skin) => Font ?? skin.Font;
 
+    private float LineHeightOf(UISkin skin, float scale) => MathF.Max(1.0f, FontOf(skin).LineHeight * scale);
+
     protected internal override UIFont? TooltipCodeFont(UISkin skin) => FontOf(skin);
 
     /// <summary>Whether guides are drawn down the indentation.</summary>
@@ -1850,7 +1852,7 @@ public partial class CodeEditor : UIComponent
             return default;
 
         float scale = paintedScale;
-        float lineHeight = FontOf(skin).LineHeight * scale;
+        float lineHeight = LineHeightOf(skin, scale);
         UIRect area = TextArea(skin, scale);
         EnsureRows(skin, scale);
 
@@ -1931,7 +1933,7 @@ public partial class CodeEditor : UIComponent
             return default;
 
         float scale = paintedScale;
-        float lineHeight = FontOf(skin).LineHeight * scale;
+        float lineHeight = LineHeightOf(skin, scale);
         UIRect area = TextArea(skin, scale);
         EnsureRows(skin, scale);
 
@@ -2160,7 +2162,7 @@ public partial class CodeEditor : UIComponent
         revealCaret = false;
 
         float scale = ScaleOf(skin);
-        float lineHeight = FontOf(skin).LineHeight * scale;
+        float lineHeight = LineHeightOf(skin, scale);
         UIRect area = TextArea(skin, scale);
         if (area.Height <= 0.0f)
             return;
@@ -2244,7 +2246,7 @@ public partial class CodeEditor : UIComponent
     // How far down the code goes
     private float MaxScroll(UISkin skin, float scale)
     {
-        float lineHeight = FontOf(skin).LineHeight * scale;
+        float lineHeight = LineHeightOf(skin, scale);
         UIRect area = TextArea(skin, scale);
         return MathF.Max(0.0f, Math.Max(1, rows.Count) * lineHeight - area.Height * (FitRows > 0 ? 1.0f : 0.5f));
     }
@@ -3120,7 +3122,7 @@ public partial class CodeEditor : UIComponent
             return default;
 
         float scale = paintedScale;
-        float lineHeight = FontOf(skin).LineHeight * scale;
+        float lineHeight = LineHeightOf(skin, scale);
         float rowHeight = CompletionRow(skin);
         UIRect area = TextArea(skin, scale);
         UITextPosition caret = document.Caret;
@@ -3175,7 +3177,7 @@ public partial class CodeEditor : UIComponent
         }
 
         float scale = paintedScale;
-        float lineHeight = FontOf(skin).LineHeight * scale;
+        float lineHeight = LineHeightOf(skin, scale);
         UISyntaxColors colors = CodeLanguages.ColorsFor(Highlighter, skin.Palette);
 
         // On what every popup sits on, coming in out of the line it's for
@@ -3307,7 +3309,7 @@ public partial class CodeEditor : UIComponent
         if (paintedSkin is not { } skin)
             return 20;
 
-        float lineHeight = FontOf(skin).LineHeight * paintedScale;
+        float lineHeight = LineHeightOf(skin, paintedScale);
         return Math.Max(1, (int)(TextArea(skin, paintedScale).Height / lineHeight) - 1);
     }
 
@@ -3342,7 +3344,7 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     private (UIRect Track, float Length, float Most, float Top) BarGeometry(UISkin skin, float scale)
     {
-        float lineHeight = FontOf(skin).LineHeight * scale;
+        float lineHeight = LineHeightOf(skin, scale);
         UIRect area = TextArea(skin, scale);
         UIRect track = new(new Vector2(area.Max.X + MinimapWidth, area.Min.Y), new Vector2(area.Max.X + MinimapWidth + BAR_WIDTH, area.Max.Y));
         float total = Math.Max(1, rows.Count) * lineHeight;
@@ -3710,7 +3712,7 @@ public partial class CodeEditor : UIComponent
     private void PaintCodeLaidOut(UIDrawList list, UISkin skin, UISyntaxColors colors, float scale, bool zoomed)
     {
 
-        float lineHeight = FontOf(skin).LineHeight * scale;
+        float lineHeight = LineHeightOf(skin, scale);
         float digit = FontOf(skin).Measure("0", scale, markup: false).X;
         UIRect content = Bounds.Shrink(Padding);
         UIRect area = TextArea(skin, scale);
@@ -4145,7 +4147,7 @@ public partial class CodeEditor : UIComponent
         if (paintedSkin is not { } skin)
             return default;
         float scale = paintedScale;
-        float lineHeight = FontOf(skin).LineHeight * scale;
+        float lineHeight = LineHeightOf(skin, scale);
         UIRect area = TextArea(skin, scale);
         EnsureRows(skin, scale);
         return Piece(skin, scale, area, area.Min.X + TEXT_PAD - scrollX, lineHeight, line, from, to);

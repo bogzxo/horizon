@@ -179,9 +179,21 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
         while (!done.IsCompleted)
         {
             window?.ConsumeWake();
-            dispatcher.Drain();
+            DrainWithPool();
             if (!done.IsCompleted)
                 Window.WaitForWork();
+        }
+
+        DrainWithPool();
+    }
+
+    private void DrainWithPool()
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            using var pool = MacObjC.Pool();
+            dispatcher.Drain();
+            return;
         }
 
         dispatcher.Drain();

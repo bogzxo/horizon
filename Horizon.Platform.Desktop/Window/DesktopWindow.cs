@@ -283,6 +283,8 @@ public sealed partial class DesktopWindow : IPlatformWindow
 
         UpdateViewport();
         UpdateDisplayScale();
+        if (OperatingSystem.IsMacOS())
+            MarkMacChromeDirty();
 
         // The engine hears the size changed, and has the surface made anew for it
         Publish(resized: true);
@@ -346,7 +348,7 @@ public sealed partial class DesktopWindow : IPlatformWindow
 
             // The green button takes a window into a fullscreen of the system's own that SDL was never asked for
             // and doesn't count, the window itself knows
-            return OperatingSystem.IsMacOS() && _window.Native?.Cocoa is { } cocoa && cocoa != 0 && (MsgSend(cocoa, RegisterSelector("styleMask")) & NS_FULLSCREEN) != 0;
+            return OperatingSystem.IsMacOS() && _window.Native?.Cocoa is { } cocoa && cocoa != 0 && (MsgSend(cocoa, macStyleMaskSelector) & NS_FULLSCREEN) != 0;
         }
 
         return _window.WindowState == WindowState.Fullscreen;
@@ -354,6 +356,7 @@ public sealed partial class DesktopWindow : IPlatformWindow
 
     // NSWindowStyleMaskFullScreen
     private const ulong NS_FULLSCREEN = 1ul << 14;
+    private static readonly nint macStyleMaskSelector = OperatingSystem.IsMacOS() ? RegisterSelector("styleMask") : 0;
 
     [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
     private static extern nuint MsgSend(nint receiver, nint selector);
@@ -372,6 +375,8 @@ public sealed partial class DesktopWindow : IPlatformWindow
         if (SdlWindow is var handle && handle != null)
         {
             Silk.NET.SDL.SdlProvider.SDL.Value.SetWindowFullscreen(handle, fullscreen ? SDL_FULLSCREEN_DESKTOP : 0);
+            if (OperatingSystem.IsMacOS())
+                MarkMacChromeDirty(12);
             return;
         }
 
@@ -449,9 +454,16 @@ public sealed partial class DesktopWindow : IPlatformWindow
         host.SampleGamepads();
         Events.EventsProcessed();
 
-        host.DoWork();
         if (OperatingSystem.IsMacOS())
+        {
+            using var pool = MacObjC.Pool();
+            host.DoWork();
             MaintainMacChrome();
+        }
+        else
+        {
+            host.DoWork();
+        }
         TrackFrame();
         StepSlide();
 
@@ -481,7 +493,12 @@ public sealed partial class DesktopWindow : IPlatformWindow
         ReleaseFrame();
         ReleaseHitTesting();
         if (OperatingSystem.IsMacOS())
+        {
+            using var pool = MacObjC.Pool();
+            chrome?.Dispose();
+            chrome = null;
             MacMouseDownWatch.Clear();
+        }
         _window.Reset();
         _window.Dispose();
         windowWake.Dispose();

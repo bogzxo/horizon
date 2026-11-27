@@ -73,6 +73,9 @@ public sealed class UIFont
     /// <summary>The height of a line of text at scale 1, in pixels.</summary>
     public float LineHeight { get; }
 
+    /// <summary>Whether any glyphs loaded for this font.</summary>
+    public bool IsLoaded => Field.Glyphs.Count > 0;
+
     /// <summary>How far down from the top of a line the letters sit, at scale 1, in pixels.</summary>
     public float Baseline { get; }
 

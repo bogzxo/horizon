@@ -57,11 +57,19 @@ internal sealed unsafe class VulkanMemory : IDisposable
 
     private readonly VulkanContext context;
     private readonly List<Block> blocks = [];
+    private readonly Lock gate = new();
+    private ulong inUse;
 
     /// <summary>How many bytes are handed out right now.</summary>
-    public ulong InUse { get; private set; }
+    public ulong InUse
+    {
+        get { lock (gate) return inUse; }
+    }
 
-    public int BlockCount => blocks.Count;
+    public int BlockCount
+    {
+        get { lock (gate) return blocks.Count; }
+    }
 
     /// <summary>
     /// How many bytes of the blocks the CPU can see, which is memory of the machine and not of the card, mapped for
@@ -71,12 +79,15 @@ internal sealed unsafe class VulkanMemory : IDisposable
     {
         get
         {
-            ulong total = 0;
-            foreach (Block block in blocks)
+            lock (gate)
             {
-                if (block.Mapped != null) total += block.Size;
+                ulong total = 0;
+                foreach (Block block in blocks)
+                {
+                    if (block.Mapped != null) total += block.Size;
+                }
+                return total;
             }
-            return total;
         }
     }
 
@@ -85,9 +96,12 @@ internal sealed unsafe class VulkanMemory : IDisposable
     {
         get
         {
-            ulong total = 0;
-            foreach (Block block in blocks) total += block.Size;
-            return total;
+            lock (gate)
+            {
+                ulong total = 0;
+                foreach (Block block in blocks) total += block.Size;
+                return total;
+            }
         }
     }
 
@@ -101,38 +115,41 @@ internal sealed unsafe class VulkanMemory : IDisposable
     /// </summary>
     public Allocation Allocate(in MemoryRequirements requirements, MemoryPropertyFlags required, MemoryPropertyFlags preferred, bool forImage)
     {
-        uint typeIndex = FindType(requirements.MemoryTypeBits, required | preferred);
-        if (typeIndex == uint.MaxValue) typeIndex = FindType(requirements.MemoryTypeBits, required);
-        if (typeIndex == uint.MaxValue)
-            throw new InvalidOperationException("The card has no memory of the kind that was asked for.");
-
-        bool hostVisible = (context.MemoryProperties.MemoryTypes[(int)typeIndex].PropertyFlags & MemoryPropertyFlags.HostVisibleBit) != 0;
-        ulong size = requirements.Size, alignment = Math.Max(requirements.Alignment, 1);
-
-        foreach (Block block in blocks)
+        lock (gate)
         {
-            if (block.TypeIndex != typeIndex || block.ForImages != forImage) continue;
-            if (TryCarve(block, size, alignment, out Allocation allocation)) return allocation;
+            uint typeIndex = FindType(requirements.MemoryTypeBits, required | preferred);
+            if (typeIndex == uint.MaxValue) typeIndex = FindType(requirements.MemoryTypeBits, required);
+            if (typeIndex == uint.MaxValue)
+                throw new InvalidOperationException("The card has no memory of the kind that was asked for.");
+
+            bool hostVisible = (context.MemoryProperties.MemoryTypes[(int)typeIndex].PropertyFlags & MemoryPropertyFlags.HostVisibleBit) != 0;
+            ulong size = requirements.Size, alignment = Math.Max(requirements.Alignment, 1);
+
+            foreach (Block block in blocks)
+            {
+                if (block.TypeIndex != typeIndex || block.ForImages != forImage) continue;
+                if (TryCarve(block, size, alignment, out Allocation allocation)) return allocation;
+            }
+
+            ulong blockSize = Math.Max(hostVisible ? HOST_BLOCK : DEVICE_BLOCK, size);
+            Block? made = MakeBlock(typeIndex, blockSize, forImage, hostVisible);
+            if (made is null)
+            {
+                // The memory of that kind is spoken for, something else will have to do
+                uint fallback = FindType(requirements.MemoryTypeBits, required, typeIndex);
+                if (fallback == uint.MaxValue) throw new InvalidOperationException("The card is out of memory.");
+
+                bool fallbackVisible = (context.MemoryProperties.MemoryTypes[(int)fallback].PropertyFlags & MemoryPropertyFlags.HostVisibleBit) != 0;
+                made = MakeBlock(fallback, Math.Max(fallbackVisible ? HOST_BLOCK : DEVICE_BLOCK, size), forImage, fallbackVisible)
+                       ?? throw new InvalidOperationException("The card is out of memory.");
+            }
+
+            blocks.Add(made);
+            if (!TryCarve(made, size, alignment, out Allocation fresh))
+                throw new InvalidOperationException("A new block of memory had no room in it, which can't be.");
+
+            return fresh;
         }
-
-        ulong blockSize = Math.Max(hostVisible ? HOST_BLOCK : DEVICE_BLOCK, size);
-        Block? made = MakeBlock(typeIndex, blockSize, forImage, hostVisible);
-        if (made is null)
-        {
-            // The memory of that kind is spoken for, something else will have to do
-            uint fallback = FindType(requirements.MemoryTypeBits, required, typeIndex);
-            if (fallback == uint.MaxValue) throw new InvalidOperationException("The card is out of memory.");
-
-            bool fallbackVisible = (context.MemoryProperties.MemoryTypes[(int)fallback].PropertyFlags & MemoryPropertyFlags.HostVisibleBit) != 0;
-            made = MakeBlock(fallback, Math.Max(fallbackVisible ? HOST_BLOCK : DEVICE_BLOCK, size), forImage, fallbackVisible)
-                   ?? throw new InvalidOperationException("The card is out of memory.");
-        }
-
-        blocks.Add(made);
-        if (!TryCarve(made, size, alignment, out Allocation fresh))
-            throw new InvalidOperationException("A new block of memory had no room in it, which can't be.");
-
-        return fresh;
     }
 
     private Block? MakeBlock(uint typeIndex, ulong size, bool forImage, bool hostVisible)
@@ -176,7 +193,7 @@ internal sealed unsafe class VulkanMemory : IDisposable
             if (padding > 0) block.Free.Insert(i, (offset, padding));
 
             block.Used += size;
-            InUse += size;
+            inUse += size;
             allocation = new Allocation(block, aligned, size);
             return true;
         }
@@ -190,31 +207,34 @@ internal sealed unsafe class VulkanMemory : IDisposable
         Block block = allocation.Block;
         if (block is null) return;
 
-        block.Used -= allocation.Size;
-        InUse -= allocation.Size;
-
-        // Back into the list in order, joined with the neighbours it touches
-        int at = 0;
-        while (at < block.Free.Count && block.Free[at].Offset < allocation.Offset) at++;
-        block.Free.Insert(at, (allocation.Offset, allocation.Size));
-
-        if (at + 1 < block.Free.Count && block.Free[at].Offset + block.Free[at].Size == block.Free[at + 1].Offset)
+        lock (gate)
         {
-            block.Free[at] = (block.Free[at].Offset, block.Free[at].Size + block.Free[at + 1].Size);
-            block.Free.RemoveAt(at + 1);
-        }
+            block.Used -= allocation.Size;
+            inUse -= allocation.Size;
 
-        if (at > 0 && block.Free[at - 1].Offset + block.Free[at - 1].Size == block.Free[at].Offset)
-        {
-            block.Free[at - 1] = (block.Free[at - 1].Offset, block.Free[at - 1].Size + block.Free[at].Size);
-            block.Free.RemoveAt(at);
-        }
+            // Back into the list in order, joined with the neighbours it touches
+            int at = 0;
+            while (at < block.Free.Count && block.Free[at].Offset < allocation.Offset) at++;
+            block.Free.Insert(at, (allocation.Offset, allocation.Size));
 
-        // An empty block that isn't the only one of its kind goes back to the driver
-        if (block.Used == 0 && HasAnother(block))
-        {
-            blocks.Remove(block);
-            Release(block);
+            if (at + 1 < block.Free.Count && block.Free[at].Offset + block.Free[at].Size == block.Free[at + 1].Offset)
+            {
+                block.Free[at] = (block.Free[at].Offset, block.Free[at].Size + block.Free[at + 1].Size);
+                block.Free.RemoveAt(at + 1);
+            }
+
+            if (at > 0 && block.Free[at - 1].Offset + block.Free[at - 1].Size == block.Free[at].Offset)
+            {
+                block.Free[at - 1] = (block.Free[at - 1].Offset, block.Free[at - 1].Size + block.Free[at].Size);
+                block.Free.RemoveAt(at);
+            }
+
+            // An empty block that isn't the only one of its kind goes back to the driver
+            if (block.Used == 0 && HasAnother(block))
+            {
+                blocks.Remove(block);
+                Release(block);
+            }
         }
     }
 
@@ -252,8 +272,11 @@ internal sealed unsafe class VulkanMemory : IDisposable
 
     public void Dispose()
     {
-        foreach (Block block in blocks) Release(block);
-        blocks.Clear();
-        InUse = 0;
+        lock (gate)
+        {
+            foreach (Block block in blocks) Release(block);
+            blocks.Clear();
+            inUse = 0;
+        }
     }
 }

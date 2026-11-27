@@ -63,9 +63,10 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
     private readonly Dictionary<nint, MenuNode> menusByPointer = [];
     private readonly Dictionary<nint, ItemNode> itemsByPointer = [];
     private readonly List<(nint Item, PlatformMenu Source)> topLevel = [];
+    private readonly HashSet<nint> openMenus = [];
     private nint mainMenu;
+    private nint helpMenuHandle;
     private IReadOnlyList<PlatformMenu> wanted = [];
-    private int open;
     private volatile bool installed;
 
     public bool IsNative => installed;
@@ -128,6 +129,7 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
             if (help != 0)
                 MacObjC.SendVoid(application, MacObjC.Sel("setHelpMenu:"), help);
 
+            helpMenuHandle = help;
             MacObjC.Release(mainMenu);
             mainMenu = newBar;
             installed = true;
@@ -169,6 +171,8 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
         menusByPointer.Clear();
         itemsByPointer.Clear();
         topLevel.Clear();
+        openMenus.Clear();
+        helpMenuHandle = 0;
     }
 
     private static void EnsureTarget()
@@ -334,19 +338,33 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
         if (item.Submenu is { } inside)
         {
             menusByPointer.Remove(inside.Menu);
+            openMenus.Remove(inside.Menu);
             foreach (ItemNode deeper in inside.Items)
                 Forget(deeper);
         }
     }
 
-    // Whether AppKit is only matching a key press to an item and not showing a menu, which is when the program's keys answer
-    private bool MatchingKey()
+    // Whether the current Cocoa event is a key-down press (independent of whether any menu is open).
+    private static bool CurrentEventIsKeyDown()
     {
-        if (open > 0)
-            return false;
-
         nint ev = MacObjC.Send(MacObjC.SharedApplication, MacObjC.Sel("currentEvent"));
         return ev != 0 && MacObjC.SendUInt(ev, MacObjC.Sel("type")) == KEY_DOWN;
+    }
+
+    // Whether AppKit is only matching a key press to an item and not showing a menu, which is when the program's keys answer
+    private bool MatchingKey() => openMenus.Count == 0 && CurrentEventIsKeyDown();
+
+    private bool IsMenuOrSubtreeOpen(MenuNode node)
+    {
+        if (openMenus.Contains(node.Menu))
+            return true;
+
+        foreach (ItemNode item in node.Items)
+        {
+            if (item.Submenu is { } child && IsMenuOrSubtreeOpen(child))
+                return true;
+        }
+        return false;
     }
 
     /* What AppKit calls. Main thread, and nothing is let out of them */
@@ -405,9 +423,9 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
             if (current is not { } bar || !bar.menusByPointer.TryGetValue(menu, out MenuNode? node))
                 return;
 
-            // The system adds to a Window or Help menu itself, those are left as they were made. Nor is a key press's look at
-            // the menus worth a new set of items
-            if (node.Source.IsDynamic && node.Source.Role == PlatformMenuRole.None && !bar.MatchingKey())
+            // The system adds to a Window or Help menu itself; never clear an open menu or open Help-search subtree mid-event.
+            bool helpOpen = bar.helpMenuHandle != 0 && bar.openMenus.Contains(bar.helpMenuHandle);
+            if (MacMenuBarRules.ShouldRefillMenu(node.Source.IsDynamic, node.Source.Role, CurrentEventIsKeyDown(), bar.IsMenuOrSubtreeOpen(node), helpOpen))
                 bar.Refill(node);
         }
         catch (Exception e)
@@ -419,14 +437,21 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static void MenuWillOpen(nint self, nint command, nint menu)
     {
-        if (current is { } bar)
-            bar.open++;
+        if (current is { } bar && menu != 0)
+            bar.openMenus.Add(menu);
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static void MenuDidClose(nint self, nint command, nint menu)
     {
-        if (current is { } bar && bar.open > 0)
-            bar.open--;
+        if (current is { } bar && menu != 0)
+            bar.openMenus.Remove(menu);
     }
+}
+
+/// <summary>Pure decision rules for <see cref="MacMenuBar"/> updates, testable independently of AppKit.</summary>
+internal static class MacMenuBarRules
+{
+    internal static bool ShouldRefillMenu(bool isDynamic, PlatformMenuRole role, bool isKeyDown, bool menuOrSubtreeOpen, bool helpMenuOpen) =>
+        isDynamic && role == PlatformMenuRole.None && !isKeyDown && !menuOrSubtreeOpen && !helpMenuOpen;
 }

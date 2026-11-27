@@ -26,6 +26,7 @@ internal sealed unsafe class BindlessTextures : IDisposable
     private readonly VulkanContext context;
     private readonly DescriptorPool pool;
     private readonly Stack<uint> free = new();
+    private readonly Lock gate = new();
     private uint next;
 
     public DescriptorSetLayout Layout { get; }
@@ -99,11 +100,14 @@ internal sealed unsafe class BindlessTextures : IDisposable
     /// <summary>Puts a texture (read through a sampler) in the table and says which slot it got.</summary>
     public uint Add(ImageView view, Sampler sampler)
     {
-        uint slot = free.Count > 0 ? free.Pop() : next++;
-        if (slot >= Capacity) throw new InvalidOperationException($"The bindless table is full, {Capacity} textures is the most this card holds.");
+        lock (gate)
+        {
+            uint slot = free.Count > 0 ? free.Pop() : next++;
+            if (slot >= Capacity) throw new InvalidOperationException($"The bindless table is full, {Capacity} textures is the most this card holds.");
 
-        Write(slot, view, sampler);
-        return slot;
+            Write(slot, view, sampler);
+            return slot;
+        }
     }
 
     private void Write(uint slot, ImageView view, Sampler sampler)
@@ -126,7 +130,8 @@ internal sealed unsafe class BindlessTextures : IDisposable
     /// <summary>Gives a slot back, once the GPU is done with whatever read it. The caller sees to the waiting.</summary>
     public void Release(uint slot)
     {
-        if (slot < Capacity) free.Push(slot);
+        if (slot >= Capacity) return;
+        lock (gate) free.Push(slot);
     }
 
     /// <summary>

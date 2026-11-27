@@ -270,7 +270,7 @@ public sealed partial class DesktopWindow
         bool pressed = false;
         if (!hitTestUsesWayland)
         {
-            bool down = (SdlProvider.SDL.Value.GetGlobalMouseState((int*)null, (int*)null) & 1) != 0;
+            bool down = (SdlProvider.SDL.Value.GetMouseState((int*)null, (int*)null) & 1) != 0;
             pressed = down && !buttonWasDown;
             buttonWasDown = down;
         }

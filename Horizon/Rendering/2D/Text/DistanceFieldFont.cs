@@ -112,15 +112,14 @@ public sealed class DistanceFieldFont
 
             if (font.TryLoadCached(path)) return font;
 
-            bool trueType = Path.GetExtension(path).ToLowerInvariant() is ".ttf" or ".otf";
+            ReadOnlySpan<char> extension = Path.GetExtension(path.AsSpan());
+            bool trueType = extension.Equals(".ttf", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".otf", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".ttc", StringComparison.OrdinalIgnoreCase);
             (int width, int height, byte[] field) = trueType ? font.BuildFromTrueType(path) : font.BuildFromBitmap(directory, path);
             if (field.Length == 0) return font;
 
             font.Texture = Texture.FromPixels((uint)width, (uint)height, field, new TextureDefinition(PixelFormat.R8, Smooth: true));
-            if (font.Texture.IsValid)
-                GraphicsDevice.Current.Transition(font.Texture, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal,
-                    Silk.NET.Vulkan.PipelineStageFlags2.VertexShaderBit | Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit,
-                    Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
             font.KeepCached(path, width, height, field);
         }
         catch (Exception e)
@@ -137,17 +136,18 @@ public sealed class DistanceFieldFont
     {
         // Reuse already-loaded native font bytes from GlyphOutlines when present to avoid a duplicate multi-megabyte read
         if (GlyphOutlines.TryGetLoaded(path, out GlyphOutlines? loaded) && loaded is not null)
-            return BuildFromTrueTypeData(loaded.NativeData);
+            return BuildFromTrueTypeData(loaded.NativeData, loaded.NativeDataLength);
 
         byte[] bytes = ContentFiles.ReadAllBytes(path);
         fixed (byte* data = bytes)
-            return BuildFromTrueTypeData(data);
+            return BuildFromTrueTypeData(data, bytes.Length);
     }
 
-    private unsafe (int, int, byte[]) BuildFromTrueTypeData(byte* data)
+    private unsafe (int, int, byte[]) BuildFromTrueTypeData(byte* data, int length)
     {
         var info = new StbTrueType.stbtt_fontinfo();
-        if (StbTrueType.stbtt_InitFont(info, data, StbTrueType.stbtt_GetFontOffsetForIndex(data, 0)) == 0)
+        if (!GlyphOutlines.TryGetFontOffset(new ReadOnlySpan<byte>(data, length), 0, out int fontOffset)
+            || StbTrueType.stbtt_InitFont(info, data, fontOffset) == 0)
             throw new InvalidDataException("not a TrueType font stb_truetype can read");
 
         float fieldScale = StbTrueType.stbtt_ScaleForPixelHeight(info, FIELD_EM);
@@ -561,10 +561,6 @@ public sealed class DistanceFieldFont
                 if (read != byteCount) return false;
 
                 Texture = Texture.FromPixels((uint)width, (uint)height, rented.AsSpan(0, byteCount), new TextureDefinition(PixelFormat.R8, Smooth: true));
-                if (Texture.IsValid)
-                    GraphicsDevice.Current.Transition(Texture, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal,
-                        Silk.NET.Vulkan.PipelineStageFlags2.VertexShaderBit | Silk.NET.Vulkan.PipelineStageFlags2.FragmentShaderBit,
-                        Silk.NET.Vulkan.AccessFlags2.ShaderSampledReadBit);
                 return true;
             }
             finally

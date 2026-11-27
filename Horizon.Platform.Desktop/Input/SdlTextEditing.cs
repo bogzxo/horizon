@@ -23,6 +23,7 @@ internal static unsafe class SdlTextEditing
     private const uint SDL_TEXTEDITING_EXT = 0x305;
 
     private static int installed;
+    private static bool textInputStarted;
     private static Action<InputEvent>? listener;
 
     /// <summary>True once the SDL event watch has been installed.</summary>
@@ -43,11 +44,22 @@ internal static unsafe class SdlTextEditing
             SdlProvider.SDL.Value.SetHint("SDL_IME_SUPPORT_EXTENDED_TEXT", "1");
             SdlProvider.SDL.Value.AddEventWatch(new PfnEventFilter(&Watch), null);
             Active = true;
+            EnsureTextInputStarted();
         }
         catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
         {
             // No SDL native library available; SilkInputSource falls back to keyboard.KeyChar
         }
+    }
+
+    private static void EnsureTextInputStarted()
+    {
+        if (textInputStarted || !Active)
+            return;
+
+        // Initializing SDL text input ensures Cocoa's SDLTranslatorResponder exists before SDL_SetTextInputRect runs on macOS.
+        textInputStarted = true;
+        SdlProvider.SDL.Value.StartTextInput();
     }
 
     /// <summary>Detaches <paramref name="onEvent"/> if it is the current listener.</summary>
@@ -62,6 +74,7 @@ internal static unsafe class SdlTextEditing
 
         try
         {
+            EnsureTextInputStarted();
             var rect = new Rectangle<int>(x, y, Math.Max(1, width), Math.Max(1, height));
             SdlProvider.SDL.Value.SetTextInputRect(&rect);
         }

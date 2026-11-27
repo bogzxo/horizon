@@ -140,7 +140,7 @@ public partial class CodeEditor
             return false;
 
         float scale = paintedScale;
-        float lineHeight = FontOf(skin).LineHeight * scale;
+        float lineHeight = LineHeightOf(skin, scale);
         UIRect area = TextArea(skin, scale);
         EnsureRows(skin, scale);
         if (!blockRows.TryGetValue(owner, out var place) || place.Count <= 0)

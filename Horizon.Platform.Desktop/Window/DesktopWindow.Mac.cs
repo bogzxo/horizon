@@ -12,6 +12,13 @@ namespace Horizon.Platform.Desktop;
 public sealed partial class DesktopWindow
 {
     private MacWindowChrome? chrome;
+    private int macChromeMaintainPasses;
+
+    internal void MarkMacChromeDirty(int passes = 8)
+    {
+        if (passes > macChromeMaintainPasses)
+            macChromeMaintainPasses = passes;
+    }
 
     // SDL's button release
     private const uint SDL_MOUSEBUTTONUP = 0x402;
@@ -67,6 +74,7 @@ public sealed partial class DesktopWindow
         MacMain.Run(() =>
         {
             chrome = MacWindowChrome.Create(cocoa, () => RequestFrames());
+            MarkMacChromeDirty(12);
         });
     }
 
@@ -74,7 +82,12 @@ public sealed partial class DesktopWindow
     [System.Runtime.Versioning.SupportedOSPlatform("macos")]
     private void MaintainMacChrome()
     {
-        chrome?.Maintain();
+        if (chrome is { } own && (macChromeMaintainPasses > 0 || !own.IsMetalViewPatched || own.IsInFullscreen))
+        {
+            if (macChromeMaintainPasses > 0)
+                macChromeMaintainPasses--;
+            own.Maintain();
+        }
         GiveBackRelease();
         SyncMinimized();
     }
@@ -125,6 +138,7 @@ public sealed partial class DesktopWindow
 
         // The drag takes the release of the button for itself, which leaves SDL with the button down and so everything that asks
         // it, see GiveBackRelease
+        MarkMacChromeDirty();
         releaseWatchUntil = Environment.TickCount64 + RELEASE_WATCH_MS;
         GiveBackRelease();
         return true;

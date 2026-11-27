@@ -83,7 +83,7 @@ public partial class CodeEditor
         start += counter.Length;
         Vector4 text = skin.TextColor with { W = skin.TextColor.W * 0.85f };
         Vector4 lit = skin.HighlightColor;
-        float codeLine = codeFont.LineHeight * small;
+        float codeLine = MathF.Max(1.0f, codeFont.LineHeight * small);
         float textTop = box.Max.Y - SIGNATURE_PAD_Y;
         list.PushFont(codeFont);
         foreach (var line in signatureLabelLines)

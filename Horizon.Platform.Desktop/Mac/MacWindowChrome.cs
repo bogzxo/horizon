@@ -12,7 +12,7 @@ namespace Horizon.Platform.Desktop;
 /// publishes are read from any.
 /// </summary>
 [SupportedOSPlatform("macos")]
-internal sealed unsafe class MacWindowChrome
+internal sealed unsafe class MacWindowChrome : IDisposable
 {
     // NSWindowStyleMask
     private const nuint TITLED = 1 << 0, CLOSABLE = 1 << 1, MINIATURIZABLE = 1 << 2, RESIZABLE = 1 << 3, FULL_SIZE_CONTENT = 1 << 15, FULLSCREEN = 1 << 14;
@@ -119,6 +119,10 @@ internal sealed unsafe class MacWindowChrome
     }
 
     private bool InFullscreen => (StyleMask & FULLSCREEN) != 0;
+
+    internal bool IsInFullscreen => InFullscreen;
+
+    internal bool IsMetalViewPatched => metalViewPatched;
 
     // SDL's views say a press on them can move the window, which AppKit then takes as a drag of its own where it can (the strip of
     // the title bar), and SDL hears a press at 0,0 or none. They say no: the UI has the system drag the window, see TryDrag
@@ -622,4 +626,39 @@ internal sealed unsafe class MacWindowChrome
 
     private static void AddObserver(nint centre, nint target, nint action, nint name, nint source) =>
         AddObserver(centre, MacObjC.Sel("addObserver:selector:name:object:"), target, action, name, source);
+
+    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    private static extern void RemoveObserver(nint centre, nint selector, nint observer, nint name, nint source);
+
+    private bool disposed;
+
+    /// <summary>Detaches window observers and releases full-screen replacement traffic lights. Main thread.</summary>
+    public void Dispose()
+    {
+        if (disposed)
+            return;
+        disposed = true;
+
+        if (ReferenceEquals(current, this))
+            current = null;
+
+        if (observer != 0 && window != 0)
+        {
+            nint centre = MacObjC.Send(MacObjC.Class("NSNotificationCenter"), MacObjC.Sel("defaultCenter"));
+            if (centre != 0)
+                RemoveObserver(centre, MacObjC.Sel("removeObserver:name:object:"), observer, 0, window);
+        }
+
+        for (int i = 0; i < ownLights.Length; i++)
+        {
+            if (ownLights[i] == 0)
+                continue;
+
+            if (MacObjC.Send(ownLights[i], MacObjC.Sel("superview")) != 0)
+                MacObjC.SendVoid(ownLights[i], MacObjC.Sel("removeFromSuperview"));
+            MacObjC.Release(ownLights[i]);
+            ownLights[i] = 0;
+        }
+        ownLightsOn = false;
+    }
 }

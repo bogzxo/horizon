@@ -69,7 +69,8 @@ public sealed unsafe partial class GraphicsDevice
         buffer.Size = bytes;
         buffer.LastUse = 0;
         InvalidateStorageBinding(buffer, handleChanged: true);
-        Statistics.Buffers++;
+        int live = Interlocked.Increment(ref liveBuffers);
+        if (IsOnRenderThread) Statistics.Buffers = live;
         LabelBuffer(buffer);
     }
 
@@ -81,18 +82,35 @@ public sealed unsafe partial class GraphicsDevice
     /// </summary>
     private void RetireBuffer(Buffer handle, VulkanMemory.Allocation memory)
     {
-        Statistics.Buffers--;
+        int live = Interlocked.Decrement(ref liveBuffers);
+        if (IsOnRenderThread) Statistics.Buffers = live;
         Frame.RetiredBuffers.Add((handle, memory));
     }
 
     internal void DestroyBuffer(GpuBuffer buffer)
     {
-        Unbind(buffer);
+        if (IsOnRenderThread)
+        {
+            Unbind(buffer);
+            if (buffer.Buffer.Handle == 0) return;
+
+            RetireBuffer(buffer.Buffer, buffer.Memory);
+            buffer.Buffer = default;
+            buffer.Memory = default;
+            return;
+        }
+
+        pendingUnbinds.Enqueue(buffer);
+        Interlocked.Increment(ref pendingUnbindCount);
         if (buffer.Buffer.Handle == 0) return;
 
-        RetireBuffer(buffer.Buffer, buffer.Memory);
+        Buffer handle = buffer.Buffer;
+        VulkanMemory.Allocation memory = buffer.Memory;
         buffer.Buffer = default;
         buffer.Memory = default;
+        Interlocked.Decrement(ref liveBuffers);
+        pendingRetireBuffers.Enqueue((handle, memory));
+        Interlocked.Increment(ref pendingRetireCount);
     }
 
     /* Textures */
@@ -162,8 +180,52 @@ public sealed unsafe partial class GraphicsDevice
         texture.LastAccess = AccessFlags2.None;
         texture.DefaultSampler = SamplerFor(definition.Sampler);
         texture.BindlessIndex = (definition.Usage & TextureUsage.Sampled) != 0 ? Bindless.Add(view, texture.DefaultSampler) : BindlessTextures.NONE;
-        Statistics.Textures++;
+        int live = Interlocked.Increment(ref liveTextures);
+        bool onRender = IsOnRenderThread;
+        if (onRender) Statistics.Textures = live;
         LabelTexture(texture);
+
+        bool needSampledTransition = (definition.Usage & TextureUsage.Sampled) != 0;
+        bool needClear = !hostCopy && pixels.IsEmpty && !definition.IsDepth && (definition.Usage & TextureUsage.RenderTarget) == 0;
+
+        if (!onRender)
+        {
+            if (hostCopy)
+            {
+                fixed (byte* pointer = pixels)
+                    HostCopyTexels(texture, pointer, (ulong)pixels.Length);
+
+                if (levels > 1 || (needSampledTransition && texture.Layout != ImageLayout.ShaderReadOnlyOptimal))
+                {
+                    pendingTextureOps.Enqueue(new PendingTextureOp(
+                        texture,
+                        Pixels: null,
+                        TexelFormat: default,
+                        UploadPixels: false,
+                        ClearZero: false,
+                        GenerateMipmaps: levels > 1,
+                        TransitionSampled: needSampledTransition));
+                    Interlocked.Increment(ref pendingTextureOpCount);
+                }
+                return;
+            }
+
+            // Never record VkCommandBuffer / Frame.Staging commands off the render thread (critical on MoltenVK without VK_EXT_host_image_copy).
+            byte[]? copy = !pixels.IsEmpty ? pixels.ToArray() : null;
+            if (copy is not null || needClear || needSampledTransition)
+            {
+                pendingTextureOps.Enqueue(new PendingTextureOp(
+                    texture,
+                    Pixels: copy,
+                    TexelFormat: copy is not null ? TexelFormatOf(definition.Format) : default,
+                    UploadPixels: copy is not null,
+                    ClearZero: needClear,
+                    GenerateMipmaps: levels > 1,
+                    TransitionSampled: needSampledTransition));
+                Interlocked.Increment(ref pendingTextureOpCount);
+            }
+            return;
+        }
 
         if (hostCopy)
         {
@@ -179,7 +241,7 @@ public sealed unsafe partial class GraphicsDevice
 
             if (levels > 1) GenerateMipmaps(texture);
         }
-        else if (!definition.IsDepth && (definition.Usage & TextureUsage.RenderTarget) == 0)
+        else if (needClear)
         {
             // A texture that is read before anything was put in it shows nothing rather than whatever was in the memory
             ClearImageNow(texture, System.Numerics.Vector4.Zero);
@@ -187,8 +249,77 @@ public sealed unsafe partial class GraphicsDevice
 
         // Set 2 bindless descriptors declare ShaderReadOnlyOptimal, so freshly created sampled textures (including
         // empty/cleared or staging-uploaded ones) must transition out of Undefined/Transfer layouts before use
-        if ((definition.Usage & TextureUsage.Sampled) != 0 && texture.Layout != ImageLayout.ShaderReadOnlyOptimal)
+        if (needSampledTransition && texture.Layout != ImageLayout.ShaderReadOnlyOptimal)
             Transition(texture, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags2.AllGraphicsBit | PipelineStageFlags2.ComputeShaderBit, AccessFlags2.ShaderSampledReadBit);
+    }
+
+    /// <summary>Drains off-render-thread texture uploads, clears, mipmaps, and sampled layout transitions on the render thread.</summary>
+    private void FlushPendingTextureOps()
+    {
+        if (Volatile.Read(ref pendingTextureOpCount) == 0) return;
+
+        while (pendingTextureOps.TryDequeue(out PendingTextureOp op))
+        {
+            Interlocked.Decrement(ref pendingTextureOpCount);
+            Texture texture = op.Texture;
+            if (!texture.IsValid || texture.Image.Handle == 0) continue;
+
+            if (op.UploadPixels && op.Pixels is { Length: > 0 } bytes)
+                UploadTexels(texture, 0, 0, texture.Width, texture.Height, op.TexelFormat, bytes);
+            else if (op.ClearZero)
+                ClearImageNow(texture, System.Numerics.Vector4.Zero);
+
+            if (op.GenerateMipmaps && texture.MipLevels > 1)
+                GenerateMipmaps(texture);
+
+            if (op.TransitionSampled && texture.Layout != ImageLayout.ShaderReadOnlyOptimal)
+                Transition(texture, ImageLayout.ShaderReadOnlyOptimal, PipelineStageFlags2.AllGraphicsBit | PipelineStageFlags2.ComputeShaderBit, AccessFlags2.ShaderSampledReadBit);
+        }
+    }
+
+    private void ClearPendingTextureOps()
+    {
+        while (pendingTextureOps.TryDequeue(out _))
+            Interlocked.Decrement(ref pendingTextureOpCount);
+    }
+
+    /// <summary>Moves off-render-thread unbinds and resource retirements onto the active frame on the render thread.</summary>
+    private void FlushPendingRetires()
+    {
+        if (Volatile.Read(ref pendingUnbindCount) != 0)
+        {
+            while (pendingUnbinds.TryDequeue(out GpuResource? resource))
+            {
+                Interlocked.Decrement(ref pendingUnbindCount);
+                Unbind(resource);
+            }
+        }
+
+        if (Volatile.Read(ref pendingRetireCount) == 0) return;
+
+        while (pendingRetireBuffers.TryDequeue(out var buffer))
+        {
+            Interlocked.Decrement(ref pendingRetireCount);
+            Frame.RetiredBuffers.Add(buffer);
+        }
+
+        while (pendingRetireTextures.TryDequeue(out var texture))
+        {
+            Interlocked.Decrement(ref pendingRetireCount);
+            Frame.RetiredTextures.Add(texture);
+        }
+
+        while (pendingRetireShaders.TryDequeue(out var shader))
+        {
+            Interlocked.Decrement(ref pendingRetireCount);
+            Frame.RetiredShaders.Add(shader);
+        }
+
+        while (pendingRetires.TryDequeue(out Action? retired))
+        {
+            Interlocked.Decrement(ref pendingRetireCount);
+            Frame.Retired.Add(retired);
+        }
     }
 
     /// <summary>
@@ -228,37 +359,56 @@ public sealed unsafe partial class GraphicsDevice
         texture.Layout = Context.HostCopyLayout;
         texture.LastStage = PipelineStageFlags2.None;
         texture.LastAccess = AccessFlags2.None;
-        Statistics.Counting.BytesUploaded += (long)bytes;
-        Statistics.Counting.HostCopies++;
+        if (IsOnRenderThread)
+        {
+            Statistics.Counting.BytesUploaded += (long)bytes;
+            Statistics.Counting.HostCopies++;
+        }
+        else
+        {
+            Interlocked.Add(ref offThreadHostBytes, (long)bytes);
+            Interlocked.Increment(ref offThreadHostCopies);
+        }
     }
 
     internal void DestroyTexture(Texture texture)
     {
-        Unbind(texture);
-        if (texture.Image.Handle == 0) return;
+        if (texture.Image.Handle == 0)
+        {
+            if (IsOnRenderThread) Unbind(texture);
+            else
+            {
+                pendingUnbinds.Enqueue(texture);
+                Interlocked.Increment(ref pendingUnbindCount);
+            }
+            return;
+        }
 
         Image image = texture.Image;
         ImageView view = texture.View;
         VulkanMemory.Allocation memory = texture.Memory;
         uint slot = texture.BindlessIndex;
-        uint[] variants = texture.BindlessVariants is { } made ? [.. made.Values] : [];
+        uint[]? variants = texture.BindlessVariants is { Count: > 0 } made ? [.. made.Values] : null;
         texture.BindlessIndex = BindlessTextures.NONE;
         texture.BindlessVariants = null;
-        Statistics.Textures--;
-
-        // The slots go back once nothing that was recorded with them can still be running
-        Retire(() =>
-        {
-            Vk.DestroyImageView(Device, view, null);
-            Vk.DestroyImage(Device, image, null);
-            Memory.Free(memory);
-            if (slot != BindlessTextures.NONE) Bindless.Release(slot);
-            foreach (uint variant in variants) Bindless.Release(variant);
-        });
-
         texture.Image = default;
         texture.View = default;
         texture.Memory = default;
+        int live = Interlocked.Decrement(ref liveTextures);
+
+        var retired = new FrameResources.RetiredTexture(image, view, memory, slot, variants);
+        if (IsOnRenderThread)
+        {
+            Unbind(texture);
+            Statistics.Textures = live;
+            Frame.RetiredTextures.Add(retired);
+            return;
+        }
+
+        pendingUnbinds.Enqueue(texture);
+        Interlocked.Increment(ref pendingUnbindCount);
+        pendingRetireTextures.Enqueue(retired);
+        Interlocked.Increment(ref pendingRetireCount);
     }
 
     /// <summary>Helper method to map a texture's pixel format to the texel upload format used by staging uploads.</summary>
@@ -293,11 +443,15 @@ public sealed unsafe partial class GraphicsDevice
 
     /* Names for the debugger, see VulkanContext.Name. A resource nobody named is told by what it is */
 
-    internal void LabelBuffer(GpuBuffer buffer) =>
+    internal void LabelBuffer(GpuBuffer buffer)
+    {
+        if (!Context.LabelsEnabled) return;
         Context.Name(ObjectType.Buffer, buffer.Buffer.Handle, buffer.Name ?? $"{buffer.Usage} buffer of {buffer.Capacity} bytes");
+    }
 
     internal void LabelTexture(Texture texture)
     {
+        if (!Context.LabelsEnabled) return;
         string name = texture.Name ?? $"{texture.Width} by {texture.Height} {texture.Definition.Format}";
         Context.Name(ObjectType.Image, texture.Image.Handle, name);
         Context.Name(ObjectType.ImageView, texture.View.Handle, name + " view");
@@ -305,6 +459,7 @@ public sealed unsafe partial class GraphicsDevice
 
     internal void LabelShader(Shader shader)
     {
+        if (!Context.LabelsEnabled) return;
         foreach (var stage in shader.Modules)
             Context.Name(ObjectType.ShaderModule, stage.Module.Handle, shader.Name);
     }
@@ -330,23 +485,28 @@ public sealed unsafe partial class GraphicsDevice
 
     internal void DestroyShader(Shader shader)
     {
-        Unbind(shader);
-        shader.ComputePipeline = default;
-        if (hasLastGraphicsPipeline && lastGraphicsKey.Shader == shader.Handle)
-        {
-            hasLastGraphicsPipeline = false;
-            lastGraphicsPipeline = default;
-        }
-
         var pipelines = Pipelines.Forget(shader);
         var modules = shader.Modules.Select(stage => stage.Module).DistinctBy(module => module.Handle).ToArray();
         shader.Modules.Clear();
+        shader.ComputePipeline = default;
 
-        Retire(() =>
+        var retired = new FrameResources.RetiredShader(pipelines, modules);
+        if (IsOnRenderThread)
         {
-            foreach (var pipeline in pipelines) Vk.DestroyPipeline(Device, pipeline, null);
-            foreach (var module in modules) Vk.DestroyShaderModule(Device, module, null);
-        });
+            Unbind(shader);
+            if (hasLastGraphicsPipeline && lastGraphicsKey.Shader == shader.Handle)
+            {
+                hasLastGraphicsPipeline = false;
+                lastGraphicsPipeline = default;
+            }
+            Frame.RetiredShaders.Add(retired);
+            return;
+        }
+
+        pendingUnbinds.Enqueue(shader);
+        Interlocked.Increment(ref pendingUnbindCount);
+        pendingRetireShaders.Enqueue(retired);
+        Interlocked.Increment(ref pendingRetireCount);
     }
 
     /* Render targets and vertex arrays own nothing of their own on the GPU */

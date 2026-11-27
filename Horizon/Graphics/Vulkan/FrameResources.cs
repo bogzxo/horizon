@@ -2,6 +2,7 @@ using Silk.NET.Vulkan;
 
 using Buffer = Silk.NET.Vulkan.Buffer;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
+using VulkanShaderModule = Silk.NET.Vulkan.ShaderModule;
 
 namespace Horizon.Graphics.Vulkan;
 
@@ -15,6 +16,7 @@ internal sealed unsafe class LinearArena
     private readonly VulkanContext context;
     private readonly VulkanMemory memory;
     private readonly BufferUsageFlags usage;
+    private readonly MemoryPropertyFlags preferredMemory;
 
     public Buffer Buffer { get; private set; }
     public VulkanMemory.Allocation Memory { get; private set; }
@@ -30,12 +32,19 @@ internal sealed unsafe class LinearArena
 
     private readonly string name;
 
-    public LinearArena(VulkanContext context, VulkanMemory memory, BufferUsageFlags usage, ulong capacity, string name)
+    public LinearArena(
+        VulkanContext context,
+        VulkanMemory memory,
+        BufferUsageFlags usage,
+        ulong capacity,
+        string name,
+        MemoryPropertyFlags preferredMemory = MemoryPropertyFlags.DeviceLocalBit)
     {
         this.context = context;
         this.memory = memory;
         this.usage = usage;
         this.name = name;
+        this.preferredMemory = preferredMemory;
         Make(capacity);
     }
 
@@ -50,10 +59,11 @@ internal sealed unsafe class LinearArena
         };
 
         VulkanContext.Check(context.Vk.CreateBuffer(context.Device, in info, null, out Buffer buffer), "making an arena");
-        context.Name(ObjectType.Buffer, buffer.Handle, $"{name} of {capacity} bytes");
+        if (context.LabelsEnabled)
+            context.Name(ObjectType.Buffer, buffer.Handle, $"{name} of {capacity} bytes");
         context.Vk.GetBufferMemoryRequirements(context.Device, buffer, out MemoryRequirements requirements);
 
-        var allocation = memory.Allocate(requirements, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit, MemoryPropertyFlags.DeviceLocalBit, forImage: false);
+        var allocation = memory.Allocate(requirements, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit, preferredMemory, forImage: false);
         VulkanContext.Check(context.Vk.BindBufferMemory(context.Device, buffer, allocation.Memory, allocation.Offset), "binding an arena's memory");
 
         Buffer = buffer;
@@ -108,8 +118,18 @@ internal sealed unsafe class LinearArena
 /// </summary>
 internal sealed unsafe class FrameResources : IDisposable
 {
+    internal readonly record struct RetiredTexture(
+        Image Image,
+        ImageView View,
+        VulkanMemory.Allocation Memory,
+        uint Slot,
+        uint[]? Variants);
+
+    internal readonly record struct RetiredShader(List<Pipeline> Pipelines, VulkanShaderModule[] Modules);
+
     private readonly VulkanContext context;
     private readonly VulkanMemory memory;
+    private readonly BindlessTextures bindless;
 
     public CommandPool CommandPool { get; }
     public Semaphore ImageAvailable { get; }
@@ -133,6 +153,12 @@ internal sealed unsafe class FrameResources : IDisposable
     /// </summary>
     public List<(Buffer Buffer, VulkanMemory.Allocation Memory)> RetiredBuffers { get; } = [];
 
+    /// <summary>Textures retired during this frame without per-destroy closure allocations.</summary>
+    public List<RetiredTexture> RetiredTextures { get; } = [];
+
+    /// <summary>Shaders retired during this frame without per-destroy closure allocations.</summary>
+    public List<RetiredShader> RetiredShaders { get; } = [];
+
     /// <summary>Whether the swapchain image's semaphore has been waited on by a submission of this frame yet.</summary>
     public bool AcquireWaited { get; set; }
 
@@ -142,10 +168,11 @@ internal sealed unsafe class FrameResources : IDisposable
     // Which of the frames in flight this is, for the names
     private readonly int index;
 
-    public FrameResources(VulkanContext context, VulkanMemory memory, int index)
+    public FrameResources(VulkanContext context, VulkanMemory memory, BindlessTextures bindless, int index)
     {
         this.context = context;
         this.memory = memory;
+        this.bindless = bindless;
         this.index = index;
 
         var poolInfo = new CommandPoolCreateInfo
@@ -164,8 +191,8 @@ internal sealed unsafe class FrameResources : IDisposable
         context.Name(ObjectType.Semaphore, available.Handle, $"frame {index} image available");
 
         Descriptors = new DescriptorAllocator(context, index);
-        Uniforms = new LinearArena(context, memory, BufferUsageFlags.UniformBufferBit, 1024 * 1024, $"frame {index} uniforms");
-        Staging = new LinearArena(context, memory, BufferUsageFlags.TransferSrcBit, 8 * 1024 * 1024, $"frame {index} staging");
+        Uniforms = new LinearArena(context, memory, BufferUsageFlags.UniformBufferBit, 256 * 1024, $"frame {index} uniforms", MemoryPropertyFlags.DeviceLocalBit);
+        Staging = new LinearArena(context, memory, BufferUsageFlags.TransferSrcBit, 2 * 1024 * 1024, $"frame {index} staging", MemoryPropertyFlags.HostCachedBit);
     }
 
     /// <summary>A fresh command buffer, begun. The pool is reset by <see cref="Reset"/>, so the buffers are reused.</summary>
@@ -201,6 +228,26 @@ internal sealed unsafe class FrameResources : IDisposable
     {
         foreach (var retired in Retired) retired();
         Retired.Clear();
+
+        foreach (var texture in RetiredTextures)
+        {
+            context.Vk.DestroyImageView(context.Device, texture.View, null);
+            context.Vk.DestroyImage(context.Device, texture.Image, null);
+            memory.Free(texture.Memory);
+            if (texture.Slot != BindlessTextures.NONE) bindless.Release(texture.Slot);
+            if (texture.Variants is { } variants)
+            {
+                foreach (uint variant in variants) bindless.Release(variant);
+            }
+        }
+        RetiredTextures.Clear();
+
+        foreach (var shader in RetiredShaders)
+        {
+            foreach (var pipeline in shader.Pipelines) context.Vk.DestroyPipeline(context.Device, pipeline, null);
+            foreach (var module in shader.Modules) context.Vk.DestroyShaderModule(context.Device, module, null);
+        }
+        RetiredShaders.Clear();
 
         foreach (var (buffer, allocation) in RetiredBuffers)
         {

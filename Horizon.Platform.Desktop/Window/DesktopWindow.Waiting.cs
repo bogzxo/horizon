@@ -107,8 +107,19 @@ public sealed partial class DesktopWindow
     private void OnScroll(IMouse mouse, ScrollWheel wheel) => NoteInput();
     private void OnKey(IKeyboard keyboard, Silk.NET.Input.Key key, int code) => NoteInput();
     private void OnChar(IKeyboard keyboard, char character) => NoteInput();
-    private void OnFocus(bool focused) => Events.FocusChanged(focused);
-    private void OnState(WindowState state) => Events.MinimizedChanged(state == WindowState.Minimized);
+    private void OnFocus(bool focused)
+    {
+        if (OperatingSystem.IsMacOS())
+            MarkMacChromeDirty();
+        Events.FocusChanged(focused);
+    }
+
+    private void OnState(WindowState state)
+    {
+        if (OperatingSystem.IsMacOS())
+            MarkMacChromeDirty();
+        Events.MinimizedChanged(state == WindowState.Minimized);
+    }
 
     /// <summary>
     /// Helper method for the window's thread to wait between two looks at the system. A moment, woken early by whoever

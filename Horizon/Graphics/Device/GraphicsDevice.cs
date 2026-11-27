@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Numerics;
 
 using Horizon.Graphics.Vulkan;
@@ -90,7 +91,33 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
     private readonly Dictionary<SamplerSettings, Sampler> samplersBySettings = [];
     private readonly Dictionary<uint, Sampler> samplersById = [];
+    private readonly Lock samplerLock = new();
     private uint nextSamplerId = 1;
+
+    private readonly record struct PendingTextureOp(
+        Texture Texture,
+        byte[]? Pixels,
+        TexelFormat TexelFormat,
+        bool UploadPixels,
+        bool ClearZero,
+        bool GenerateMipmaps,
+        bool TransitionSampled);
+
+    private int renderThreadId;
+    private int liveBuffers, liveTextures;
+    private long offThreadHostBytes;
+    private int offThreadHostCopies;
+    private readonly ConcurrentQueue<PendingTextureOp> pendingTextureOps = new();
+    private int pendingTextureOpCount;
+    private readonly ConcurrentQueue<GpuResource> pendingUnbinds = new();
+    private int pendingUnbindCount;
+    private readonly ConcurrentQueue<(Buffer Buffer, VulkanMemory.Allocation Memory)> pendingRetireBuffers = new();
+    private readonly ConcurrentQueue<FrameResources.RetiredTexture> pendingRetireTextures = new();
+    private readonly ConcurrentQueue<FrameResources.RetiredShader> pendingRetireShaders = new();
+    private readonly ConcurrentQueue<Action> pendingRetires = new();
+    private int pendingRetireCount;
+
+    internal bool IsOnRenderThread => Environment.CurrentManagedThreadId == Volatile.Read(ref renderThreadId);
 
     /// <summary>The Vulkan API, for whoever goes underneath.</summary>
     public Vk Vk => Context.Vk;
@@ -208,7 +235,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
         VulkanContext.Check(Vk.CreateSemaphore(Device, in semaphoreInfo, null, out timeline), "making the timeline");
 
         for (int i = 0; i < FRAMES_IN_FLIGHT; i++)
-            frames[i] = new FrameResources(Context, Memory, i);
+            frames[i] = new FrameResources(Context, Memory, Bindless, i);
 
         // The swapchain once the timeline is there, a surface that turns out gone at once is let go of through it
         if (!Context.HasSurface)
@@ -238,6 +265,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         // The first frame is open from here on, so whatever is made before the first BeginFrame has somewhere to go
         frameIndex = 0;
+        renderThreadId = Environment.CurrentManagedThreadId;
         OpenFrame();
 
         current = this;
@@ -326,6 +354,9 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     /// </summary>
     public void BeginFrame(uint width, uint height)
     {
+        renderThreadId = Environment.CurrentManagedThreadId;
+        FlushPendingRetires();
+        FlushPendingTextureOps();
         surfaceLife.EnterFrame();
         FrameNumber++;
         Frame.HasImage = false;
@@ -395,6 +426,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     public void EndFrame()
     {
         EndRendering();
+        FlushPendingTextureOps();
 
         FrameResources frame = Frame;
         if (frame.HasImage && swapchain.Current >= 0)
@@ -434,6 +466,12 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
             }
         }
 
+        long offBytes = Interlocked.Exchange(ref offThreadHostBytes, 0);
+        int offCopies = Interlocked.Exchange(ref offThreadHostCopies, 0);
+        if (offBytes > 0) Statistics.Counting.BytesUploaded += offBytes;
+        if (offCopies > 0) Statistics.Counting.HostCopies += offCopies;
+        Statistics.Buffers = Volatile.Read(ref liveBuffers);
+        Statistics.Textures = Volatile.Read(ref liveTextures);
         Statistics.Pipelines = Pipelines.Count;
         Statistics.MemoryInUse = (long)Memory.InUse;
         Statistics.MemoryBlocks = Memory.BlockCount;
@@ -452,6 +490,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     /// </summary>
     private void OpenFrame()
     {
+        renderThreadId = Environment.CurrentManagedThreadId;
         FrameResources frame = Frame;
         if (frame.TimelineValue != 0)
         {
@@ -461,6 +500,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         completed = Math.Max(completed, QueryCompleted());
         frame.Reset();
+        FlushPendingRetires();
         ResetFrameDescriptorCache();
 
         cmd = frame.BeginCommandBuffer();
@@ -676,14 +716,27 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     { }
 
     /// <summary>Has something freed once the GPU is done with the frame being recorded.</summary>
-    internal void Retire(Action free) => Frame.Retired.Add(free);
+    internal void Retire(Action free)
+    {
+        if (IsOnRenderThread)
+        {
+            Frame.Retired.Add(free);
+            return;
+        }
+
+        pendingRetires.Enqueue(free);
+        Interlocked.Increment(ref pendingRetireCount);
+    }
 
     public void Dispose()
     {
         if (current != this) return;
 
         Log.Info("[Graphics] Shutting the device down.");
+        renderThreadId = Environment.CurrentManagedThreadId;
         Context.WaitIdle();
+        ClearPendingTextureOps();
+        FlushPendingRetires();
 
         // Everything that is still out there goes now, GPU and all
         foreach (var frame in frames) frame.Dispose();

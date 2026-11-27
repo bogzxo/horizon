@@ -1,5 +1,8 @@
 using System.Diagnostics;
 
+using Horizon.Logging;
+using Horizon.Logging.Loggers;
+
 namespace Horizon.Core.Threading;
 
 /// <summary>
@@ -277,6 +280,13 @@ public sealed class SimulationLoop : IDisposable
 
                 Step();
             }
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"[Simulation] Unhandled exception: {ex}");
+            if (Logger.Instance is ConcurrentLogger concurrent)
+                concurrent.Flush();
+            throw;
         }
         finally
         {

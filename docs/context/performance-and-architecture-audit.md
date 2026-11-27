@@ -286,3 +286,16 @@
 - **`HexStartup`** (3 cold runs, median):
   - `Dawn`: **`380 ms`** first frame (`376, 380, 388`) | WS **`162.0 MiB`** (**-8.1 MiB** vs P6) | Priv `194.1 MiB` | Idle CPU `0.977%` (`0.974, 0.977, 3.427`)
   - `Dusk`: **`302 ms`** first frame (`299, 302, 305`) | WS `122.5 MiB` | Priv `155.5 MiB` | Idle CPU **`6.406%`** (**-31.3%** vs P6 `9.323%`; samples: `0.493%`, `6.875%`, `6.406%`)
+
+
+## Pass 8 — macOS New File Crash Fixes & Vulkan Thread Safety
+
+- **Root causes eliminated for macOS "New File" crash**:
+  - Guarded `VulkanMemory`, `BindlessTextures`, and `GraphicsDevice` off-render-thread texture/buffer creation, transition/upload queueing (`PendingTextureOp`), deferred retirement (`RetiredTexture` / `RetiredShader` structs in `FrameResources.Reset()`), and `samplerLock` synchronization; shrunk `FrameResources` default `LinearArena` chunks (`Uniforms` 256 KiB, `Staging` 2 MiB) and gated debug labels behind `Context.LabelsEnabled`.
+  - Added `.ttc` TrueType Collection offset validation in `DistanceFieldFont` / `GlyphOutlines`, exposed `UIFont.IsLoaded`, clamped `CodeEditor.LineHeightOf >= 1.0f`, and fell back from unloaded code fonts in `HexCodeEditing.ResolveConfiguredCodeFont`.
+  - Fixed `MacMenuBar` open-menu/submenu UAF via `openMenus` set + `helpMenuHandle` tracking (`MacMenuBarRules.ShouldRefillMenu`), added `MacObjC.Pool()` around pump/chrome maintenance, cached selectors and event-gated `MaintainMacChrome`, implemented `MacWindowChrome.Dispose()`, used local `GetMouseState` in `HitTest`, guarded `SdlTextEditing.StartTextInput()`, added unhandled `SimulationLoop` exception logging/flushing, fixed `"File/new"` empty-workspace scratchpad handling in `DawnScene.Documents`, and guarded `HexDiskWatch` errors/empty paths.
+- **Pass 8 NativeAOT Verification (`results-pass8.json`)**:
+  - `Horizon.Tests` Release: 2,649 / 2,649 passed; `Hex.Tests` Debug: 3,419 / 3,419 passed (`2` skipped); `Horizon.Testing --checks`: 848 / 848 passed; `Hex --selftest`: 7 / 7 passed.
+  - `Hex` UI frame GPU: `idle` 0.138 ms (-83%), `typing` 0.130 ms (-88%), `wheel` 0.128 ms (-87%), `drag` 0.221 ms (-88%), `notebook` 0.140 ms (-88%).
+  - `Hex` startup & idle: Dawn 380 ms / 171.5 MiB WS / 187.6 MiB Private / 0.981% idle CPU; Dusk 288 ms / 131.9 MiB WS / 148.9 MiB Private / 0.491% idle CPU.
+  - `dungeon` scene settled memory: 147.4 MiB WS (-27.5 MiB) / 316.6 MiB Private (-35.6 MiB).
